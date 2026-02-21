@@ -1,0 +1,25 @@
+# API Keys and Secrets
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Distribution / Build
+dist/
+build/
+*.egg-info/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# User-specific local settings
+.vscode/
+.idea/
