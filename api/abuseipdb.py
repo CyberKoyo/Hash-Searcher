@@ -1,4 +1,4 @@
-from api.config import ipdb_api_key
+from .config import ipdb_api_key
 import httpx
 
 async def get_ipdb(client: httpx.AsyncClient, ip):

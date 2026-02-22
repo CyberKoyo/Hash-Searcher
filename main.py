@@ -3,7 +3,7 @@ import sys
 import asyncio
 from formatters import ip_sorter, ip_formatter, otx_formatter, vt_rules, censys_formatter, whois_formatter
 from api.api_data_puller import data_puller
-from who_is import who_is
+from api.who_is import who_is
 import datetime
 import json
 from report import generate_pdf

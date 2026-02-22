@@ -1,4 +1,4 @@
-from api.config import censys_api_key
+from .api.config import censys_api_key
 import httpx
 
 

@@ -1,5 +1,5 @@
 import httpx
-from api.config import otx_api_key
+from .config import otx_api_key
 
 async def get_otx(client: httpx.AsyncClient, indicator_type, indicator):
     url = f"https://otx.alienvault.com/api/v1/indicators/{indicator_type}/{indicator}/general"

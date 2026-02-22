@@ -2,7 +2,7 @@ import hashlib
 import sys
 import pyzipper
 
-from api.config import total_api_key, ipdb_api_key, otx_api_key
+from .api.config import total_api_key, ipdb_api_key, otx_api_key
 
 def check_env():
     keys = {'TOTAL_KEY': total_api_key, "IPDB_KEY": ipdb_api_key,'OTX_KEY': otx_api_key}

@@ -1,5 +1,5 @@
 import httpx
-from api.config import total_api_key
+from .config import total_api_key
 
 
 async def get_total(client: httpx.AsyncClient, hash):
