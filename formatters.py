@@ -196,5 +196,3 @@ def whois_formatter(whois_results: list):
         print(f"{entry['domain']:<35} {entry['created']:<12} {entry['expires']:<12} {entry['registrar']:<30}")
     return whois_results
 
-# TODO:
-# 4. Auto-generate JSON at end.
