@@ -48,12 +48,12 @@ def get_zip_hash(file_path):
         except Exception as e:
             print(f'Error opening ZIP: {e}')
     else:  
-        return get_reg_hash()
+        return get_reg_hash(filename)
 
-def get_reg_hash():
+def get_reg_hash(filename):
     sha256 = hashlib.sha256()
     buf = 65536
-    with open(sys.argv[1], 'rb') as f:
+    with open(filename, 'rb') as f:
         while (data := f.read(buf)):
             if not data:
                 break
