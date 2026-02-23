@@ -1,12 +1,15 @@
-from hashing import check_env
+from .hashing import check_env
 import sys
 import asyncio
-from formatters import ip_sorter, ip_formatter, otx_formatter, vt_rules, censys_formatter, whois_formatter
-from api.api_data_puller import data_puller
-from api.who_is import who_is
+from .formatters import ip_sorter, ip_formatter, otx_formatter, vt_rules, censys_formatter, whois_formatter
+from .api.api_data_puller import data_puller
+from .api.who_is import who_is
 import datetime
 import json
-from report import generate_pdf
+from .report import generate_pdf
+from .api.config import BASE_DIR
+import os
+
 async def main():
 
     if ((len(sys.argv) > 4) or (len(sys.argv) < 2)):
@@ -68,7 +71,8 @@ async def main():
                     'vt_rules': vt_summary
                 }
             }
-            with open(file, 'w') as out_file:
+            output_path = os.path.join(BASE_DIR, file)
+            with open(output_path, 'w') as out_file:
                 json.dump(report, out_file, sort_keys=True, indent=4, ensure_ascii=False)
         elif ".pdf" in file:
             generate_pdf(file, file_hash, vt_summary, otx_summary, reports_and_confidence, enriched_ips, whois_results)

@@ -9,10 +9,10 @@ import asyncio
 import os
 import json
 import time
-
+from .config import BASE_DIR
 # Cache system for Censys as it wants to wait longer between calls
 
-CACHE_FILE = 'censys_cache.json'
+CACHE_FILE = os.path.join(BASE_DIR, 'censys_cache.json')
 CACHE_TTL = 86400
 
 def load_cache():
