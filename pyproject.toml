@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hash_searcher"
+version = "0.1.0"
+description = "Pulls data about a file via VirusTotal, AbuseIPDB, Censys, WHOAMI, and OTX APIs."
+authors = [{name = "Koyo Keiter"}]
+
+[tool.setuptools.packages.find]
+where = ["src"]
