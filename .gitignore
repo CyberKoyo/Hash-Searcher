@@ -1,27 +1,35 @@
-# API Keys and Secrets
-.env
-
-# Python artifacts
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-.venv/
-env/
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 venv/
 ENV/
+env/
 
-# Distribution / Build
-dist/
-build/
-*.egg-info/
-*.pyc
-.eggs/
-
-# Operating System files
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# User-specific local settings
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
