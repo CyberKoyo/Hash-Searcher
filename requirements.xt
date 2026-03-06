@@ -1,0 +1,6 @@
+
+httpx==0.28.1
+python-dotenv==1.2.1
+pyzipper==0.3.6
+reportlab==4.4.10
+whois==1.20240129.2
