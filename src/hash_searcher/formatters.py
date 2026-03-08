@@ -73,6 +73,8 @@ def vt_rules(vt_data):
 
 def otx_formatter(data):
     pulse_info = data.get('pulse_info')
+    if pulse_info is None:
+        return "No OTX data available."
     counts = pulse_info.get('count', 'N/A, No recorded instances')
     pulse_data = pulse_info.get('pulses', [])
 
