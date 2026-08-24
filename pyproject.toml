@@ -16,6 +16,9 @@ dependencies = [
     "whois==1.20240129.2",
 ]
 
+[project.scripts]
+hash-searcher = "hash_searcher.main:run"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
