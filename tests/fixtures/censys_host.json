@@ -1,0 +1,6 @@
+[{"result": {"resource": {
+  "ip": "198.51.100.10",
+  "autonomous_system": {"name": "Example AS", "asn": 64496, "country_code": "NL"},
+  "services": [{"port": 80}, {"port": 443}],
+  "dns": {"reverse_dns": {"names": ["new.example", "known.example"]}}
+}}}]
