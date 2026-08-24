@@ -17,42 +17,47 @@ async def main():
         return
     check_env()
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
-    results, ips, censys_results, file_hash = await data_puller()
-    if not results or len(results) < 2:
-        return "No data was able to be pulled."
+    data = await data_puller()
+    if not data:
+        return print("No data was able to be pulled.")
 
-    vt_data = results[0]
-    otx_data = results[1]
-    
+    vt_data = data['vt']
+    otx_data = data['otx']
+    ipdb_data = data['ipdb']
+    censys_results = data['censys']
+    ips = data['ips']
+    file_hash = data['hash']
+
+    # Bail before printing empty sections if neither source recognized the hash.
+    if (vt_data.get('Error') == 'Hash not found in GetTotal') and not otx_data.get('pulse_info', {}).get('pulses'):
+        return print("Invalid hash. Please check filename or hash.")
+
     # 1, Displays what the virus does in priority order with a title and description
     print("\nVIRUSTOTAL SIGMA RULES")
     print("\n" + "="*50)
-    vt_summary = vt_rules(vt_data) 
+    vt_summary = vt_rules(vt_data)
     reports_and_confidence = {}
     enriched_ips = []
     whois_results = []
-    if len(results) > 3:
-        ipdb_data = results[2:2+len(ips)]
-        if (vt_data.get('Error') == 'Hash not found in GetTotal') and not (otx_data.get('pulse_info').get('pulses')):
-            return print("Invalid hash. Please check filename or hash.")
-        
+
+    # Gate on whether VT actually returned contacted IPs, not on how many
+    # entries a positional results list happened to have.
+    if ips:
         # 2. Display IPs, AbuseIPDB confidence, and number of reports
         print("\n" + "="*50)
         reports_and_confidence = ip_sorter(ipdb_data)
         ip_formatter(reports_and_confidence)
 
         # 3. Displays IPs, organization who owns it, asn, countries, and ports running
-        all_domains, enriched_ips = censys_formatter(censys_results)
-        whois_results = whois_formatter(who_is(all_domains))
-        
-
+        all_domains, enriched_ips = censys_formatter(censys_results, reports_and_confidence)
+        whois_results = whois_formatter(await who_is(all_domains))
 
         # 4. Display OTX Data: recorded instances, what it's flagged to do
     print("\n" + "="*50)
     print("OTX DATA")
     print("="*50)
     otx_summary = otx_formatter(otx_data)
-    
+
     # 5. Outputs in either a JSON or PDF
     time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 

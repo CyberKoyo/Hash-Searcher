@@ -2,13 +2,18 @@ import hashlib
 import sys
 import pyzipper
 
-from .api.config import total_api_key, ipdb_api_key, otx_api_key
+from .api.config import total_api_key, ipdb_api_key, otx_api_key, censys_api_key
 
 def check_env():
-    keys = {'TOTAL_KEY': total_api_key, "IPDB_KEY": ipdb_api_key,'OTX_KEY': otx_api_key}
+    keys = {
+        'TOTAL_KEY': total_api_key,
+        'IPDB_KEY': ipdb_api_key,
+        'OTX_KEY': otx_api_key,
+        'CENSYS_KEY': censys_api_key,
+    }
     missing = [k for k,v in keys.items() if not v]
     if missing:
-        print(f"Error: Missing envrionment variables: {', '.join(missing)}")
+        print(f"Error: Missing environment variables: {', '.join(missing)}")
         sys.exit(1)
     else:
         print('API Keys loaded successfully.')
@@ -47,7 +52,11 @@ def get_zip_hash(file_path):
                             print(f'Error reading {filename}: {e}')
         except Exception as e:
             print(f'Error opening ZIP: {e}')
-    else:  
+        # Every internal read failed (bad password, unreadable members). Return
+        # None explicitly so the caller bails instead of passing a None hash
+        # through to the APIs.
+        return None
+    else:
         return get_reg_hash(file_path)
 
 def get_reg_hash(file_path):
@@ -55,7 +64,5 @@ def get_reg_hash(file_path):
     buf = 65536
     with open(file_path, 'rb') as f:
         while (data := f.read(buf)):
-            if not data:
-                break
             sha256.update(data)
     return sha256.hexdigest()

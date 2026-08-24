@@ -7,6 +7,14 @@ name = "hash_searcher"
 version = "0.1.0"
 description = "Pulls data about a file via VirusTotal, AbuseIPDB, Censys, WHOAMI, and OTX APIs."
 authors = [{name = "Koyo Keiter"}]
+requires-python = ">=3.10"
+dependencies = [
+    "httpx==0.28.1",
+    "python-dotenv==1.2.1",
+    "pyzipper==0.3.6",
+    "reportlab==4.4.10",
+    "whois==1.20240129.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

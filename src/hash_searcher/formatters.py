@@ -1,11 +1,16 @@
 
-ips_and_hostnames = {}
 def ip_sorter(data):
+    """Build the {(hostnames, domain): ip_info} map from AbuseIPDB responses.
+
+    Returned rather than stashed in a module global so censys_formatter has to
+    be handed it explicitly instead of depending on call order.
+    """
+    ips_and_hostnames = {}
     for i in data:
         inner_data = i.get('data', {})
         if not inner_data:
             print("No data from IPDB available.")
-            pass
+            continue
         ip_data = inner_data.get('ipAddress', {})
         hostname_data = inner_data.get('hostnames')
         domain_data = inner_data.get('domain')
@@ -73,20 +78,15 @@ def vt_rules(vt_data):
 
 def otx_formatter(data):
     pulse_info = data.get('pulse_info')
-    if pulse_info is None:
-        return "No OTX data available."
+    if not pulse_info:
+        print("No OTX data available.")
+        return {"recorded_instances": "N/A", "attack_techniques": []}
     counts = pulse_info.get('count', 'N/A, No recorded instances')
     pulse_data = pulse_info.get('pulses', [])
 
     print(f'Recorded instances: {counts}')
 
-    recent_pulses = []
-    if len(pulse_data) >= 5:
-        for i in range(5):
-            recent_pulses.append(pulse_data[i])
-    else:
-        for i in pulse_data:
-            recent_pulses.append(i)
+    recent_pulses = pulse_data[:5]
     flags = []
     for i in recent_pulses:
         activity = i.get('attack_ids', [])
@@ -122,11 +122,11 @@ def ip_formatter(data):
     print("-" * total)
 
 
-def censys_formatter(censys_results):
+def censys_formatter(censys_results, ips_and_hostnames):
     """
-    Takes a list of raw Censys API responses (one per IP).
-    Cross-references against ips_and_hostnames already populated by ip_sorter.
-    Prints enrichment data and flags anything new that IPDB didn't have.
+    Takes a list of raw Censys API responses (one per IP) and the map returned
+    by ip_sorter. Prints enrichment data and flags anything new that IPDB
+    didn't have.
     """
     # Flatten all known hostnames and domains from IPDB into sets for quick lookup
     known_hostnames = set()

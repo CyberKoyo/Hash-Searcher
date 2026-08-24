@@ -1,20 +1,15 @@
-from .config import ipdb_api_key
 import httpx
 
+from .base_call import api_get
+from .config import ipdb_api_key
+
+
 async def get_ipdb(client: httpx.AsyncClient, ip):
-    url = 'https://api.abuseipdb.com/api/v2/check'
-    querystring = {'ipAddress': ip,'maxAgeInDays': '90'}
-    headers = {'Accept': 'application/json','Key': ipdb_api_key}
-    try:
-        response = await client.request(method='GET', url=url, headers=headers, params=querystring)
-        status = int(response.status_code)
-        if status == 200:
-            return response.json()
-        elif status == 404:
-            return {"Error": "IP not found"}
-        else:
-            return {"Error": f"IPDB API Error {status}"}
-    except httpx.HTTPStatusError as e:
-        return {"error": f"VT API Error: {e.response.status_code}"}
-    except httpx.RequestError as e:
-        return {"error": f"Network Error: {e}"}
+    return await api_get(
+        client,
+        'https://api.abuseipdb.com/api/v2/check',
+        {'Accept': 'application/json', 'Key': ipdb_api_key},
+        params={'ipAddress': ip, 'maxAgeInDays': '90'},
+        source='IPDB',
+        not_found='IP not found',
+    )
