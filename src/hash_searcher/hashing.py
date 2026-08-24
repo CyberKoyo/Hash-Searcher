@@ -28,8 +28,8 @@ def get_zip_hash(file_path: str, password: str | None = None) -> list[str]:
     skipped. Members that cannot be read (wrong password, corruption) are
     reported and omitted rather than aborting the whole archive.
 
-    password is a parameter rather than an input() call so this is testable;
-    cli.py prompts when a ZIP is detected and none was supplied.
+    password is a parameter so this is testable; when it is None the function
+    prompts interactively. A future task moves that prompt into the CLI layer.
     """
     if not pyzipper.is_zipfile(file_path):
         return [get_reg_hash(file_path)]
