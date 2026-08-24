@@ -1,36 +1,35 @@
 
 def ip_sorter(data):
-    """Build the {(hostnames, domain): ip_info} map from AbuseIPDB responses.
+    """Build {ip: info} from AbuseIPDB responses.
 
-    Returned rather than stashed in a module global so censys_formatter has to
-    be handed it explicitly instead of depending on call order.
+    Keyed by IP. Keying by (hostnames, domain) meant every IP that came back
+    without either one shared a key, and all but the first were dropped.
     """
-    ips_and_hostnames = {}
-    for i in data:
-        inner_data = i.get('data', {})
-        if not inner_data:
+    ips = {}
+    for entry in data:
+        inner = entry.get('data', {})
+        if not inner:
             print("No data from IPDB available.")
             continue
-        ip_data = inner_data.get('ipAddress', {})
-        hostname_data = inner_data.get('hostnames')
-        domain_data = inner_data.get('domain')
-        confidence = inner_data.get('abuseConfidenceScore', 0)
-        reports = inner_data.get('reports', 0)
-        if reports != 0:
-            report_count = len(reports)
-        else:
-            report_count = reports
 
-        hostname_tuple = tuple(hostname_data) if isinstance(hostname_data, list) else (hostname_data,)
-        combined_key = (hostname_tuple, domain_data)
-        
-        if combined_key not in ips_and_hostnames:
-            ips_and_hostnames[combined_key] = {
-                'ip': ip_data,
-                'confidence': confidence,
-                'reports': report_count
-            }
-    return ips_and_hostnames
+        ip = inner.get('ipAddress')
+        if not ip:
+            continue
+
+        hostnames = inner.get('hostnames') or []
+        if not isinstance(hostnames, list):
+            hostnames = [hostnames]
+
+        reports = inner.get('reports', 0)
+
+        ips[ip] = {
+            'ip': ip,
+            'confidence': inner.get('abuseConfidenceScore', 0),
+            'reports': len(reports) if isinstance(reports, list) else reports,
+            'hostnames': [h for h in hostnames if h],
+            'domain': inner.get('domain'),
+        }
+    return ips
 
 def vt_rules(vt_data):
     rules = vt_data.get('data', {}).get('attributes', {}).get('sigma_analysis_results', [])
@@ -108,16 +107,10 @@ def ip_formatter(data):
     total = w1 + w2 + w3 + 2
     print(f"{'IP':<{w1}} {'CONFIDENCE':<{w2}} {'REPORTS':<{w3}}")
     print("-" * total)
-    for (domain, hostname), ip_info in data.items():
-        if isinstance(ip_info, dict):
-            display_ip      = str(ip_info.get("ip", "N/A"))
-            display_conf    = f"{ip_info.get('confidence', 'N/A')}%"
-            display_reports = str(ip_info.get("reports", "N/A"))
-        else:
-            display_ip      = str(ip_info)
-            display_conf    = "N/A"
-            display_reports = "N/A"
-
+    for info in data.values():
+        display_ip = str(info.get("ip", "N/A"))
+        display_conf = f"{info.get('confidence', 'N/A')}%"
+        display_reports = str(info.get("reports", "N/A"))
         print(f"{display_ip:<{w1}} {display_conf:<{w2}} {display_reports:<{w3}}")
     print("-" * total)
 
@@ -131,12 +124,10 @@ def censys_formatter(censys_results, ips_and_hostnames):
     # Flatten all known hostnames and domains from IPDB into sets for quick lookup
     known_hostnames = set()
     known_domains = set()
-    for (hostname_tuple, domain_str) in ips_and_hostnames.keys():
-        for h in hostname_tuple:
-            if h:
-                known_hostnames.add(h)
-        if domain_str:
-            known_domains.add(domain_str)
+    for info in ips_and_hostnames.values():
+        known_hostnames.update(info['hostnames'])
+        if info['domain']:
+            known_domains.add(info['domain'])
     all_domains = known_domains.copy()
     print("\n" + "="*50)
     print("CENSYS ENRICHMENT")
@@ -167,11 +158,9 @@ def censys_formatter(censys_results, ips_and_hostnames):
 
         if new_hostnames:
             print("[!] New indicators not found in AbuseIPDB:")
-            if new_hostnames:
-                print(f"    Hostnames: {', '.join(sorted(new_hostnames))}")
-                key = (tuple(sorted(new_hostnames)), None)
-                if key not in ips_and_hostnames:
-                    ips_and_hostnames[key] = ip_str
+            print(f"    Hostnames: {', '.join(sorted(new_hostnames))}")
+            if ip_str in ips_and_hostnames:
+                ips_and_hostnames[ip_str]['hostnames'].extend(sorted(new_hostnames))
         else:
             print("    No new indicators beyond AbuseIPDB data.")
         enriched_ips.append({

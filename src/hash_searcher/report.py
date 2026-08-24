@@ -28,13 +28,12 @@ def generate_pdf(file, hash, vt_summary, otx_summary, ipdb_data, enriched_ips, w
     # IPDB Table
     story.append(Paragraph("AbuseIPDB", styles['Heading1']))
     ipdb_table_data = [["IP", "Confidence", "Reports"]]
-    for (hostname_tuple, domain_str), ip_info in ipdb_data.items():
-        if isinstance(ip_info, dict):
-            ipdb_table_data.append([
-                ip_info.get("ip", "N/A"),
-                f"{ip_info.get('confidence', 'N/A')}%",
-                str(ip_info.get("reports", "N/A"))
-            ])
+    for info in ipdb_data.values():
+        ipdb_table_data.append([
+            info.get("ip", "N/A"),
+            f"{info.get('confidence', 'N/A')}%",
+            str(info.get("reports", "N/A")),
+        ])
     t = Table(ipdb_table_data)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.grey),
