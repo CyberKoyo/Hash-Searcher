@@ -9,7 +9,9 @@ def test_console_script_is_declared():
     assert data["project"]["scripts"]["hash-searcher"] == "hash_searcher.main:run"
 
 
-@pytest.mark.skip(
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
     reason="main.py still imports the now-deleted formatters/report modules; "
            "Task 11 leaves it as-is on purpose, Task 12 rewrites main.py as a "
            "thin `from .cli import run, run_cli` wrapper and restores this test."
