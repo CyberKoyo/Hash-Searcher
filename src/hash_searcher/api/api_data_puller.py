@@ -3,6 +3,7 @@ import os
 import json
 import time
 import asyncio
+import string
 
 import httpx
 
@@ -31,10 +32,22 @@ def save_cache(cache):
         json.dump(cache, f, indent=2)
 
 
-def resolve_hash(user_input):
-    """Turn the CLI argument into a sha256, or None if that isn't possible."""
-    if len(user_input) == 64:
-        return user_input
+HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
+
+
+def looks_like_hash(value: str) -> bool:
+    """True if value is a bare hex digest rather than a path."""
+    return len(value) in HASH_LENGTHS and all(c in string.hexdigits for c in value)
+
+
+def resolve_hash(user_input: str) -> list[str] | None:
+    """Turn the CLI argument into a list of sha256s, or None if impossible.
+
+    A list because a ZIP can hold several members; a bare hash or a plain
+    file yields a one-element list.
+    """
+    if looks_like_hash(user_input):
+        return [user_input.lower()]
 
     try:
         if os.path.getsize(user_input) == 0:
@@ -45,11 +58,13 @@ def resolve_hash(user_input):
             "This file either doesn't exist or isn't in an accessible directory. Please try again."
         )
 
-    file_hash = get_zip_hash(user_input)
-    if not file_hash:
+    hashes = get_zip_hash(user_input)
+    if not hashes:
         print("Could not hash that file. Nothing to look up.")
         return None
-    return file_hash
+    # get_zip_hash still returns a single string until Task 3. Wrap it so the
+    # declared list[str] contract holds from this task onward.
+    return [hashes] if isinstance(hashes, str) else hashes
 
 
 async def fetch_censys(client, ips):
@@ -88,9 +103,10 @@ async def data_puller():
         print("Error: Please provide a file or hash.")
         return None
 
-    file_hash = resolve_hash(sys.argv[1])
-    if not file_hash:
+    resolved = resolve_hash(sys.argv[1])
+    if not resolved:
         return None
+    file_hash = resolved[0]
 
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
