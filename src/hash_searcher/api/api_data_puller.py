@@ -1,4 +1,3 @@
-import sys
 import os
 import json
 import time
@@ -97,22 +96,7 @@ async def fetch_censys(client, ips):
     return results
 
 
-async def data_puller():
-    if len(sys.argv) < 2:
-        print("Error: Please provide a file or hash.")
-        return None
-
-    resolved = resolve_hash(sys.argv[1])
-    if not resolved:
-        return None
-    file_hash = resolved[0]
-    if len(resolved) > 1:
-        # Analyzing every member is batch mode (a later phase). Until then
-        # name the ones being skipped instead of dropping them in silence.
-        print(f"\n[!] Archive holds {len(resolved)} files. Analyzing the first: {file_hash}")
-        for skipped in resolved[1:]:
-            print(f"    not analyzed: {skipped}")
-
+async def data_puller(file_hash: str):
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
         otx_task = asyncio.create_task(get_otx(client, 'file', file_hash))

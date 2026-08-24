@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hash-searcher = "hash_searcher.main:run"
+hash-searcher = "hash_searcher.cli:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

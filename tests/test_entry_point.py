@@ -1,21 +1,12 @@
 import tomllib
 from pathlib import Path
 
-import pytest
-
 
 def test_console_script_is_declared():
     data = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    assert data["project"]["scripts"]["hash-searcher"] == "hash_searcher.main:run"
+    assert data["project"]["scripts"]["hash-searcher"] == "hash_searcher.cli:run"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ImportError,
-    reason="main.py still imports the now-deleted formatters/report modules; "
-           "Task 11 leaves it as-is on purpose, Task 12 rewrites main.py as a "
-           "thin `from .cli import run, run_cli` wrapper and restores this test."
-)
 def test_run_is_importable_and_callable():
     from hash_searcher.main import run
     assert callable(run)
