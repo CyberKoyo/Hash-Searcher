@@ -33,3 +33,7 @@ env/
 .idea/
 *.swp
 *.swo
+# Agent scratch
+.superpowers/
+.claude/worktrees/
+docs/superpowers/
