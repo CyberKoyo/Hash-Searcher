@@ -39,7 +39,7 @@ async def test_404_is_not_retried():
 
 
 @respx.mock
-async def test_transient_network_error_is_retried():
+async def test_transient_network_error_is_retried(no_backoff):
     route = respx.get(URL).mock(side_effect=[
         httpx.ConnectError("down"),
         httpx.Response(200, json={"ok": True}),
