@@ -1,3 +1,5 @@
+from .api.base_call import error_message, is_error
+
 
 def ip_sorter(data):
     """Build {ip: info} from AbuseIPDB responses.
@@ -136,8 +138,8 @@ def censys_formatter(censys_results, ips_and_hostnames):
     enriched_ips = []
     for censys_data in censys_results:
         # Skip error responses
-        if "Error" in censys_data or "error" in censys_data:
-            print(f"Censys: {censys_data.get('Error') or censys_data.get('error')}")
+        if is_error(censys_data):
+            print(f"Censys: {error_message(censys_data)}")
             continue
         result = censys_data.get('result', {}).get('resource', {})
         ip_str  = result.get("ip", "N/A")

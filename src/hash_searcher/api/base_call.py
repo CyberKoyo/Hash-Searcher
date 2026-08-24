@@ -5,14 +5,33 @@ Every provider follows the same shape: build a URL and headers, GET, switch on
 the status code, and hand back parsed JSON or an error dict. This centralizes
 that so each provider module is just its URL, its auth header, and its 404 text.
 
-Callers rely on this never raising -- network failures come back as
-{"error": ...} and bad statuses as {"Error": ...}, so downstream formatters can
-keep checking for those keys instead of wrapping calls in try/except.
+Callers rely on this never raising -- every failure (network or bad status)
+comes back as {"hs_error": str, "hs_status": int | None}, so downstream code
+uses is_error()/error_message()/error_status() instead of sniffing keys.
 """
 
 import httpx
 
 from typing import Any, Callable
+
+ERROR_KEY = "hs_error"
+STATUS_KEY = "hs_status"
+
+
+def make_error(message: str, status: int | None = None) -> dict:
+    return {ERROR_KEY: message, STATUS_KEY: status}
+
+
+def is_error(payload) -> bool:
+    return isinstance(payload, dict) and ERROR_KEY in payload
+
+
+def error_message(payload) -> str:
+    return payload.get(ERROR_KEY, "") if isinstance(payload, dict) else ""
+
+
+def error_status(payload) -> int | None:
+    return payload.get(STATUS_KEY) if isinstance(payload, dict) else None
 
 
 async def api_get(
@@ -34,16 +53,16 @@ async def api_get(
     try:
         response = await client.get(url, headers=headers, params=params)
     except httpx.RequestError as e:
-        return {"error": f"Network Error: {e}"}
+        return make_error(f"Network Error: {e}")
 
     status = response.status_code
     if status == 200:
         try:
             return response.json()
         except ValueError:
-            return {"Error": f"{source} returned malformed JSON"}
+            return make_error(f"{source} returned malformed JSON", status)
     if status == 404:
-        return {"Error": not_found or f"Not found in {source}"}
+        return make_error(not_found or f"Not found in {source}", status)
     if extra_status and status in extra_status:
-        return {"Error": extra_status[status](response)}
-    return {"Error": f"{source} API Error {status}"}
+        return make_error(extra_status[status](response), status)
+    return make_error(f"{source} API Error {status}", status)

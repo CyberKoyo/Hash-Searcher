@@ -4,6 +4,7 @@ import asyncio
 from .formatters import ip_sorter, ip_formatter, otx_formatter, vt_rules, censys_formatter, whois_formatter
 from .api.api_data_puller import data_puller
 from .api.who_is import who_is
+from .api.base_call import error_status
 import datetime
 import json
 from .report import generate_pdf
@@ -29,7 +30,7 @@ async def main():
     file_hash = data['hash']
 
     # Bail before printing empty sections if neither source recognized the hash.
-    if (vt_data.get('Error') == 'Hash not found in GetTotal') and not otx_data.get('pulse_info', {}).get('pulses'):
+    if error_status(vt_data) == 404 and not otx_data.get('pulse_info', {}).get('pulses'):
         return print("Invalid hash. Please check filename or hash.")
 
     # 1, Displays what the virus does in priority order with a title and description

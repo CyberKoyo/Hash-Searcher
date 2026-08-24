@@ -13,6 +13,7 @@ from .virustotal import get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
+from .base_call import is_error
 
 # Cache system for Censys as it wants to wait longer between calls
 CACHE_FILE = os.path.join(BASE_DIR, 'censys_cache.json')
@@ -89,7 +90,7 @@ async def fetch_censys(client, ips):
         called = True
         results.append(result)
 
-        if not ('Error' in result or 'error' in result):
+        if not is_error(result):
             cache[ip] = {'timestamp': time.time(), 'data': result}
 
     save_cache(cache)
