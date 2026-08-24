@@ -1,37 +1,16 @@
 import os
-import json
-import time
 import asyncio
 import string
 
 import httpx
 
 from ..hashing import get_zip_hash
-from .config import BASE_DIR
 from .virustotal import get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
-from .base_call import is_error, make_error
-from .registry import available
-
-# Cache system for Censys as it wants to wait longer between calls
-CACHE_FILE = os.path.join(BASE_DIR, 'censys_cache.json')
-CACHE_TTL = 86400
-CENSYS_DELAY = 2
-
-
-def load_cache():
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-
-def save_cache(cache):
-    with open(CACHE_FILE, 'w') as f:
-        json.dump(cache, f, indent=2)
-
+from .base_call import make_error
+from .registry import PROVIDERS, available
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
 
@@ -67,38 +46,30 @@ def resolve_hash(user_input: str, password: str | None = None) -> list[str] | No
     return hashes
 
 
-async def fetch_censys(client, ips):
-    """Censys rate limits hard, so these stay serial with a gap between calls.
-
-    Cache hits skip both the request and the gap, and only clean results are
-    cached -- a transient 403 or 429 used to get pinned for the full TTL.
-    """
-    cache = load_cache()
+async def fetch_censys(client, ips, cache):
+    """Serial with a gap between real requests; cache hits skip both."""
+    provider = next(p for p in PROVIDERS if p.name == "censys")
     results = []
     called = False
 
     for ip in ips:
-        entry = cache.get(ip)
-        if entry and time.time() - entry['timestamp'] < CACHE_TTL:
+        hit = cache.get("censys", ip, ttl=provider.cache_ttl)
+        if hit is not None:
             print(f"Using cached Censys data for {ip}")
-            results.append(entry['data'])
+            results.append(hit)
             continue
 
-        # Space out real requests only; no trailing sleep after the last one.
         if called:
-            await asyncio.sleep(CENSYS_DELAY)
+            await asyncio.sleep(provider.serial_delay)
         result = await get_censys(client, ip)
         called = True
         results.append(result)
+        cache.put("censys", ip, result)
 
-        if not is_error(result):
-            cache[ip] = {'timestamp': time.time(), 'data': result}
-
-    save_cache(cache)
     return results
 
 
-async def data_puller(file_hash: str):
+async def data_puller(file_hash: str, cache):
     enabled = {p.name for p in available()}
 
     async with httpx.AsyncClient() as client:
@@ -120,7 +91,7 @@ async def data_puller(file_hash: str):
         # create_task, not a bare coroutine: awaited last, an unscheduled
         # coroutine would not overlap OTX and AbuseIPDB the way gather did.
         censys_task = (
-            asyncio.create_task(fetch_censys(client, ips))
+            asyncio.create_task(fetch_censys(client, ips, cache))
             if ips and "censys" in enabled else None
         )
 

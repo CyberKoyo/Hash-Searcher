@@ -9,6 +9,7 @@ or the network, so the tests are deterministic regardless of which API keys
 from hash_searcher.api.api_data_puller import data_puller
 from hash_searcher.api.base_call import make_error
 from hash_searcher.api.registry import Provider
+from hash_searcher.cache import ResponseCache
 
 FAKE_VT_DATA = {"found": True}
 
@@ -53,7 +54,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
     monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
 
-    result = await data_puller("deadbeef")
+    result = await data_puller("deadbeef", ResponseCache(enabled=False))
 
     # The disabled providers' fetches were never invoked -- not just absent
     # from the result.
@@ -90,7 +91,7 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
     monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
 
-    result = await data_puller("deadbeef")
+    result = await data_puller("deadbeef", ResponseCache(enabled=False))
 
     assert vt_stub.calls == []
     assert otx_stub.calls == []

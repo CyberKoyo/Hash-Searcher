@@ -12,6 +12,7 @@ from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
 from .api.config import BASE_DIR
 from .api.who_is import who_is
+from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report
 from .render.json_out import write_json
@@ -31,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("indicator", help="a file path, or an MD5/SHA-1/SHA-256 digest")
     parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
+    parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
+    parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
     return parser
 
 
@@ -55,7 +58,11 @@ async def run_cli(argv: list[str] | None = None) -> int:
             print(f"    not analyzed: {skipped}")
 
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
-    raw = await data_puller(file_hash)
+    cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
+    try:
+        raw = await data_puller(file_hash, cache)
+    finally:
+        cache.close()
     if not raw:
         print("No data was able to be pulled.")
         return EXIT_NO_DATA
