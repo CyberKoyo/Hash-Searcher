@@ -1,22 +1,27 @@
 import hashlib
-import sys
 import pyzipper
 
-from .api.config import total_api_key, ipdb_api_key, otx_api_key, censys_api_key
+from .api.registry import available, missing_keys
 
-def check_env():
-    keys = {
-        'TOTAL_KEY': total_api_key,
-        'IPDB_KEY': ipdb_api_key,
-        'OTX_KEY': otx_api_key,
-        'CENSYS_KEY': censys_api_key,
-    }
-    missing = [k for k,v in keys.items() if not v]
+
+def check_env() -> bool:
+    """Warn about absent keys and carry on. Returns False if nothing can run.
+
+    This used to sys.exit(1) unless all four keys were present, so a VT-only
+    setup could not run at all.
+    """
+    missing = missing_keys()
     if missing:
-        print(f"Error: Missing environment variables: {', '.join(missing)}")
-        sys.exit(1)
-    else:
-        print('API Keys loaded successfully.')
+        print(f"Warning: missing environment variables: {', '.join(missing)}")
+        print("Those sources will be skipped.")
+
+    usable = available()
+    if not usable:
+        print("Error: no usable sources. Set at least one API key in .env.")
+        return False
+
+    print(f"Sources enabled: {', '.join(p.name for p in usable)}")
+    return True
 
 BUF = 65536
 

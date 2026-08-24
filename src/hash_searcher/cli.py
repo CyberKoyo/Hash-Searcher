@@ -41,7 +41,8 @@ def output_format(path: str) -> str | None:
 
 async def run_cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    check_env()
+    if not check_env():
+        return EXIT_NO_DATA
 
     resolved = resolve_hash(args.indicator, args.zip_password)
     if not resolved:

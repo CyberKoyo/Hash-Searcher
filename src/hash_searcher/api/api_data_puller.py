@@ -12,7 +12,8 @@ from .virustotal import get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
-from .base_call import is_error
+from .base_call import is_error, make_error
+from .registry import available
 
 # Cache system for Censys as it wants to wait longer between calls
 CACHE_FILE = os.path.join(BASE_DIR, 'censys_cache.json')
@@ -98,26 +99,36 @@ async def fetch_censys(client, ips):
 
 
 async def data_puller(file_hash: str):
+    enabled = {p.name for p in available()}
+
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
-        otx_task = asyncio.create_task(get_otx(client, 'file', file_hash))
-        vt_data, ips = await get_vt(client, file_hash)
+        otx_task = (
+            asyncio.create_task(get_otx(client, 'file', file_hash))
+            if "otx" in enabled else None
+        )
 
-        if ips:
-            otx_data, ipdb_data, censys_results = await asyncio.gather(
-                otx_task,
-                asyncio.gather(*(get_ipdb(client, ip) for ip in ips)),
-                fetch_censys(client, ips),
-            )
+        if "virustotal" in enabled:
+            vt_data, ips = await get_vt(client, file_hash)
         else:
-            otx_data = await otx_task
-            ipdb_data, censys_results = [], []
+            vt_data, ips = make_error("VirusTotal key not set"), []
+
+        ipdb_task = (
+            asyncio.gather(*(get_ipdb(client, ip) for ip in ips))
+            if ips and "abuseipdb" in enabled else None
+        )
+        # create_task, not a bare coroutine: awaited last, an unscheduled
+        # coroutine would not overlap OTX and AbuseIPDB the way gather did.
+        censys_task = (
+            asyncio.create_task(fetch_censys(client, ips))
+            if ips and "censys" in enabled else None
+        )
+
+        otx_data = await otx_task if otx_task else make_error("OTX key not set")
+        ipdb_data = await ipdb_task if ipdb_task else []
+        censys_results = await censys_task if censys_task else []
 
     return {
-        'vt': vt_data,
-        'otx': otx_data,
-        'ipdb': list(ipdb_data),
-        'censys': censys_results,
-        'ips': ips,
-        'hash': file_hash,
+        'vt': vt_data, 'otx': otx_data, 'ipdb': list(ipdb_data),
+        'censys': censys_results, 'ips': ips, 'hash': file_hash,
     }
