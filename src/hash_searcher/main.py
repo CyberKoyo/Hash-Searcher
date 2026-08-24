@@ -14,7 +14,7 @@ import os
 async def main():
 
     if ((len(sys.argv) > 4) or (len(sys.argv) < 2)):
-        print("Usage: python hash-searcher.py <file_or_hash> [-o]")
+        print("Usage: hash-searcher <file_or_hash> [-o report.json | report.pdf]")
         return
     check_env()
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")

@@ -18,6 +18,9 @@ def test_readme_does_not_advertise_a_missing_script():
     assert "hash-searcher " in readme
 
 
-def test_readme_does_not_claim_recursive_zip_support():
-    readme = (Path(__file__).parents[1] / "README.md").read_text().lower()
-    assert "zips in zips" not in readme
+def test_readme_states_nested_archives_are_not_unpacked():
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    # A positive assertion: the clarification must be present. Asserting the
+    # absence of "ZIPS in ZIPS" was vacuous — that string was never in the README.
+    assert "Nested archives are not unpacked" in readme
+    assert "recursiv" not in readme.lower()
