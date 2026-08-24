@@ -26,3 +26,27 @@ def no_backoff(monkeypatch):
         return None
 
     monkeypatch.setattr("hash_searcher.api.base_call.asyncio.sleep", _instant)
+
+
+@pytest.fixture
+def sample_report():
+    """A fully populated Report. Shared by the TTY, JSON, and PDF renderer tests.
+
+    In conftest rather than a test module: `from tests.X import Y` resolves only
+    under `python -m pytest`, and dies under bare `pytest`.
+    """
+    from hash_searcher.models import (
+        CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
+    )
+
+    return Report(
+        indicator="abc123",
+        generated_at="2026-08-23 12:00:00",
+        vt=VTReport(found=True, sigma=[SigmaRule("Suspicious Process", "spawns cmd", "high")]),
+        otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"]),
+        ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2)},
+        hosts=[CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,
+                          country="NL", ports=[80, 443], new_hostnames=["new.example"])],
+        whois=[WhoisRecord(domain="bad.example", created="2020-01-01",
+                           expires="2027-01-01", registrar="R")],
+    )
