@@ -62,9 +62,7 @@ def resolve_hash(user_input: str) -> list[str] | None:
     if not hashes:
         print("Could not hash that file. Nothing to look up.")
         return None
-    # get_zip_hash still returns a single string until Task 3. Wrap it so the
-    # declared list[str] contract holds from this task onward.
-    return [hashes] if isinstance(hashes, str) else hashes
+    return hashes
 
 
 async def fetch_censys(client, ips):
@@ -107,6 +105,12 @@ async def data_puller():
     if not resolved:
         return None
     file_hash = resolved[0]
+    if len(resolved) > 1:
+        # Analyzing every member is batch mode (a later phase). Until then
+        # name the ones being skipped instead of dropping them in silence.
+        print(f"\n[!] Archive holds {len(resolved)} files. Analyzing the first: {file_hash}")
+        for skipped in resolved[1:]:
+            print(f"    not analyzed: {skipped}")
 
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
