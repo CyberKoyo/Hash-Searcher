@@ -43,7 +43,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     check_env()
 
-    resolved = resolve_hash(args.indicator)
+    resolved = resolve_hash(args.indicator, args.zip_password)
     if not resolved:
         return EXIT_NO_DATA
 

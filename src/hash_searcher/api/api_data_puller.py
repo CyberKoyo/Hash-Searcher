@@ -40,11 +40,12 @@ def looks_like_hash(value: str) -> bool:
     return len(value) in HASH_LENGTHS and all(c in string.hexdigits for c in value)
 
 
-def resolve_hash(user_input: str) -> list[str] | None:
+def resolve_hash(user_input: str, password: str | None = None) -> list[str] | None:
     """Turn the CLI argument into a list of sha256s, or None if impossible.
 
     A list because a ZIP can hold several members; a bare hash or a plain
-    file yields a one-element list.
+    file yields a one-element list. password is forwarded to get_zip_hash
+    so an encrypted archive doesn't fall back to an interactive prompt.
     """
     if looks_like_hash(user_input):
         return [user_input.lower()]
@@ -58,7 +59,7 @@ def resolve_hash(user_input: str) -> list[str] | None:
             "This file either doesn't exist or isn't in an accessible directory. Please try again."
         )
 
-    hashes = get_zip_hash(user_input)
+    hashes = get_zip_hash(user_input, password)
     if not hashes:
         print("Could not hash that file. Nothing to look up.")
         return None
