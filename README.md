@@ -13,7 +13,7 @@ OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relatio
 
 Report Production: Automatically formatted output to either .json or PDF.
 
-Cache System: Due to Censys's API calls needing time, I've implemented a json cache for ips that have been called for before.
+Cache System: Provider responses are cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). Errors are never cached. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
 🛠️ Setup
 
@@ -22,8 +22,22 @@ Cache System: Due to Censys's API calls needing time, I've implemented a json ca
 3. Copy `.env.example.txt` to `.env` and fill in your VirusTotal, AlienVault OTX,
    AbuseIPDB, and Censys keys.
 
+🧪 Tests
+
+    pip install -e ".[dev]"
+    python -m pytest tests/ -v
+
+The suite is fully offline — no API keys and no network. Provider responses are
+recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
+
 📖 Usage
 
     hash-searcher <file_path_or_hash> [-o report.json | report.pdf]
+                  [--zip-password PASSWORD] [--no-cache] [--refresh]
 
 Accepts MD5, SHA-1, and SHA-256 digests, or a path to a file.
+
+    -o, --output PATH     write a report to this path (.json or .pdf)
+    --zip-password PASS   password for an encrypted ZIP; prompts if omitted
+    --no-cache            ignore and bypass the cache
+    --refresh             force fresh calls, then re-cache
