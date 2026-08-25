@@ -237,3 +237,16 @@ def test_a_non_pe_sample_has_no_pe_info():
     from hash_searcher.analysis.vt import extract_vt
 
     assert extract_vt({"data": {"attributes": {}}}).pe is None
+
+
+def test_otx_report_carries_resolved_techniques():
+    from hash_searcher.analysis.otx import extract_otx
+
+    raw = {"pulse_info": {"count": 3, "pulses": [
+        {"attack_ids": [{"id": "T1055", "display_name": "T1055 - Process Injection"}]},
+    ]}}
+    report = extract_otx(raw)
+    assert [t.id for t in report.techniques] == ["T1055"]
+    # The display-name list is unchanged: json_out and pdf both serialize it,
+    # and changing its contents is a schema break for downstream consumers.
+    assert report.attack_techniques == ["T1055 - Process Injection"]

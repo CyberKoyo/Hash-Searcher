@@ -15,6 +15,14 @@ class SigmaRule:
 
 
 @dataclass(frozen=True)
+class AttackTechnique:
+    id: str
+    name: str
+    tactic: str | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
 class Detection:
     """VT's last_analysis_stats, reduced to the five verdict buckets.
 
@@ -95,6 +103,7 @@ class VTReport:
     sandbox: list[SandboxVerdict] = field(default_factory=list)
     yara: list[YaraMatch] = field(default_factory=list)
     pe: PEInfo | None = None
+    techniques: list[AttackTechnique] = field(default_factory=list)
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]
@@ -107,14 +116,7 @@ class OTXReport:
     error: str | None = None
     has_pulses: bool = False
     has_pulse_info: bool = False
-
-
-@dataclass(frozen=True)
-class AttackTechnique:
-    id: str
-    name: str
-    tactic: str | None = None
-    url: str | None = None
+    techniques: list[AttackTechnique] = field(default_factory=list)
 
 
 @dataclass

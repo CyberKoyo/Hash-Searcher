@@ -5,6 +5,7 @@ from ..models import (
     Detection, PEInfo, SandboxVerdict, Signature, SigmaRule, Submission,
     ThreatClass, VTReport, YaraMatch,
 )
+from .attack import resolve, technique_ids_from_vt
 
 NAME_LIMIT = 5  # VT returns hundreds; the report shows the first few.
 FLAGGED = frozenset({"malicious", "suspicious"})
@@ -155,4 +156,5 @@ def extract_vt(raw) -> VTReport:
         sandbox=_sandbox(attributes),
         yara=_yara(attributes),
         pe=_pe(attributes),
+        techniques=resolve(technique_ids_from_vt(raw)),
     )
