@@ -182,7 +182,7 @@ def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     written = {}
     monkeypatch.setattr(cli, "write_json",
-                        lambda report, path: written.setdefault("path", path))
+                        lambda report, path, verdict=None: written.setdefault("path", path))
 
     cli.write_report(object(), "report.json")
 

@@ -58,7 +58,7 @@ def output_format(path: str) -> str | None:
     return {".json": "json", ".pdf": "pdf"}.get(ext)
 
 
-def write_report(report, output: str) -> None:
+def write_report(report: Report, output: str, verdict=None) -> None:
     """Resolve output relative to the CWD and dispatch on the extension.
 
     This used to join onto BASE_DIR -- the installed package directory --
@@ -68,9 +68,9 @@ def write_report(report, output: str) -> None:
     path = os.path.abspath(output)
     fmt = output_format(output)
     if fmt == "json":
-        write_json(report, path)
+        write_json(report, path, verdict)
     elif fmt == "pdf":
-        write_pdf(report, path)
+        write_pdf(report, path, verdict)
     else:
         print(f"Unrecognized output extension: {output} (use .json or .pdf)")
 
@@ -121,7 +121,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
     render(report, verdict)
 
     if args.output:
-        write_report(report, args.output)
+        write_report(report, args.output, verdict)
 
     return exit_code(verdict)
 
