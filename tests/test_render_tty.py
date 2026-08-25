@@ -439,3 +439,41 @@ def test_render_without_a_verdict_prints_no_verdict_section(capsys, sample_repor
 
     render(sample_report)
     assert "VERDICT:" not in capsys.readouterr().out
+
+
+def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):
+    from hash_searcher.models import CensysHost
+    from hash_searcher.render.tty import render_hosts
+
+    sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
+    render_hosts(sample_report)
+    assert "Censys 403: forbidden" in capsys.readouterr().out
+
+
+def test_render_hosts_error_branch_exact_formatting(capsys, sample_report):
+    from hash_searcher.models import CensysHost
+    from hash_searcher.render.tty import RULE, render_hosts
+
+    sample_report.hosts = [
+        CensysHost(ip="198.51.100.10", error="Censys 403: forbidden"),
+        CensysHost(ip="N/A", error="Rate limited"),
+    ]
+    render_hosts(sample_report)
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "CENSYS ENRICHMENT\n"
+        + RULE + "\n"
+        "\nIP:      198.51.100.10\n"
+        "Censys: Censys 403: forbidden\n"
+        "\nIP:      N/A\n"
+        "Censys: Rate limited\n"
+    )
+
+
+def test_render_ips_says_so_when_abuseipdb_returned_nothing(capsys, sample_report):
+    """S3: 'No data from IPDB available.' -- an empty table looks like a bug."""
+    from hash_searcher.render.tty import render_ips
+
+    sample_report.ips = {}
+    render_ips(sample_report)
+    assert "No data from IPDB available." in capsys.readouterr().out

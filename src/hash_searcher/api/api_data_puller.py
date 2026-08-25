@@ -9,7 +9,7 @@ from .virustotal import contacted_ips, get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
-from .base_call import make_error
+from .base_call import is_error, make_error, tag_indicator
 from .registry import available, by_name
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
@@ -62,6 +62,10 @@ async def fetch_censys(client, ips, cache):
         if called:
             await asyncio.sleep(provider.serial_delay)
         result = await get_censys(client, ip)
+        if is_error(result):
+            # api_get's messages are built from the status code alone, so
+            # the payload cannot say which IP failed. Here it can.
+            result = tag_indicator(result, ip)
         called = True
         results.append(result)
         cache.put("censys", ip, result)

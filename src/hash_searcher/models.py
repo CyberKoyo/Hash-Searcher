@@ -137,6 +137,7 @@ class CensysHost:
     ports: list[int] = field(default_factory=list)
     hostnames: list[str] = field(default_factory=list)
     new_hostnames: list[str] = field(default_factory=list)
+    error: str | None = None
 
 
 @dataclass

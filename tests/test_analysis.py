@@ -73,9 +73,14 @@ def test_extract_hosts_flags_only_hostnames_ipdb_lacked(fixture_json):
     assert "new.example" in domains
 
 
-def test_extract_hosts_skips_error_entries():
+def test_extract_hosts_carries_error_entries_rather_than_dropping_them():
+    """Phase 1 skipped them, which silently lost main's 'Censys: <error>'
+    line (ledger S2). They now come through as hosts carrying an error and
+    no enrichment -- see test_a_failed_censys_lookup_becomes_a_host_carrying_its_error."""
     domains, hosts = extract_hosts([make_error("Rate limited", 429)], {})
-    assert hosts == [] and domains == []
+    assert domains == []
+    assert [h.error for h in hosts] == ["Rate limited"]
+    assert hosts[0].org is None and hosts[0].ports == []
 
 
 def test_extract_whois_preserves_failures():
@@ -250,3 +255,36 @@ def test_otx_report_carries_resolved_techniques():
     # The display-name list is unchanged: json_out and pdf both serialize it,
     # and changing its contents is a schema break for downstream consumers.
     assert report.attack_techniques == ["T1055 - Process Injection"]
+
+
+def test_a_failed_censys_lookup_becomes_a_host_carrying_its_error():
+    """S2: main printed 'Censys: <error>' per entry. Purifying the extractor
+    dropped it because CensysHost had nowhere to put it."""
+    from hash_searcher.analysis.censys import extract_hosts
+    from hash_searcher.api.base_call import make_error
+
+    _, hosts = extract_hosts([make_error("Censys 403: forbidden", 403)], {})
+    assert len(hosts) == 1
+    assert hosts[0].error == "Censys 403: forbidden"
+
+
+def test_a_failed_censys_lookup_names_the_ip_when_the_fetcher_tagged_it():
+    """The original could only print 'Censys: <error>' -- the error payload
+    had no IP in it. fetch_censys knows which IP it was asking about, so it
+    tags the failure and the report can name it."""
+    from hash_searcher.analysis.censys import extract_hosts
+    from hash_searcher.api.base_call import make_error, tag_indicator
+
+    _, hosts = extract_hosts(
+        [tag_indicator(make_error("Censys 403: forbidden", 403), "198.51.100.10")], {})
+    assert hosts[0].ip == "198.51.100.10"
+    assert hosts[0].error == "Censys 403: forbidden"
+
+
+def test_an_errored_censys_entry_contributes_no_domains():
+    """A failure must not widen the WHOIS lookup set."""
+    from hash_searcher.analysis.censys import extract_hosts
+    from hash_searcher.api.base_call import make_error
+
+    domains, _ = extract_hosts([make_error("Rate limited", 429)], {})
+    assert domains == []

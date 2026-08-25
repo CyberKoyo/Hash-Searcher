@@ -58,6 +58,9 @@ def render_ips(report: Report) -> None:
     print("\n" + RULE)
     print(f"{'IP':<{w1}} {'CONFIDENCE':<{w2}} {'REPORTS':<{w3}}")
     print("-" * total)
+    if not report.ips:
+        # S3: an empty table reads as a bug. main said this explicitly.
+        print("No data from IPDB available.")
     for info in report.ips.values():
         print(f"{info.ip:<{w1}} {f'{info.confidence}%':<{w2}} {str(info.reports):<{w3}}")
     print("-" * total)
@@ -67,6 +70,12 @@ def render_hosts(report: Report) -> None:
     _header("CENSYS ENRICHMENT")
     for host in report.hosts:
         print(f"\nIP:      {host.ip}")
+        if host.error:
+            # Matches the string main printed before the extractors were
+            # purified; the IP line above is new, and is only useful because
+            # fetch_censys now tags the failure with it.
+            print(f"Censys: {host.error}")
+            continue
         print(f"Org:     {host.org}  |  ASN: {host.asn}")
         print(f"Country: {host.country}")
         print(f"Ports:   {', '.join(str(p) for p in host.ports) if host.ports else 'N/A'}")

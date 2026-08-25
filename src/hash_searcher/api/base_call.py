@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 ERROR_KEY = "hs_error"
 STATUS_KEY = "hs_status"
+INDICATOR_KEY = "hs_indicator"
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_ATTEMPTS = 3
@@ -37,6 +38,21 @@ def _backoff_seconds(attempt: int, retry_after: str | None) -> float:
 
 def make_error(message: str, status: int | None = None) -> dict:
     return {ERROR_KEY: message, STATUS_KEY: status}
+
+
+def tag_indicator(payload: dict, indicator: str) -> dict:
+    """Record which indicator a failure was about.
+
+    api_get builds its messages from the status code alone, so an error dict
+    cannot say which of several IPs produced it. A caller looping over
+    indicators knows, and the report can only name the failing one if that
+    knowledge travels with the payload.
+    """
+    return {**payload, INDICATOR_KEY: indicator}
+
+
+def error_indicator(payload) -> str | None:
+    return payload.get(INDICATOR_KEY) if isinstance(payload, dict) else None
 
 
 def is_error(payload) -> bool:
