@@ -4,7 +4,7 @@ Section functions are public so a verdict section can be slotted in without
 rewriting render().
 """
 
-from ..models import Report
+from ..models import Report, Verdict
 
 RULE = "=" * 50
 
@@ -102,8 +102,81 @@ def render_otx(report: Report) -> None:
         print(technique)
 
 
-def render(report: Report) -> None:
+SIGNAL_NAME_WIDTH = 11
+
+
+def render_verdict(report: Report, verdict: Verdict) -> None:
+    """Score first, then every signal that produced it.
+
+    The rationale lines are the point. A verdict an analyst cannot decompose
+    is one they cannot disagree with, which makes it useless to them.
+    """
+    _header(f"VERDICT: {verdict.level} (score {verdict.score})")
+    if not verdict.signals:
+        print("No signals fired.")
+        return
+    for signal in verdict.signals:
+        print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
+
+
+def render_detection(report: Report) -> None:
+    detection = report.vt.detection
+    if not detection:
+        return
+    print(f"\nDetections: {detection.ratio}"
+          f"  (suspicious {detection.suspicious}, undetected {detection.undetected})")
+
+
+def render_attribution(report: Report) -> None:
+    """Family, signature, sandbox, YARA, PE, submissions, ATT&CK -- whichever
+    of them VT actually returned. Silent when it returned none."""
+    vt = report.vt
+    if not any((vt.threat, vt.signature, vt.sandbox, vt.yara, vt.pe,
+                vt.techniques, vt.submission and vt.submission.times_submitted)):
+        return
+    _header("ATTRIBUTION")
+    if vt.threat:
+        print(f"Label:      {vt.threat.label}")
+        if vt.threat.family:
+            print(f"Family:     {vt.threat.family}")
+        if vt.threat.categories:
+            print(f"Categories: {', '.join(vt.threat.categories)}")
+    if vt.signature:
+        state = "verified" if vt.signature.verified else "present but NOT verified"
+        print(f"Signature:  {state} ({vt.signature.signer or 'unnamed signer'})")
+    for verdict in vt.sandbox:
+        names = f" -- {', '.join(verdict.malware_names)}" if verdict.malware_names else ""
+        print(f"Sandbox:    {verdict.sandbox} says {verdict.category}{names}")
+    for match in vt.yara:
+        print(f"YARA:       {match.rule} ({match.author or 'unknown author'})")
+    if vt.pe:
+        print(f"PE:         {vt.pe.sections} sections, "
+              f"imphash {vt.pe.imphash or 'N/A'}, compiled {vt.pe.compiled or 'N/A'}")
+    if vt.submission and vt.submission.times_submitted:
+        print(f"Submitted:  {vt.submission.times_submitted} times, "
+              f"first seen {vt.submission.first_seen or 'N/A'}")
+        if vt.submission.names:
+            print(f"Names:      {', '.join(vt.submission.names)}")
+    for technique in vt.techniques:
+        tactic = f" ({technique.tactic})" if technique.tactic else ""
+        print(f"ATT&CK:     {technique.id} {technique.name}{tactic}")
+
+
+def render_domains(report: Report) -> None:
+    """contacted_domains has been fetched since Phase 0 and never printed."""
+    if not report.vt.contacted_domains:
+        return
+    _header("CONTACTED DOMAINS")
+    for domain in report.vt.contacted_domains:
+        print(domain)
+
+
+def render(report: Report, verdict: Verdict | None = None) -> None:
+    if verdict is not None:
+        render_verdict(report, verdict)
+    render_detection(report)
     render_vt(report)
+    render_attribution(report)
     # Gate on whether VT actually returned contacted IPs, not on whether
     # AbuseIPDB happened to yield usable data -- see main.py history. This
     # keeps the TTY and JSON/PDF outputs in agreement regardless of which
@@ -112,4 +185,5 @@ def render(report: Report) -> None:
         render_ips(report)
         render_hosts(report)
         render_whois(report)
+    render_domains(report)
     render_otx(report)

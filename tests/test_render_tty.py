@@ -329,3 +329,113 @@ def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
         "Recorded instances: N/A\n"
     )
     assert out == expected
+
+
+def test_verdict_section_leads_with_the_level_and_lists_every_signal(capsys, sample_report):
+    from hash_searcher.models import Signal, Verdict
+    from hash_searcher.render.tty import RULE, render_verdict
+
+    verdict = Verdict(level="MALICIOUS", score=60, signals=[
+        Signal("detection", 50, "48/72 engines flagged this file"),
+        Signal("otx", 10, "OTX pulses reference this indicator (3 recorded instances)"),
+    ])
+    render_verdict(sample_report, verdict)
+
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "VERDICT: MALICIOUS (score 60)\n"
+        + RULE + "\n"
+        "  +50  detection   48/72 engines flagged this file\n"
+        "  +10  otx         OTX pulses reference this indicator (3 recorded instances)\n"
+    )
+
+
+def test_a_verdict_with_no_signals_says_so(capsys, sample_report):
+    from hash_searcher.models import Verdict
+    from hash_searcher.render.tty import render_verdict
+
+    render_verdict(sample_report, Verdict(level="UNKNOWN", score=0, signals=[]))
+    out = capsys.readouterr().out
+    assert "VERDICT: UNKNOWN (score 0)" in out
+    assert "No signals fired." in out
+
+
+def test_a_negative_signal_prints_its_sign(capsys, sample_report):
+    from hash_searcher.models import Signal, Verdict
+    from hash_searcher.render.tty import render_verdict
+
+    render_verdict(sample_report, Verdict(level="CLEAN", score=-20, signals=[
+        Signal("signed", -20, "valid signature from Contoso Ltd"),
+    ]))
+    assert "  -20  signed" in capsys.readouterr().out
+
+
+def test_detection_section_prints_the_ratio(capsys, sample_report):
+    from hash_searcher.models import Detection
+    from hash_searcher.render.tty import render_detection
+
+    sample_report.vt.detection = Detection(malicious=48, suspicious=0, undetected=24)
+    render_detection(sample_report)
+    assert capsys.readouterr().out == (
+        "\nDetections: 48/72  (suspicious 0, undetected 24)\n"
+    )
+
+
+def test_detection_section_is_silent_without_stats(capsys, sample_report):
+    from hash_searcher.render.tty import render_detection
+
+    sample_report.vt.detection = None
+    render_detection(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_contacted_domains_are_printed(capsys, sample_report):
+    from hash_searcher.render.tty import render_domains
+
+    sample_report.vt.contacted_domains = ["evil.example"]
+    render_domains(sample_report)
+    out = capsys.readouterr().out
+    assert "CONTACTED DOMAINS" in out and "evil.example" in out
+
+
+def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):
+    """The per-section exact-output tests pin each section's bytes, but
+    nothing pinned the ORDER render() prints them in -- so Task 7's
+    reordering could have drifted silently. Verdict leads, the detection
+    ratio sits above the sigma rules it summarizes, attribution follows the
+    rules, and contacted domains land with the other network indicators
+    rather than after OTX.
+    """
+    from hash_searcher.models import Detection, Signal, ThreatClass, Verdict
+    from hash_searcher.render.tty import render
+
+    sample_report.vt.detection = Detection(malicious=48, undetected=24)
+    sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet")
+    sample_report.vt.contacted_domains = ["evil.example"]
+    render(sample_report, Verdict(level="MALICIOUS", score=50,
+                                  signals=[Signal("detection", 50, "48/72 engines flagged this file")]))
+
+    out = capsys.readouterr().out
+    markers = [
+        "VERDICT: MALICIOUS (score 50)",
+        "Detections: 48/72",
+        "VIRUSTOTAL SIGMA RULES",
+        "ATTRIBUTION",
+        "CENSYS ENRICHMENT",
+        "WHOIS DATA",
+        "CONTACTED DOMAINS",
+        "OTX DATA",
+    ]
+    positions = [out.index(marker) for marker in markers]
+    assert positions == sorted(positions), (
+        f"sections drifted out of order: "
+        f"{[m for _, m in sorted(zip(positions, markers))]}"
+    )
+
+
+def test_render_without_a_verdict_prints_no_verdict_section(capsys, sample_report):
+    """render(report) keeps working for every pre-Phase-2 call site."""
+    from hash_searcher.render.tty import render
+
+    render(sample_report)
+    assert "VERDICT:" not in capsys.readouterr().out
