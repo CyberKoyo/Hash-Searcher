@@ -84,6 +84,10 @@ async def api_get(
     not_found:    message for a 404
     extra_status: per-API special cases, {status: response -> message}
     """
+    if max_attempts < 1:
+        # Falling through the loop returned the nonsense "Network Error: None".
+        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+
     response = None
     last_network_error = None
 

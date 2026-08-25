@@ -17,13 +17,40 @@ def test_vt_report_defaults_to_empty_collections():
 
 
 def test_report_holds_every_section():
+    """It constructs all eight fields, so it should assert all eight. IPReport,
+    CensysHost, and WhoisRecord had no field-level assertions anywhere."""
     report = Report(
         indicator="abc", generated_at="2026-08-23 00:00:00",
         vt=VTReport(found=True), otx=OTXReport(recorded_instances=0),
-        ips={}, hosts=[], whois=[],
+        ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2,
+                                       hostnames=["h.example"], domain="example")},
+        hosts=[CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,
+                          country="NL", ports=[80], hostnames=["h.example"],
+                          new_hostnames=["new.example"])],
+        whois=[WhoisRecord(domain="bad.example", created="2020-01-01",
+                           expires="2027-01-01", registrar="R")],
+        source_file="sample.bin",
     )
     assert report.indicator == "abc"
+    assert report.generated_at == "2026-08-23 00:00:00"
+    assert report.source_file == "sample.bin"
     assert report.vt.found is True
+    assert report.otx.recorded_instances == 0
+
+    ip = report.ips["198.51.100.10"]
+    assert (ip.ip, ip.confidence, ip.reports) == ("198.51.100.10", 90, 2)
+    assert ip.hostnames == ["h.example"] and ip.domain == "example"
+
+    host = report.hosts[0]
+    assert (host.ip, host.org, host.asn, host.country) == \
+        ("198.51.100.10", "Example AS", 64496, "NL")
+    assert host.ports == [80] and host.new_hostnames == ["new.example"]
+    assert host.error is None
+
+    record = report.whois[0]
+    assert (record.domain, record.created, record.expires, record.registrar) == \
+        ("bad.example", "2020-01-01", "2027-01-01", "R")
+    assert record.error is None
 
 
 def test_sigma_by_level_partitions_rules():
