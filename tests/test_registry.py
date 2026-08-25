@@ -52,8 +52,10 @@ def test_by_name_raises_lookup_error_not_stop_iteration():
 
 
 async def test_fetch_censys_names_a_missing_registry_entry(monkeypatch):
-    """The reason by_name exists: a bare next() here surfaces as
-    'RuntimeError: coroutine raised StopIteration', naming nothing."""
+    """The reason by_name exists. A bare next() over an import-bound
+    PROVIDERS cannot even see this patch, and when it does run dry inside a
+    coroutine the interpreter rewrites the StopIteration into an opaque
+    'RuntimeError: coroutine raised StopIteration' that names nothing."""
     from hash_searcher.api.api_data_puller import fetch_censys
     from hash_searcher.cache import ResponseCache
 
