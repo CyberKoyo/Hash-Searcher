@@ -71,3 +71,15 @@ def test_available_sees_a_key_set_after_import(monkeypatch):
     monkeypatch.setenv("TOTAL_KEY", "set-after-import")
     assert "virustotal" in {p.name for p in available()}
     assert "TOTAL_KEY" not in missing_keys()
+
+
+def test_every_provider_fetch_takes_client_and_indicator():
+    """Obs. B: the registry's promise -- append a Provider, add a source --
+    only holds if every fetch agrees on its call shape."""
+    import inspect
+    from hash_searcher.api.registry import PROVIDERS
+
+    for provider in PROVIDERS:
+        params = list(inspect.signature(provider.fetch).parameters.values())
+        required = [p for p in params if p.default is inspect.Parameter.empty]
+        assert len(required) == 2, f"{provider.name} takes {len(required)} required args"

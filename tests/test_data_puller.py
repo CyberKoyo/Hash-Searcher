@@ -11,7 +11,9 @@ from hash_searcher.api.base_call import make_error
 from hash_searcher.api.registry import Provider
 from hash_searcher.cache import ResponseCache
 
-FAKE_VT_DATA = {"found": True}
+FAKE_VT_DATA = {
+    "data": {"relationships": {"contacted_ips": {"data": [{"id": "198.51.100.10"}]}}}
+}
 
 
 def _provider(name: str) -> Provider:
@@ -43,7 +45,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         lambda: [_provider("virustotal")],
     )
 
-    vt_stub = _Recorder((FAKE_VT_DATA, ["198.51.100.10"]))
+    vt_stub = _Recorder(FAKE_VT_DATA)
     otx_stub = _Recorder(None)
     ipdb_stub = _Recorder(None)
     censys_stub = _Recorder(None)
@@ -80,7 +82,7 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         lambda: [],
     )
 
-    vt_stub = _Recorder((FAKE_VT_DATA, ["198.51.100.10"]))
+    vt_stub = _Recorder(FAKE_VT_DATA)
     otx_stub = _Recorder(None)
     ipdb_stub = _Recorder(None)
     censys_stub = _Recorder(None)

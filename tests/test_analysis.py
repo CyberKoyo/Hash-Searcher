@@ -95,3 +95,19 @@ def test_extract_otx_sets_has_pulse_info_per_branch(fixture_json):
     assert extract_otx(make_error("OTX key not set")).has_pulse_info is False
     # A pulse_info that exists but carries no count is still real data.
     assert extract_otx({"pulse_info": {"pulses": []}}).has_pulse_info is True
+
+
+def test_contacted_ips_reads_the_relationship_block():
+    from hash_searcher.api.virustotal import contacted_ips
+
+    payload = {"data": {"relationships": {"contacted_ips": {"data": [
+        {"id": "198.51.100.10"}, {"id": "203.0.113.7"},
+    ]}}}}
+    assert contacted_ips(payload) == ["198.51.100.10", "203.0.113.7"]
+
+
+def test_contacted_ips_is_empty_on_an_error_payload():
+    from hash_searcher.api.base_call import make_error
+    from hash_searcher.api.virustotal import contacted_ips
+
+    assert contacted_ips(make_error("Hash not found in GetTotal", 404)) == []

@@ -5,7 +5,7 @@ import string
 import httpx
 
 from ..hashing import get_zip_hash
-from .virustotal import get_vt
+from .virustotal import contacted_ips, get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
@@ -75,12 +75,13 @@ async def data_puller(file_hash: str, cache):
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
         otx_task = (
-            asyncio.create_task(get_otx(client, 'file', file_hash))
+            asyncio.create_task(get_otx(client, file_hash))
             if "otx" in enabled else None
         )
 
         if "virustotal" in enabled:
-            vt_data, ips = await get_vt(client, file_hash)
+            vt_data = await get_vt(client, file_hash)
+            ips = contacted_ips(vt_data)
         else:
             vt_data, ips = make_error("VirusTotal key not set"), []
 

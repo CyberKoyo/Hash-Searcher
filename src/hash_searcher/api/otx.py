@@ -4,7 +4,7 @@ from .base_call import api_get
 from . import config
 
 
-async def get_otx(client: httpx.AsyncClient, indicator_type, indicator):
+async def get_otx(client: httpx.AsyncClient, indicator, indicator_type="file"):
     return await api_get(
         client,
         f"https://otx.alienvault.com/api/v1/indicators/{indicator_type}/{indicator}/general",
