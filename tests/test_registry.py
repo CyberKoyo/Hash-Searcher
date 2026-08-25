@@ -1,4 +1,6 @@
-from hash_searcher.api.registry import Provider, available, missing_keys
+import pytest
+
+from hash_searcher.api.registry import Provider, available, by_name, missing_keys
 
 
 def _providers():
@@ -32,3 +34,23 @@ def test_serial_delay_defaults_to_zero():
 def test_real_registry_covers_the_four_current_sources():
     from hash_searcher.api.registry import PROVIDERS
     assert {p.name for p in PROVIDERS} == {"virustotal", "otx", "abuseipdb", "censys"}
+
+
+def test_by_name_finds_a_provider():
+    assert by_name("censys", _providers()).serial_delay == 2.0
+
+
+def test_by_name_raises_lookup_error_not_stop_iteration():
+    with pytest.raises(LookupError, match="no provider named 'nope'"):
+        by_name("nope", _providers())
+
+
+async def test_fetch_censys_names_a_missing_registry_entry(monkeypatch):
+    """The reason by_name exists: a bare next() here surfaces as
+    'RuntimeError: coroutine raised StopIteration', naming nothing."""
+    from hash_searcher.api.api_data_puller import fetch_censys
+    from hash_searcher.cache import ResponseCache
+
+    monkeypatch.setattr("hash_searcher.api.registry.PROVIDERS", [])
+    with pytest.raises(LookupError, match="censys"):
+        await fetch_censys(None, ["198.51.100.10"], ResponseCache(enabled=False))

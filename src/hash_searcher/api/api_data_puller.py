@@ -10,7 +10,7 @@ from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .base_call import make_error
-from .registry import PROVIDERS, available
+from .registry import available, by_name
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
 
@@ -48,7 +48,7 @@ def resolve_hash(user_input: str, password: str | None = None) -> list[str] | No
 
 async def fetch_censys(client, ips, cache):
     """Serial with a gap between real requests; cache hits skip both."""
-    provider = next(p for p in PROVIDERS if p.name == "censys")
+    provider = by_name("censys")
     results = []
     called = False
 

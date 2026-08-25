@@ -43,3 +43,18 @@ def available(providers: list[Provider] | None = None) -> list[Provider]:
 def missing_keys(providers: list[Provider] | None = None) -> list[str]:
     pool = PROVIDERS if providers is None else providers
     return [p.key_env for p in pool if p.key_env and not p.key_value]
+
+
+def by_name(name: str, providers: list[Provider] | None = None) -> Provider:
+    """Look up one provider by name.
+
+    Raises LookupError, never StopIteration: callers are coroutines, and a
+    StopIteration escaping one is rewritten by the interpreter into an
+    opaque "coroutine raised StopIteration" that names neither the registry
+    nor the entry that went missing.
+    """
+    pool = PROVIDERS if providers is None else providers
+    for provider in pool:
+        if provider.name == name:
+            return provider
+    raise LookupError(f"no provider named {name!r} in PROVIDERS")
