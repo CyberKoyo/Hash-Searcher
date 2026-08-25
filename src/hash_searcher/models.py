@@ -148,6 +148,20 @@ class WhoisRecord:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class Signal:
+    name: str
+    points: int
+    detail: str
+
+
+@dataclass(frozen=True)
+class Verdict:
+    level: str
+    score: int
+    signals: list[Signal] = field(default_factory=list)
+
+
 @dataclass
 class Report:
     indicator: str
