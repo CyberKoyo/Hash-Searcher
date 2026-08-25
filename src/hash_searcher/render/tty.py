@@ -89,7 +89,7 @@ def render_hosts(report: Report) -> None:
 def render_whois(report: Report) -> None:
     _header("WHOIS DATA")
     print(f"{'DOMAIN':<35} {'CREATED':<12} {'EXPIRES':<12} {'REGISTRAR':<30}")
-    print("-" * 89)
+    print("-" * 92)
     for record in report.whois:
         if record.error:
             print(f"{record.domain:<35} Error")

@@ -55,7 +55,12 @@ def test_render_ips_exact_formatting(capsys):
 
 
 def test_render_whois_exact_formatting(capsys):
-    """Assert exact column alignment and separator in WHOIS table."""
+    """Assert exact column alignment and separator in WHOIS table.
+
+    The separator is 92 as of R13: the header pads to
+    35 + 1 + 12 + 1 + 12 + 1 + 30 == 92, and the 89 pinned here through
+    Phase 1 was a faithful port of formatters.py:183-184's defect.
+    """
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
@@ -79,7 +84,7 @@ def test_render_whois_exact_formatting(capsys):
         "WHOIS DATA\n"
         "==================================================\n"
         "DOMAIN                              CREATED      EXPIRES      REGISTRAR                     \n"
-        "-----------------------------------------------------------------------------------------\n"
+        "--------------------------------------------------------------------------------------------\n"
         "bad.example                         2020-01-01   2027-01-01   R                             \n"
     )
     assert out == expected
@@ -477,3 +482,16 @@ def test_render_ips_says_so_when_abuseipdb_returned_nothing(capsys, sample_repor
     sample_report.ips = {}
     render_ips(sample_report)
     assert "No data from IPDB available." in capsys.readouterr().out
+
+
+def test_the_whois_separator_matches_the_header_width(capsys, sample_report):
+    """R13: 35+1+12+1+12+1+30 == 92. The separator was 89 -- three short, a
+    faithful port of a defect in formatters.py:183-184."""
+    from hash_searcher.render.tty import render_whois
+
+    render_whois(sample_report)
+    lines = capsys.readouterr().out.splitlines()
+    header = next(line for line in lines if line.startswith("DOMAIN"))
+    separator = lines[lines.index(header) + 1]
+    assert len(separator) == 92
+    assert separator == "-" * 92
