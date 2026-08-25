@@ -194,7 +194,8 @@ def test_render_hosts_exact_formatting(capsys):
 def test_render_otx_exact_formatting_with_data(capsys):
     report = Report(
         indicator="test", generated_at="x", vt=None,
-        otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"]),
+        otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"],
+                      has_pulse_info=True),
         ips={}, hosts=[], whois=[],
     )
     render_otx(report)
@@ -235,7 +236,8 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
     via the fallback string, not a bare 'N/A'."""
     report = Report(
         indicator="test", generated_at="x", vt=None,
-        otx=OTXReport(recorded_instances="N/A, No recorded instances"),
+        otx=OTXReport(recorded_instances="N/A, No recorded instances",
+                      has_pulse_info=True),
         ips={}, hosts=[], whois=[],
     )
     render_otx(report)
@@ -302,3 +304,28 @@ def test_render_skips_ip_sections_when_vt_reported_no_contacted_ips(capsys):
     out = capsys.readouterr().out
     assert "CENSYS ENRICHMENT" not in out
     assert "WHOIS DATA" not in out
+
+
+def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
+    """A real pulse_info whose count is the string "N/A" must still print the
+    recorded-instances line.
+
+    render_otx used to branch on `recorded_instances == "N/A"`, overloading a
+    value as a control signal. The original gated on `if not pulse_info:`
+    (formatters.py:otx_formatter at 129ff8d), so this input printed
+    "Recorded instances: N/A" there. Gating on has_pulse_info restores that.
+    """
+    report = Report(
+        indicator="test", generated_at="x", vt=None,
+        otx=OTXReport(recorded_instances="N/A", has_pulse_info=True),
+        ips={}, hosts=[], whois=[],
+    )
+    render_otx(report)
+    out = capsys.readouterr().out
+    expected = (
+        "\n==================================================\n"
+        "OTX DATA\n"
+        "==================================================\n"
+        "Recorded instances: N/A\n"
+    )
+    assert out == expected

@@ -23,4 +23,5 @@ def extract_otx(raw) -> OTXReport:
         recorded_instances=pulse_info.get("count", "N/A, No recorded instances"),
         attack_techniques=techniques,
         has_pulses=bool(pulse_info.get("pulses")),
+        has_pulse_info=True,
     )

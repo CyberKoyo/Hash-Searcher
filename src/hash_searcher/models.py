@@ -32,6 +32,7 @@ class OTXReport:
     attack_techniques: list[str] = field(default_factory=list)
     error: str | None = None
     has_pulses: bool = False
+    has_pulse_info: bool = False
 
 
 @dataclass

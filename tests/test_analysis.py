@@ -86,3 +86,12 @@ def test_extract_whois_preserves_failures():
     ])
     assert records[0].registrar == "R"
     assert records[1].error == "No WHOIS data found"
+
+
+def test_extract_otx_sets_has_pulse_info_per_branch(fixture_json):
+    """has_pulse_info mirrors the original's `if not pulse_info:` gate."""
+    assert extract_otx(fixture_json("otx_pulses")).has_pulse_info is True
+    assert extract_otx({}).has_pulse_info is False
+    assert extract_otx(make_error("OTX key not set")).has_pulse_info is False
+    # A pulse_info that exists but carries no count is still real data.
+    assert extract_otx({"pulse_info": {"pulses": []}}).has_pulse_info is True
