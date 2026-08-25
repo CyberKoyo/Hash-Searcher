@@ -15,8 +15,7 @@ FAKE_VT_DATA = {"found": True}
 
 
 def _provider(name: str) -> Provider:
-    return Provider(name=name, key_env=None, key_value=None,
-                     indicator_types=(), fetch=None)
+    return Provider(name=name, key_env=None, indicator_types=(), fetch=None)
 
 
 class _Recorder:

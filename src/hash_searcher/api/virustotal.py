@@ -1,10 +1,9 @@
 import httpx
 
 from .base_call import api_get
-from .config import total_api_key
+from . import config
 
 VT_FILES_URL = 'https://www.virustotal.com/api/v3/files'
-VT_HEADERS = {"accept": "application/json", "x-apikey": total_api_key}
 
 
 async def get_vt(client: httpx.AsyncClient, hash) -> tuple:
@@ -18,7 +17,7 @@ async def get_vt(client: httpx.AsyncClient, hash) -> tuple:
     data = await api_get(
         client,
         f'{VT_FILES_URL}/{hash}',
-        VT_HEADERS,
+        {"accept": "application/json", "x-apikey": config.key("TOTAL_KEY") or ""},
         params={'relationships': 'contacted_ips,contacted_domains'},
         source='GetTotal',
         not_found='Hash not found in GetTotal',

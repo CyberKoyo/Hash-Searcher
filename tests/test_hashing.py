@@ -29,7 +29,7 @@ def test_check_env_warns_but_runs_with_a_partial_key_set(monkeypatch, capsys):
     )
     monkeypatch.setattr(
         "hash_searcher.hashing.available",
-        lambda: [Provider(name="virustotal", key_env=None, key_value=None,
+        lambda: [Provider(name="virustotal", key_env=None,
                            indicator_types=(), fetch=None)],
     )
 
