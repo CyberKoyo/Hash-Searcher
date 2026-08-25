@@ -180,3 +180,60 @@ def test_submission_first_seen_is_none_without_a_timestamp():
     submission = extract_vt({"data": {"attributes": {"times_submitted": 3}}}).submission
     assert submission.first_seen is None
     assert submission.times_submitted == 3
+
+
+def test_signature_verified_is_a_bool_derived_from_vts_string():
+    """VT's signature_info.verified is prose ('Signed file, verified
+    signature'), not a boolean. Any truthiness check on it reports every
+    signed-but-INVALID file as verified -- and the verdict layer subtracts
+    points for a verified signature, so that error flips real results."""
+    from hash_searcher.analysis.vt import extract_vt
+
+    sig = extract_vt(_vt_fixture()).signature
+    assert sig.verified is True
+    assert sig.signer == "Contoso Ltd"
+    assert sig.product == "Contoso Updater"
+
+
+def test_signature_with_an_invalid_verification_string_is_not_verified():
+    from hash_searcher.analysis.vt import extract_vt
+
+    raw = {"data": {"attributes": {"signature_info": {
+        "verified": "Signed file, but the signature is invalid",
+        "signers": "Nobody",
+    }}}}
+    assert extract_vt(raw).signature.verified is False
+
+
+def test_sandbox_verdicts_keep_only_the_flagged_ones():
+    """A dozen sandboxes reporting 'undetected' is noise; the one that
+    reported 'malicious' is the finding."""
+    from hash_searcher.analysis.vt import extract_vt
+
+    verdicts = extract_vt(_vt_fixture()).sandbox
+    assert [v.sandbox for v in verdicts] == ["Zenbox"]
+    assert verdicts[0].category == "malicious"
+    assert verdicts[0].malware_names == ["Emotet"]
+
+
+def test_yara_matches_are_extracted():
+    from hash_searcher.analysis.vt import extract_vt
+
+    yara = extract_vt(_vt_fixture()).yara
+    assert [y.rule for y in yara] == ["Emotet_Loader"]
+    assert yara[0].author == "Some Researcher"
+
+
+def test_pe_info_counts_sections_and_dates_the_build():
+    from hash_searcher.analysis.vt import extract_vt
+
+    pe = extract_vt(_vt_fixture()).pe
+    assert pe.imphash == "5f0b1e9a8c3d4e2f1a0b9c8d7e6f5a4b"
+    assert pe.sections == 3
+    assert pe.compiled == "2019-04-02"
+
+
+def test_a_non_pe_sample_has_no_pe_info():
+    from hash_searcher.analysis.vt import extract_vt
+
+    assert extract_vt({"data": {"attributes": {}}}).pe is None

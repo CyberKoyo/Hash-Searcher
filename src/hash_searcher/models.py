@@ -52,6 +52,35 @@ class Submission:
     names: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class Signature:
+    verified: bool = False
+    signer: str | None = None
+    product: str | None = None
+
+
+@dataclass(frozen=True)
+class SandboxVerdict:
+    sandbox: str
+    category: str
+    malware_names: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class YaraMatch:
+    rule: str
+    author: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class PEInfo:
+    imphash: str | None = None
+    entry_point: int | None = None
+    sections: int = 0
+    compiled: str | None = None
+
+
 @dataclass
 class VTReport:
     found: bool
@@ -62,6 +91,10 @@ class VTReport:
     detection: Detection | None = None
     threat: ThreatClass | None = None
     submission: Submission | None = None
+    signature: Signature | None = None
+    sandbox: list[SandboxVerdict] = field(default_factory=list)
+    yara: list[YaraMatch] = field(default_factory=list)
+    pe: PEInfo | None = None
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]

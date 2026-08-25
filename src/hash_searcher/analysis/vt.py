@@ -1,9 +1,14 @@
 import datetime
 
 from ..api.base_call import error_message, is_error
-from ..models import Detection, SigmaRule, Submission, ThreatClass, VTReport
+from ..models import (
+    Detection, PEInfo, SandboxVerdict, Signature, SigmaRule, Submission,
+    ThreatClass, VTReport, YaraMatch,
+)
 
 NAME_LIMIT = 5  # VT returns hundreds; the report shows the first few.
+FLAGGED = frozenset({"malicious", "suspicious"})
+VERIFIED_SIGNATURE = "signed file, verified signature"
 
 
 def _relationship_ids(data: dict, name: str) -> list[str]:
@@ -68,6 +73,62 @@ def _submission(attributes: dict) -> Submission:
     )
 
 
+def _signature(attributes: dict) -> Signature | None:
+    block = attributes.get("signature_info")
+    if not block:
+        return None
+    verified = block.get("verified", "")
+    signers = block.get("signers", "")
+    return Signature(
+        # VT writes prose here. The constant below is the only form that
+        # means valid; every other string -- including the ones about
+        # invalid and revoked signatures -- is truthy and must not count.
+        verified=verified.strip().lower() == VERIFIED_SIGNATURE,
+        signer=(signers.split(";")[0].strip() or None) if signers else None,
+        product=block.get("product") or None,
+    )
+
+
+def _sandbox(attributes: dict) -> list[SandboxVerdict]:
+    return [
+        SandboxVerdict(
+            sandbox=body.get("sandbox_name", name),
+            category=body.get("category", ""),
+            malware_names=list(body.get("malware_names", []) or []),
+        )
+        for name, body in (attributes.get("sandbox_verdicts") or {}).items()
+        if body.get("category") in FLAGGED
+    ]
+
+
+def _yara(attributes: dict) -> list[YaraMatch]:
+    return [
+        YaraMatch(
+            rule=match.get("rule_name", ""),
+            author=match.get("author") or None,
+            description=match.get("description") or None,
+        )
+        for match in attributes.get("crowdsourced_yara_results", []) or []
+        if match.get("rule_name")
+    ]
+
+
+def _pe(attributes: dict) -> PEInfo | None:
+    block = attributes.get("pe_info")
+    if not block:
+        return None
+    ts = block.get("timestamp")
+    return PEInfo(
+        imphash=block.get("imphash") or None,
+        entry_point=block.get("entry_point"),
+        sections=len(block.get("sections", []) or []),
+        compiled=(
+            datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+            if ts else None
+        ),
+    )
+
+
 def extract_vt(raw) -> VTReport:
     if is_error(raw):
         return VTReport(found=False, error=error_message(raw))
@@ -90,4 +151,8 @@ def extract_vt(raw) -> VTReport:
         detection=_detection(attributes),
         threat=_threat(attributes),
         submission=_submission(attributes),
+        signature=_signature(attributes),
+        sandbox=_sandbox(attributes),
+        yara=_yara(attributes),
+        pe=_pe(attributes),
     )
