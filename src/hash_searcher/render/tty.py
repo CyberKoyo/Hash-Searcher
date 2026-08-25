@@ -9,6 +9,12 @@ from ..models import Report
 RULE = "=" * 50
 
 
+def _header(title: str) -> None:
+    print("\n" + RULE)
+    print(title)
+    print(RULE)
+
+
 def render_vt(report: Report) -> None:
     """Byte-identical to the pre-branch vt_rules(): high/medium/low each have
     their own, genuinely different, formatting -- see formatters.py history.
@@ -58,9 +64,7 @@ def render_ips(report: Report) -> None:
 
 
 def render_hosts(report: Report) -> None:
-    print("\n" + RULE)
-    print("CENSYS ENRICHMENT")
-    print(RULE)
+    _header("CENSYS ENRICHMENT")
     for host in report.hosts:
         print(f"\nIP:      {host.ip}")
         print(f"Org:     {host.org}  |  ASN: {host.asn}")
@@ -74,9 +78,7 @@ def render_hosts(report: Report) -> None:
 
 
 def render_whois(report: Report) -> None:
-    print("\n" + RULE)
-    print("WHOIS DATA")
-    print(RULE)
+    _header("WHOIS DATA")
     print(f"{'DOMAIN':<35} {'CREATED':<12} {'EXPIRES':<12} {'REGISTRAR':<30}")
     print("-" * 89)
     for record in report.whois:
@@ -88,9 +90,7 @@ def render_whois(report: Report) -> None:
 
 
 def render_otx(report: Report) -> None:
-    print("\n" + RULE)
-    print("OTX DATA")
-    print(RULE)
+    _header("OTX DATA")
     # Mirrors the original's `if not pulse_info:` gate. Keying off the
     # recorded_instances string instead would collide with a real count
     # whose value happens to be "N/A".
