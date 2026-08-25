@@ -17,7 +17,7 @@ break it.
 | Objects kept | 649 non-revoked `attack-pattern` objects |
 | Size | 26 MB upstream, 897 KB reduced |
 | SHA-256 (upstream) | `39b1f158c2e1c604801da2f75b2be9e6a448a7250d69db628168a0f7be056349` |
-| SHA-256 (reduced) | `ee294e44ca0389721dccf5b78f94579175032014b5f3274b83060b9d1c927144` |
+| SHA-256 (reduced) | `e1c8bcb3edb49a4e4a5c11bcabedf7f50840099f9792942d66ca176783f54f0d` |
 
 ### Refreshing it
 

@@ -17,5 +17,9 @@ objects = [
     for obj in bundle.get("objects", [])
     if obj.get("type") == "attack-pattern" and not obj.get("revoked")
 ]
-json.dump({"type": "bundle", "objects": objects}, open(destination, "w"))
+# Trailing newline: tests/test_hygiene.py requires one on every tracked
+# text file, and json.dump does not write one.
+with open(destination, "w") as out:
+    json.dump({"type": "bundle", "objects": objects}, out)
+    out.write("\n")
 print(f"{len(objects)} techniques kept")
