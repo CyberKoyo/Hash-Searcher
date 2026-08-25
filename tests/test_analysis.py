@@ -111,3 +111,37 @@ def test_contacted_ips_is_empty_on_an_error_payload():
     from hash_searcher.api.virustotal import contacted_ips
 
     assert contacted_ips(make_error("Hash not found in GetTotal", 404)) == []
+
+
+import json
+from pathlib import Path
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _vt_fixture() -> dict:
+    return json.loads((FIXTURES / "vt_full_report.json").read_text())
+
+
+def test_detection_ratio_counts_only_the_verdict_buckets():
+    from hash_searcher.analysis.vt import extract_vt
+
+    report = extract_vt(_vt_fixture())
+    assert report.detection.malicious == 48
+    assert report.detection.suspicious == 2
+    # 48 + 2 + 20 + 0 + 2 == 72; type-unsupported and failure are excluded.
+    assert report.detection.total == 72
+    assert report.detection.ratio == "48/72"
+
+
+def test_detection_is_none_when_the_payload_has_no_stats():
+    from hash_searcher.analysis.vt import extract_vt
+
+    assert extract_vt({"data": {"attributes": {}}}).detection is None
+
+
+def test_detection_is_none_on_an_error_payload():
+    from hash_searcher.api.base_call import make_error
+    from hash_searcher.analysis.vt import extract_vt
+
+    assert extract_vt(make_error("Hash not found in GetTotal", 404)).detection is None

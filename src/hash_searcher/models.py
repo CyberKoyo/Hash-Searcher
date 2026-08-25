@@ -14,6 +14,30 @@ class SigmaRule:
     level: str
 
 
+@dataclass(frozen=True)
+class Detection:
+    """VT's last_analysis_stats, reduced to the five verdict buckets.
+
+    VT also reports failure/type-unsupported/confirmed-timeout; those are
+    engine bookkeeping, not verdicts, and VT's own UI leaves them out of the
+    denominator. Counting them would silently deflate every ratio.
+    """
+    malicious: int = 0
+    suspicious: int = 0
+    harmless: int = 0
+    undetected: int = 0
+    timeout: int = 0
+
+    @property
+    def total(self) -> int:
+        return (self.malicious + self.suspicious + self.harmless
+                + self.undetected + self.timeout)
+
+    @property
+    def ratio(self) -> str:
+        return f"{self.malicious}/{self.total}"
+
+
 @dataclass
 class VTReport:
     found: bool
@@ -21,6 +45,7 @@ class VTReport:
     contacted_ips: list[str] = field(default_factory=list)
     contacted_domains: list[str] = field(default_factory=list)
     error: str | None = None
+    detection: Detection | None = None
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]
