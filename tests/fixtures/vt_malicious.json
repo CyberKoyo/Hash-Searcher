@@ -1,0 +1,7 @@
+{"data": {"attributes": {"sigma_analysis_results": [
+  {"rule_level": "high", "rule_title": "Suspicious Process", "rule_description": "spawns cmd"},
+  {"rule_level": "low", "rule_title": "Registry Read", "rule_description": "reads run key"}
+]}, "relationships": {
+  "contacted_ips": {"data": [{"id": "198.51.100.10"}, {"id": "203.0.113.20"}]},
+  "contacted_domains": {"data": [{"id": "bad.example"}]}
+}}}

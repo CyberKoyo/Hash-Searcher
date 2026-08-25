@@ -1,0 +1,6 @@
+[
+  {"data": {"ipAddress": "198.51.100.10", "abuseConfidenceScore": 90,
+            "reports": [{"id": 1}, {"id": 2}], "hostnames": [], "domain": null}},
+  {"data": {"ipAddress": "203.0.113.20", "abuseConfidenceScore": 5,
+            "reports": [], "hostnames": [], "domain": null}}
+]

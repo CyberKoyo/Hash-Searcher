@@ -28,8 +28,13 @@ venv/
 ENV/
 env/
 .env
+censys_cache.json
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+# Agent scratch
+.superpowers/
+.claude/worktrees/
+docs/superpowers/

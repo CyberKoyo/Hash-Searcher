@@ -16,5 +16,20 @@ dependencies = [
     "whois==1.20240129.2",
 ]
 
+[project.scripts]
+hash-searcher = "hash_searcher.cli:run"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.2",
+    "respx==0.22.0",
+    "tomli==2.2.1; python_version < '3.11'",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
