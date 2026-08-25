@@ -36,8 +36,8 @@ def test_render_ips_exact_formatting(capsys):
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2)},
         hosts=[],
         whois=[],
@@ -64,8 +64,8 @@ def test_render_whois_exact_formatting(capsys):
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[],
         whois=[
@@ -105,7 +105,7 @@ def test_render_vt_exact_formatting_matches_pre_branch_bytes(capsys):
             SigmaRule("Odd Registry Write", "writes to Run key", "medium"),
             SigmaRule("Benign Marker", "harmless indicator", "low"),
         ]),
-        otx=None,
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[],
         whois=[],
@@ -136,7 +136,7 @@ def test_render_vt_exact_formatting_matches_pre_branch_bytes(capsys):
 def test_render_vt_empty_levels_say_so_with_no_extra_blank_lines(capsys):
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=True, sigma=[]),
-        otx=None, ips={}, hosts=[], whois=[],
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
     )
     render_vt(report)
     out = capsys.readouterr().out
@@ -164,8 +164,8 @@ def test_render_hosts_exact_formatting(capsys):
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[
             CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,
@@ -198,7 +198,7 @@ def test_render_hosts_exact_formatting(capsys):
 
 def test_render_otx_exact_formatting_with_data(capsys):
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"],
                       otx_responded=True),
         ips={}, hosts=[], whois=[],
@@ -220,7 +220,7 @@ def test_render_otx_matches_original_message_when_no_pulse_info(capsys):
     the bare 'N/A' extract_otx sets in that branch) printed 'No OTX data
     available.' in the original -- not a bare 'Recorded instances: N/A'."""
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A"),
         ips={}, hosts=[], whois=[],
     )
@@ -240,7 +240,7 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
     the recorded-instances line AND folded 'No recorded instances' into it
     via the fallback string, not a bare 'N/A'."""
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A, No recorded instances",
                       otx_responded=True),
         ips={}, hosts=[], whois=[],
@@ -258,7 +258,7 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
 
 def test_render_otx_error_path_unaffected(capsys):
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A", error="OTX key not set"),
         ips={}, hosts=[], whois=[],
     )
@@ -321,7 +321,7 @@ def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
     "Recorded instances: N/A" there. Gating on otx_responded restores that.
     """
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A", otx_responded=True),
         ips={}, hosts=[], whois=[],
     )

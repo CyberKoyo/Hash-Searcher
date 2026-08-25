@@ -129,5 +129,5 @@ async def data_puller(file_hash: str, cache):
 
     return {
         'vt': vt_data, 'otx': otx_data, 'ipdb': list(ipdb_data),
-        'censys': censys_results, 'ips': ips, 'hash': file_hash,
+        'censys': censys_results, 'ips': ips,
     }

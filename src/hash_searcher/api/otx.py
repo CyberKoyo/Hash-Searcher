@@ -1,7 +1,7 @@
 import httpx
 
-from .base_call import api_get
 from . import config
+from .base_call import api_get
 
 
 async def get_otx(client: httpx.AsyncClient, indicator, indicator_type="file"):

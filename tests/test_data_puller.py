@@ -71,7 +71,6 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         "ipdb": [],
         "censys": [],
         "ips": ["198.51.100.10"],
-        "hash": "deadbeef",
     }
 
 
@@ -105,7 +104,6 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "ipdb": [],
         "censys": [],
         "ips": [],
-        "hash": "deadbeef",
     }
 
 

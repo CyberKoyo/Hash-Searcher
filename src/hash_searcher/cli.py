@@ -80,7 +80,14 @@ async def run_cli(argv: list[str] | None = None) -> int:
     if not check_env():
         return EXIT_NO_DATA
 
-    resolved = resolve_hash(args.indicator, args.zip_password)
+    try:
+        resolved = resolve_hash(args.indicator, args.zip_password)
+    except FileNotFoundError as e:
+        # The exception is constructed with a perfectly good user-facing
+        # string and was simply never caught, so `hash-searcher notahash`
+        # printed a traceback. Pre-existing on 43e9f92 and on 129ff8d.
+        print(e)
+        return EXIT_NO_DATA
     if not resolved:
         return EXIT_NO_DATA
 

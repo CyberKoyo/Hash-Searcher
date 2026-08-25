@@ -12,7 +12,12 @@ FLAGGED = frozenset({"malicious", "suspicious"})
 VERIFIED_SIGNATURE = "signed file, verified signature"
 
 
-def _relationship_ids(data: dict, name: str) -> list[str]:
+def relationship_ids(data: dict, name: str) -> list[str]:
+    """Walk data.relationships.<name>.data, collecting `id`.
+
+    Public because api/virustotal.py's contacted_ips delegates here --
+    the two had drifted into disagreeing implementations.
+    """
     return [
         entry["id"]
         for entry in data.get("data", {})
@@ -147,8 +152,8 @@ def extract_vt(raw) -> VTReport:
     return VTReport(
         found=True,
         sigma=sigma,
-        contacted_ips=_relationship_ids(raw, "contacted_ips"),
-        contacted_domains=_relationship_ids(raw, "contacted_domains"),
+        contacted_ips=relationship_ids(raw, "contacted_ips"),
+        contacted_domains=relationship_ids(raw, "contacted_domains"),
         detection=_detection(attributes),
         threat=_threat(attributes),
         submission=_submission(attributes),

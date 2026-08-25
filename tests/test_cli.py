@@ -206,3 +206,54 @@ def test_an_unrecognized_level_exits_unknown_rather_than_claiming_clean():
     from hash_searcher.models import Verdict
 
     assert exit_code(Verdict(level="WAT", score=0)) == 3
+
+
+def test_write_report_dispatches_a_pdf_extension(tmp_path, monkeypatch):
+    """Only the json branch was ever covered."""
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    written = {}
+    monkeypatch.setattr(cli, "write_pdf",
+                        lambda report, path, verdict=None: written.setdefault("path", path))
+
+    cli.write_report(object(), "report.pdf")
+
+    assert written["path"] == os.path.join(str(tmp_path), "report.pdf")
+
+
+def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, capsys):
+    """The deferred-minors plan asserted 'the existing unrecognized-extension
+    test must still pass'; `grep -rn Unrecognized tests/` returned nothing --
+    no such test ever existed, so that verification step was vacuous. This is
+    the test it assumed."""
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(cli, "write_json", lambda *a, **k: calls.append("json"))
+    monkeypatch.setattr(cli, "write_pdf", lambda *a, **k: calls.append("pdf"))
+
+    cli.write_report(object(), "report.txt")
+
+    assert calls == []
+    assert "Unrecognized output extension: report.txt (use .json or .pdf)" \
+        in capsys.readouterr().out
+
+
+async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
+        monkeypatch, capsys):
+    """`hash-searcher notahash` raised FileNotFoundError out of resolve_hash
+    and printed a full traceback. Pre-existing on 43e9f92 and on 129ff8d.
+
+    check_env only is stubbed here -- _stub_entry also replaces resolve_hash,
+    which is the function under test.
+    """
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+
+    exit_code = await run_cli(["notahash", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_NO_DATA
+    assert "isn't in an accessible directory" in out
+    assert "Traceback" not in out

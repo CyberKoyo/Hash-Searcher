@@ -297,3 +297,39 @@ def test_an_errored_censys_entry_contributes_no_domains():
 
     domains, _ = extract_hosts([make_error("Rate limited", 429)], {})
     assert domains == []
+
+
+def test_an_entry_without_an_ip_address_is_skipped():
+    """Closes a coverage gap, not a defect: a reviewer hand-traced this
+    branch in Phase 1 and found it correct, but nothing pinned it."""
+    from hash_searcher.analysis.ipdb import extract_ips
+
+    assert extract_ips([{"data": {"abuseConfidenceScore": 90}}]) == {}
+
+
+def test_a_scalar_hostnames_value_is_tolerated():
+    """AbuseIPDB returns a list; the extractor wraps a scalar rather than
+    iterating its characters."""
+    from hash_searcher.analysis.ipdb import extract_ips
+
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": "host.example"}}])
+    assert ips["198.51.100.10"].hostnames == ["host.example"]
+
+
+def test_a_non_dict_ipdb_entry_is_skipped():
+    from hash_searcher.analysis.ipdb import extract_ips
+
+    assert extract_ips(["not a dict", None]) == {}
+
+
+def test_contacted_ips_skips_an_entry_with_no_id():
+    """The two VT relationship walkers disagreed: analysis/vt.py guarded on
+    `if "id" in entry` while api/virustotal.py did an unguarded entry['id'],
+    so a malformed entry killed the run in the puller but was silently
+    skipped by the extractor. One implementation now, the guarded one."""
+    from hash_searcher.api.virustotal import contacted_ips
+
+    payload = {"data": {"relationships": {"contacted_ips": {"data": [
+        {"id": "198.51.100.10"}, {"no_id": "here"}, {"id": "203.0.113.7"},
+    ]}}}}
+    assert contacted_ips(payload) == ["198.51.100.10", "203.0.113.7"]

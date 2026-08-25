@@ -3,6 +3,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 TEXT_SUFFIXES = {".py", ".toml", ".txt", ".md", ".yml", ".yaml", ".json", ".cfg", ".ini"}
@@ -10,6 +12,8 @@ TEXT_SUFFIXES = {".py", ".toml", ".txt", ".md", ".yml", ".yaml", ".json", ".cfg"
 
 def _tracked_text_files() -> list[Path]:
     """git ls-files, not a walk: never trips over venv/, build/, or __pycache__."""
+    if not (ROOT / ".git").is_dir():
+        pytest.skip("not a git checkout; the tracked-file list is unavailable")
     out = subprocess.run(
         ["git", "ls-files", "-z"],
         cwd=ROOT, capture_output=True, text=True, check=True,

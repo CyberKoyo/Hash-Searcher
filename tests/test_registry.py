@@ -82,6 +82,14 @@ def test_every_provider_fetch_takes_client_and_indicator():
     from hash_searcher.api.registry import PROVIDERS
 
     for provider in PROVIDERS:
+        # inspect.signature(None) raises TypeError; a placeholder entry
+        # should not take the suite down with it.
+        if provider.fetch is None:
+            continue
         params = list(inspect.signature(provider.fetch).parameters.values())
         required = [p for p in params if p.default is inspect.Parameter.empty]
         assert len(required) == 2, f"{provider.name} takes {len(required)} required args"
+        # Counting arity alone would pass fetch(indicator, client), which
+        # breaks the exact promise this test exists to guard.
+        assert required[0].name == "client", \
+            f"{provider.name} takes {required[0].name!r} first, not 'client'"

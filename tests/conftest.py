@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from hash_searcher.models import (
+    CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
+)
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -35,10 +39,6 @@ def sample_report():
     In conftest rather than a test module: `from tests.X import Y` resolves only
     under `python -m pytest`, and dies under bare `pytest`.
     """
-    from hash_searcher.models import (
-        CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
-    )
-
     return Report(
         indicator="abc123",
         generated_at="2026-08-23 12:00:00",
