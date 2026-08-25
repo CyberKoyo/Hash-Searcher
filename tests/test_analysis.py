@@ -145,3 +145,38 @@ def test_detection_is_none_on_an_error_payload():
     from hash_searcher.analysis.vt import extract_vt
 
     assert extract_vt(make_error("Hash not found in GetTotal", 404)).detection is None
+
+
+def test_threat_classification_takes_the_most_popular_family():
+    """The payload's lists are not pre-sorted, so the first entry is not
+    reliably the most popular one. The fixture's first entry is the LOWER
+    count on purpose."""
+    from hash_searcher.analysis.vt import extract_vt
+
+    threat = extract_vt(_vt_fixture()).threat
+    assert threat.label == "trojan.emotet/heurgeneric"
+    assert threat.family == "emotet"
+    assert threat.categories == ["trojan", "downloader"]
+
+
+def test_threat_is_none_when_vt_has_no_classification():
+    from hash_searcher.analysis.vt import extract_vt
+
+    assert extract_vt({"data": {"attributes": {}}}).threat is None
+
+
+def test_submission_history_is_rendered_as_a_utc_iso_date():
+    from hash_searcher.analysis.vt import extract_vt
+
+    submission = extract_vt(_vt_fixture()).submission
+    assert submission.first_seen == "2019-04-02"
+    assert submission.times_submitted == 417
+    assert submission.names == ["invoice.doc", "rechnung.doc", "sample.bin"]
+
+
+def test_submission_first_seen_is_none_without_a_timestamp():
+    from hash_searcher.analysis.vt import extract_vt
+
+    submission = extract_vt({"data": {"attributes": {"times_submitted": 3}}}).submission
+    assert submission.first_seen is None
+    assert submission.times_submitted == 3

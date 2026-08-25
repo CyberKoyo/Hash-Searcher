@@ -14,12 +14,61 @@
         "type-unsupported": 5
       },
       "sigma_analysis_results": [
-        {"rule_title": "Suspicious Process", "rule_description": "A process did something odd", "rule_level": "high"}
+        {
+          "rule_title": "Suspicious Process",
+          "rule_description": "A process did something odd",
+          "rule_level": "high"
+        }
+      ],
+      "popular_threat_classification": {
+        "suggested_threat_label": "trojan.emotet/heurgeneric",
+        "popular_threat_category": [
+          {
+            "count": 30,
+            "value": "trojan"
+          },
+          {
+            "count": 12,
+            "value": "downloader"
+          }
+        ],
+        "popular_threat_name": [
+          {
+            "count": 4,
+            "value": "heurgeneric"
+          },
+          {
+            "count": 22,
+            "value": "emotet"
+          }
+        ]
+      },
+      "first_submission_date": 1554210000,
+      "times_submitted": 417,
+      "names": [
+        "invoice.doc",
+        "rechnung.doc",
+        "sample.bin"
       ]
     },
     "relationships": {
-      "contacted_ips": {"data": [{"id": "198.51.100.10"}, {"id": "203.0.113.7"}]},
-      "contacted_domains": {"data": [{"id": "evil.example"}]}
+      "contacted_ips": {
+        "data": [
+          {
+            "id": "198.51.100.10"
+          },
+          {
+            "id": "203.0.113.7"
+          }
+        ]
+      },
+      "contacted_domains": {
+        "data": [
+          {
+            "id": "evil.example"
+          }
+        ]
+      }
     }
   }
 }

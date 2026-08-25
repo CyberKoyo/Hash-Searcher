@@ -38,6 +38,20 @@ class Detection:
         return f"{self.malicious}/{self.total}"
 
 
+@dataclass(frozen=True)
+class ThreatClass:
+    label: str
+    family: str | None = None
+    categories: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Submission:
+    first_seen: str | None = None
+    times_submitted: int = 0
+    names: list[str] = field(default_factory=list)
+
+
 @dataclass
 class VTReport:
     found: bool
@@ -46,6 +60,8 @@ class VTReport:
     contacted_domains: list[str] = field(default_factory=list)
     error: str | None = None
     detection: Detection | None = None
+    threat: ThreatClass | None = None
+    submission: Submission | None = None
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]
