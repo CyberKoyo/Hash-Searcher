@@ -1,7 +1,7 @@
 import httpx
 
 from .base_call import api_get
-from .config import censys_api_key
+from . import config
 
 
 async def get_censys(client: httpx.AsyncClient, ip):
@@ -10,7 +10,7 @@ async def get_censys(client: httpx.AsyncClient, ip):
         f'https://api.platform.censys.io/v3/global/asset/host/{ip}',
         {
             'accept': 'application/json',
-            'authorization': f'Bearer {censys_api_key}',
+            'authorization': f'Bearer {config.key("CENSYS_KEY") or ""}',
         },
         source='Censys',
         not_found='IP not found in Censys',

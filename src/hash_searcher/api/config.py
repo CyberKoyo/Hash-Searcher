@@ -1,10 +1,15 @@
-import os 
+import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-total_api_key = os.getenv("TOTAL_KEY")
-ipdb_api_key = os.getenv("IPDB_KEY")
-otx_api_key = os.getenv("OTX_KEY")
-censys_api_key = os.getenv("CENSYS_KEY")
+
+def key(env_var: str) -> str | None:
+    """Read an API key at call time.
+
+    Module-level constants froze whatever the environment held at import.
+    PROVIDERS is built at import too, so a key set later was invisible to
+    check_env and to every request header built from these values.
+    """
+    return os.getenv(env_var)

@@ -11,7 +11,6 @@ from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
 from .api.base_call import error_status
-from .api.config import BASE_DIR
 from .api.who_is import who_is
 from .cache import ResponseCache
 from .hashing import check_env
@@ -41,6 +40,23 @@ def build_parser() -> argparse.ArgumentParser:
 def output_format(path: str) -> str | None:
     ext = os.path.splitext(path)[1].lower()
     return {".json": "json", ".pdf": "pdf"}.get(ext)
+
+
+def write_report(report, output: str) -> None:
+    """Resolve output relative to the CWD and dispatch on the extension.
+
+    This used to join onto BASE_DIR -- the installed package directory --
+    so `-o report.json` wrote inside site-packages rather than where the
+    user ran the command.
+    """
+    path = os.path.abspath(output)
+    fmt = output_format(output)
+    if fmt == "json":
+        write_json(report, path)
+    elif fmt == "pdf":
+        write_pdf(report, path)
+    else:
+        print(f"Unrecognized output extension: {output} (use .json or .pdf)")
 
 
 async def run_cli(argv: list[str] | None = None) -> int:
@@ -88,14 +104,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
     render(report)
 
     if args.output:
-        path = os.path.join(BASE_DIR, args.output)
-        fmt = output_format(args.output)
-        if fmt == "json":
-            write_json(report, path)
-        elif fmt == "pdf":
-            write_pdf(report, path)
-        else:
-            print(f"Unrecognized output extension: {args.output} (use .json or .pdf)")
+        write_report(report, args.output)
 
     return EXIT_OK
 

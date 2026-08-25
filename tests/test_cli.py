@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from hash_searcher.api.base_call import make_error
@@ -158,3 +160,19 @@ async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Invalid hash. Please check filename or hash." not in out
     assert exit_code == EXIT_OK
+
+
+def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatch):
+    """S7: BASE_DIR is the installed package dir, so a relative --output
+    landed inside site-packages -- unfindable, and unwritable under a
+    non-editable install."""
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    written = {}
+    monkeypatch.setattr(cli, "write_json",
+                        lambda report, path: written.setdefault("path", path))
+
+    cli.write_report(object(), "report.json")
+
+    assert written["path"] == os.path.join(str(tmp_path), "report.json")
