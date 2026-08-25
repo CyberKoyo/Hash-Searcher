@@ -45,7 +45,7 @@ def sample_report():
         vt=VTReport(found=True, sigma=[SigmaRule("Suspicious Process", "spawns cmd", "high")],
                     contacted_ips=["198.51.100.10"]),
         otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"],
-                      has_pulse_info=True),
+                      otx_responded=True),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2)},
         hosts=[CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,
                           country="NL", ports=[80, 443], new_hostnames=["new.example"])],

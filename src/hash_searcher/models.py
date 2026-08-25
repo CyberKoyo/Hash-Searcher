@@ -111,11 +111,25 @@ class VTReport:
 
 @dataclass
 class OTXReport:
-    recorded_instances: object
+    """Two flags, two genuinely different questions.
+
+    `otx_responded` answers "did OTX return a pulse_info block at all";
+    `has_pulses` answers "does that block contain any pulses". They are not
+    redundant -- OTX answering with an empty pulse list is real data, and
+    conflating the two is what caused ruling R28.
+    """
+
+    #: int when OTX reported a count, else the string it substitutes
+    #: ("N/A, No recorded instances", or "N/A" on an error). Typed for both
+    #: because it genuinely holds both; `object` said nothing at all.
+    recorded_instances: int | str
     attack_techniques: list[str] = field(default_factory=list)
     error: str | None = None
+    #: bool(pulse_info["pulses"]) -- OTX has at least one pulse for this
+    #: indicator.
     has_pulses: bool = False
-    has_pulse_info: bool = False
+    #: bool(pulse_info) -- OTX returned a pulse_info block, whatever is in it.
+    otx_responded: bool = False
     techniques: list[AttackTechnique] = field(default_factory=list)
 
 

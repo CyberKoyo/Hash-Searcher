@@ -103,7 +103,7 @@ def render_otx(report: Report) -> None:
     # Mirrors the original's `if not pulse_info:` gate. Keying off the
     # recorded_instances string instead would collide with a real count
     # whose value happens to be "N/A".
-    if not report.otx.has_pulse_info:
+    if not report.otx.otx_responded:
         print("No OTX data available.")
         return
     print(f'Recorded instances: {report.otx.recorded_instances}')

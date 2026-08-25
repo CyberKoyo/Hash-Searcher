@@ -93,13 +93,22 @@ def test_extract_whois_preserves_failures():
     assert records[1].error == "No WHOIS data found"
 
 
-def test_extract_otx_sets_has_pulse_info_per_branch(fixture_json):
-    """has_pulse_info mirrors the original's `if not pulse_info:` gate."""
-    assert extract_otx(fixture_json("otx_pulses")).has_pulse_info is True
-    assert extract_otx({}).has_pulse_info is False
-    assert extract_otx(make_error("OTX key not set")).has_pulse_info is False
+def test_extract_otx_sets_otx_responded_per_branch(fixture_json):
+    """otx_responded mirrors the original's `if not pulse_info:` gate."""
+    assert extract_otx(fixture_json("otx_pulses")).otx_responded is True
+    assert extract_otx({}).otx_responded is False
+    assert extract_otx(make_error("OTX key not set")).otx_responded is False
     # A pulse_info that exists but carries no count is still real data.
-    assert extract_otx({"pulse_info": {"pulses": []}}).has_pulse_info is True
+    assert extract_otx({"pulse_info": {"pulses": []}}).otx_responded is True
+
+
+def test_the_two_otx_flags_answer_different_questions():
+    """otx_responded is bool(pulse_info); has_pulses is bool(its pulses).
+    An empty pulse list is the case that separates them, and conflating the
+    two is what caused ruling R28."""
+    report = extract_otx({"pulse_info": {"pulses": []}})
+    assert report.otx_responded is True
+    assert report.has_pulses is False
 
 
 def test_contacted_ips_reads_the_relationship_block():

@@ -58,7 +58,7 @@ def test_signals_accumulate_and_each_carries_its_own_rationale():
             sigma=[SigmaRule("t", "d", "high"), SigmaRule("t2", "d2", "low")],
             threat=ThreatClass(label="trojan.emotet", family="emotet"),
         ),
-        otx=OTXReport(recorded_instances=4, has_pulse_info=True, has_pulses=True),
+        otx=OTXReport(recorded_instances=4, otx_responded=True, has_pulses=True),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=95, reports=40)},
     ))
     assert {s.name for s in verdict.signals} == {
