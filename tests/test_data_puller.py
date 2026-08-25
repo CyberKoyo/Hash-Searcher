@@ -107,3 +107,130 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "ips": [],
         "hash": "deadbeef",
     }
+
+
+async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_path):
+    """R27: the cache reached fetch_censys only. VT's free tier is 4/min and
+    500/day, so VT is the provider that most needs it."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.api.registry import Provider
+    from hash_searcher.cache import ResponseCache
+
+    calls = []
+
+    async def fake_get_vt(client, file_hash):
+        calls.append(file_hash)
+        return {"data": {"attributes": {}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [Provider(name="virustotal", key_env=None, indicator_types=(), fetch=None)],
+    )
+
+    cache = ResponseCache(path=tmp_path / "c.db")
+    await data_puller("deadbeef" * 8, cache)
+    await data_puller("deadbeef" * 8, cache)
+    cache.close()
+
+    assert calls == ["deadbeef" * 8], "the second run should have hit the cache"
+
+
+async def test_otx_and_abuseipdb_are_cached_too(monkeypatch, tmp_path):
+    otx_calls, ipdb_calls = [], []
+
+    async def fake_get_vt(client, file_hash):
+        return FAKE_VT_DATA
+
+    async def fake_get_otx(client, file_hash):
+        otx_calls.append(file_hash)
+        return {"pulse_info": {"count": 1, "pulses": []}}
+
+    async def fake_get_ipdb(client, ip):
+        ipdb_calls.append(ip)
+        return {"data": {"ipAddress": ip, "abuseConfidenceScore": 10}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", fake_get_otx)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_get_ipdb)
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider("virustotal"), _provider("otx"), _provider("abuseipdb")],
+    )
+
+    cache = ResponseCache(path=tmp_path / "c.db")
+    await data_puller("deadbeef" * 8, cache)
+    await data_puller("deadbeef" * 8, cache)
+    cache.close()
+
+    assert otx_calls == ["deadbeef" * 8]
+    assert ipdb_calls == ["198.51.100.10"]
+
+
+async def test_refresh_bypasses_the_cache_for_every_provider(monkeypatch, tmp_path):
+    """--refresh must still force fresh calls now that more providers are
+    cached, and must re-cache what it fetched."""
+    calls = []
+
+    async def fake_get_vt(client, file_hash):
+        calls.append(file_hash)
+        return {"data": {"attributes": {}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal")])
+
+    path = tmp_path / "c.db"
+    warm = ResponseCache(path=path)
+    await data_puller("deadbeef" * 8, warm)
+    warm.close()
+
+    refreshing = ResponseCache(path=path, refresh=True)
+    await data_puller("deadbeef" * 8, refreshing)
+    refreshing.close()
+
+    assert len(calls) == 2
+
+    reading = ResponseCache(path=path)
+    assert reading.get("virustotal", "deadbeef" * 8) is not None
+    reading.close()
+
+
+async def test_no_cache_disables_caching_entirely(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_get_vt(client, file_hash):
+        calls.append(file_hash)
+        return {"data": {"attributes": {}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal")])
+
+    for _ in range(2):
+        cache = ResponseCache(enabled=False)
+        await data_puller("deadbeef" * 8, cache)
+        cache.close()
+
+    assert len(calls) == 2
+
+
+async def test_a_failed_virustotal_call_is_not_cached(monkeypatch, tmp_path):
+    """cache.put refuses error payloads; this pins that the new VT path
+    actually relies on that rather than storing a transient failure."""
+    calls = []
+
+    async def fake_get_vt(client, file_hash):
+        calls.append(file_hash)
+        return make_error("VirusTotal API Error 503", 503)
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal")])
+
+    cache = ResponseCache(path=tmp_path / "c.db")
+    await data_puller("deadbeef" * 8, cache)
+    await data_puller("deadbeef" * 8, cache)
+    cache.close()
+
+    assert len(calls) == 2

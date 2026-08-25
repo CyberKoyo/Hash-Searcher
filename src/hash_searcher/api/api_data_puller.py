@@ -46,6 +46,22 @@ def resolve_hash(user_input: str, password: str | None = None) -> list[str] | No
     return hashes
 
 
+async def _cached(cache, name: str, key: str, fetch):
+    """Cache-through for a single-call provider.
+
+    fetch is a zero-arg coroutine function so nothing is awaited on a hit --
+    passing an already-created coroutine would fire the request regardless
+    and leave an un-awaited coroutine warning behind.
+    """
+    hit = cache.get(name, key, ttl=by_name(name).cache_ttl)
+    if hit is not None:
+        print(f"Using cached {name} data for {key}")
+        return hit
+    result = await fetch()
+    cache.put(name, key, result)
+    return result
+
+
 async def fetch_censys(client, ips, cache):
     """Serial with a gap between real requests; cache hits skip both."""
     provider = by_name("censys")
@@ -79,18 +95,25 @@ async def data_puller(file_hash: str, cache):
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
         otx_task = (
-            asyncio.create_task(get_otx(client, file_hash))
+            asyncio.create_task(
+                _cached(cache, "otx", file_hash, lambda: get_otx(client, file_hash))
+            )
             if "otx" in enabled else None
         )
 
         if "virustotal" in enabled:
-            vt_data = await get_vt(client, file_hash)
+            vt_data = await _cached(
+                cache, "virustotal", file_hash, lambda: get_vt(client, file_hash)
+            )
             ips = contacted_ips(vt_data)
         else:
             vt_data, ips = make_error("VirusTotal key not set"), []
 
         ipdb_task = (
-            asyncio.gather(*(get_ipdb(client, ip) for ip in ips))
+            asyncio.gather(*(
+                _cached(cache, "abuseipdb", ip, lambda ip=ip: get_ipdb(client, ip))
+                for ip in ips
+            ))
             if ips and "abuseipdb" in enabled else None
         )
         # create_task, not a bare coroutine: awaited last, an unscheduled
