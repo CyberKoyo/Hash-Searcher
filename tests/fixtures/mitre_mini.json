@@ -1,0 +1,28 @@
+{
+  "type": "bundle",
+  "objects": [
+    {
+      "type": "attack-pattern",
+      "name": "Process Injection",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "defense-evasion"}
+      ],
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "T1055",
+         "url": "https://attack.mitre.org/techniques/T1055"}
+      ]
+    },
+    {
+      "type": "attack-pattern",
+      "name": "Spearphishing Attachment",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "initial-access"}
+      ],
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "T1566.001",
+         "url": "https://attack.mitre.org/techniques/T1566/001"}
+      ]
+    },
+    {"type": "identity", "name": "The MITRE Corporation"}
+  ]
+}

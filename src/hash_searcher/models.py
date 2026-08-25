@@ -109,6 +109,14 @@ class OTXReport:
     has_pulse_info: bool = False
 
 
+@dataclass(frozen=True)
+class AttackTechnique:
+    id: str
+    name: str
+    tactic: str | None = None
+    url: str | None = None
+
+
 @dataclass
 class IPReport:
     ip: str
