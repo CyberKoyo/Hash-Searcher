@@ -3,7 +3,9 @@ import os
 import pytest
 
 from hash_searcher.api.base_call import make_error
-from hash_searcher.cli import EXIT_NO_DATA, EXIT_OK, build_parser, output_format, run_cli
+from hash_searcher.cli import (
+    EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN, build_parser, output_format, run_cli,
+)
 
 
 def test_positional_indicator_is_required():
@@ -91,7 +93,10 @@ async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, f
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
     out = capsys.readouterr().out
-    assert exit_code == EXIT_OK
+    # vt_malicious carries one high sigma rule (15) and otx_pulses carries
+    # pulses (10): 25 points, which bands SUSPICIOUS.
+    assert exit_code == EXIT_SUSPICIOUS
+    assert "VERDICT: SUSPICIOUS" in out
     assert "CENSYS ENRICHMENT" in out
     assert "WHOIS DATA" in out
 
@@ -136,7 +141,11 @@ async def test_vt_network_error_with_no_otx_pulses_does_not_bail(monkeypatch, ca
 
     out = capsys.readouterr().out
     assert "Invalid hash. Please check filename or hash." not in out
-    assert exit_code == EXIT_OK
+    # Nothing saw this file, so the verdict is UNKNOWN. That the code equals
+    # EXIT_NO_DATA is a deliberate collision, not a bail -- the absent
+    # "Invalid hash" line above is what proves the run completed.
+    assert exit_code == EXIT_UNKNOWN
+    assert "VERDICT: UNKNOWN" in out
 
 
 async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
@@ -159,7 +168,9 @@ async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Invalid hash. Please check filename or hash." not in out
-    assert exit_code == EXIT_OK
+    # No provider returned anything, so no signal can fire: UNKNOWN.
+    assert exit_code == EXIT_UNKNOWN
+    assert "VERDICT: UNKNOWN" in out
 
 
 def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatch):
@@ -176,3 +187,22 @@ def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatc
     cli.write_report(object(), "report.json")
 
     assert written["path"] == os.path.join(str(tmp_path), "report.json")
+
+
+@pytest.mark.parametrize("level,expected", [
+    ("CLEAN", 0), ("SUSPICIOUS", 1), ("MALICIOUS", 2), ("UNKNOWN", 3),
+])
+def test_exit_code_maps_each_verdict_level(level, expected):
+    from hash_searcher.cli import exit_code
+    from hash_searcher.models import Verdict
+
+    assert exit_code(Verdict(level=level, score=0)) == expected
+
+
+def test_an_unrecognized_level_exits_unknown_rather_than_claiming_clean():
+    """Fail safe: a level this function has never heard of must not be
+    reported to a shell script as a clean file."""
+    from hash_searcher.cli import exit_code
+    from hash_searcher.models import Verdict
+
+    assert exit_code(Verdict(level="WAT", score=0)) == 3

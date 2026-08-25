@@ -18,9 +18,25 @@ from .models import Report
 from .render.json_out import write_json
 from .render.pdf import write_pdf
 from .render.tty import render
+from .scoring import score
 
-EXIT_OK = 0
-EXIT_NO_DATA = 3
+EXIT_CLEAN = 0
+EXIT_SUSPICIOUS = 1
+EXIT_MALICIOUS = 2
+EXIT_UNKNOWN = 3
+EXIT_NO_DATA = 3  # an unusable run and an unknown sample answer a script alike
+
+_EXIT_BY_LEVEL = {
+    "CLEAN": EXIT_CLEAN,
+    "SUSPICIOUS": EXIT_SUSPICIOUS,
+    "MALICIOUS": EXIT_MALICIOUS,
+    "UNKNOWN": EXIT_UNKNOWN,
+}
+
+
+def exit_code(verdict) -> int:
+    """Unknown levels fail safe to EXIT_UNKNOWN, never to EXIT_CLEAN."""
+    return _EXIT_BY_LEVEL.get(verdict.level, EXIT_UNKNOWN)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,12 +117,13 @@ async def run_cli(argv: list[str] | None = None) -> int:
         source_file=args.indicator,
     )
 
-    render(report)
+    verdict = score(report)
+    render(report, verdict)
 
     if args.output:
         write_report(report, args.output)
 
-    return EXIT_OK
+    return exit_code(verdict)
 
 
 def run() -> None:
