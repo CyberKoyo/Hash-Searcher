@@ -31,6 +31,7 @@ class OTXReport:
     recorded_instances: object
     attack_techniques: list[str] = field(default_factory=list)
     error: str | None = None
+    has_pulses: bool = False
 
 
 @dataclass

@@ -42,7 +42,8 @@ def sample_report():
     return Report(
         indicator="abc123",
         generated_at="2026-08-23 12:00:00",
-        vt=VTReport(found=True, sigma=[SigmaRule("Suspicious Process", "spawns cmd", "high")]),
+        vt=VTReport(found=True, sigma=[SigmaRule("Suspicious Process", "spawns cmd", "high")],
+                    contacted_ips=["198.51.100.10"]),
         otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"]),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2)},
         hosts=[CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,

@@ -61,3 +61,23 @@ def test_disabled_cache_stores_nothing(tmp_path):
     cache.put("censys", "1.2.3.4", {"ok": True})
     assert cache.get("censys", "1.2.3.4") is None
     cache.close()
+
+
+def test_corrupt_db_file_degrades_instead_of_raising(tmp_path, capsys):
+    """A pre-existing file that isn't a valid sqlite database used to raise
+    out of __init__ uncaught -- bricking every subsequent CLI run until the
+    user found and deleted it by hand. The cache must instead disable itself
+    and let the caller keep going."""
+    bad_path = tmp_path / "corrupt.db"
+    bad_path.write_text("not a database at all")
+
+    cache = ResponseCache(bad_path)
+
+    assert cache.enabled is False
+    assert cache.get("censys", "1.2.3.4") is None
+    cache.put("censys", "1.2.3.4", {"ok": True})  # must not raise
+    cache.close()  # must not raise
+
+    out = capsys.readouterr().out
+    assert str(bad_path) in out
+    assert "cache" in out.lower()

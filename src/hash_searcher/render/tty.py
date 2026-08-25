@@ -10,20 +10,40 @@ RULE = "=" * 50
 
 
 def render_vt(report: Report) -> None:
+    """Byte-identical to the pre-branch vt_rules(): high/medium/low each have
+    their own, genuinely different, formatting -- see formatters.py history.
+    """
     print("\nVIRUSTOTAL SIGMA RULES")
     print("\n" + RULE)
-    for level, heading in (("high", "HIGH PRIORITY RULES"),
-                           ("medium", "MEDIUM PRIORITY RULES"),
-                           ("low", "LOW PRIORITY RULES")):
-        print(heading)
-        print(RULE)
-        rules = report.vt.by_level(level)
-        if not rules:
-            print(f"No {heading.split()[0].title()} Priority Rules Found.")
-        for rule in rules:
-            print(f"{rule.title}:")
-            print(f"{rule.description}.")
-        print('\n')
+
+    print("HIGH PRIORITY RULES")
+    print(RULE)
+    high = report.vt.by_level("high")
+    if not high:
+        print("No High Priority Rules Found.")
+    for rule in high:
+        print(f"{rule.title}:")
+        print(f"{rule.description}. ")
+    print('\n')
+
+    print("MEDIUM PRIORITY RULES")
+    print(RULE)
+    medium = report.vt.by_level("medium")
+    if not medium:
+        print("No Medium Priority Rules Found.")
+    for rule in medium:
+        print(f"{rule.title}:")
+        print(f"{rule.description}.")
+    print('\n')
+
+    print("LOW PRIORITY RULES")
+    print(RULE)
+    low = report.vt.by_level("low")
+    if not low:
+        print("No Low Priority Rules Found.")
+    for rule in low:
+        print(rule.title)
+        print(rule.description)
 
 
 def render_ips(report: Report) -> None:
@@ -71,7 +91,7 @@ def render_otx(report: Report) -> None:
     print("\n" + RULE)
     print("OTX DATA")
     print(RULE)
-    if report.otx.error:
+    if report.otx.error or report.otx.recorded_instances == "N/A":
         print("No OTX data available.")
         return
     print(f'Recorded instances: {report.otx.recorded_instances}')
@@ -81,7 +101,11 @@ def render_otx(report: Report) -> None:
 
 def render(report: Report) -> None:
     render_vt(report)
-    if report.ips:
+    # Gate on whether VT actually returned contacted IPs, not on whether
+    # AbuseIPDB happened to yield usable data -- see main.py history. This
+    # keeps the TTY and JSON/PDF outputs in agreement regardless of which
+    # of AbuseIPDB/Censys/WHOIS succeeded.
+    if report.vt.contacted_ips:
         render_ips(report)
         render_hosts(report)
         render_whois(report)

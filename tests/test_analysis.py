@@ -36,6 +36,25 @@ def test_extract_otx_with_no_pulse_info():
     otx = extract_otx({})
     assert otx.recorded_instances == "N/A"
     assert otx.attack_techniques == []
+    assert otx.has_pulses is False
+
+
+def test_extract_otx_pulse_info_without_a_count_key_matches_original_fallback():
+    """The pre-branch otx_formatter's default for a missing `count` key was
+    the string 'N/A, No recorded instances', not a bare 'N/A' -- the two
+    values are printed verbatim and must not be conflated."""
+    otx = extract_otx({"pulse_info": {"pulses": []}})
+    assert otx.recorded_instances == "N/A, No recorded instances"
+
+
+def test_extract_otx_has_pulses_true_when_pulses_present(fixture_json):
+    otx = extract_otx(fixture_json("otx_pulses"))
+    assert otx.has_pulses is True
+
+
+def test_extract_otx_on_error_has_pulses_false():
+    otx = extract_otx(make_error("Hash not found in GetOTX", 404))
+    assert otx.has_pulses is False
 
 
 def test_extract_ips_returns_ipreport_objects(fixture_json):

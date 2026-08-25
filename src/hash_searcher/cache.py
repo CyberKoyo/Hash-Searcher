@@ -29,17 +29,24 @@ class ResponseCache:
         if not enabled:
             return
         path = Path(path) if path else cache_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(path)
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS responses ("
-            " provider TEXT NOT NULL,"
-            " key TEXT NOT NULL,"
-            " stored_at REAL NOT NULL,"
-            " payload TEXT NOT NULL,"
-            " PRIMARY KEY (provider, key))"
-        )
-        self._conn.commit()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(path)
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS responses ("
+                " provider TEXT NOT NULL,"
+                " key TEXT NOT NULL,"
+                " stored_at REAL NOT NULL,"
+                " payload TEXT NOT NULL,"
+                " PRIMARY KEY (provider, key))"
+            )
+            conn.commit()
+            self._conn = conn
+        except (sqlite3.Error, OSError) as e:
+            print(f"Warning: could not open cache at {path} ({e}); "
+                  "continuing without a cache.")
+            self.enabled = False
+            self._conn = None
 
     def get(self, provider: str, key: str, ttl: int = DEFAULT_TTL):
         if not self._conn or self.refresh:

@@ -13,7 +13,7 @@ OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relatio
 
 Report Production: Automatically formatted output to either .json or PDF.
 
-Cache System: Provider responses are cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). Errors are never cached. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
+Cache System: Censys responses are cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`); the schema supports other providers, but only Censys is wired up today. Errors are never cached. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
 🛠️ Setup
 

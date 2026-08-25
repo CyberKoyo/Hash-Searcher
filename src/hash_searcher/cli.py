@@ -10,6 +10,7 @@ from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
+from .api.base_call import error_status
 from .api.config import BASE_DIR
 from .api.who_is import who_is
 from .cache import ResponseCache
@@ -69,7 +70,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
 
     vt = extract_vt(raw["vt"])
     otx = extract_otx(raw["otx"])
-    if not vt.found and not otx.attack_techniques and otx.recorded_instances == "N/A":
+    if error_status(raw["vt"]) == 404 and not otx.has_pulses:
         print("Invalid hash. Please check filename or hash.")
         return EXIT_NO_DATA
 
