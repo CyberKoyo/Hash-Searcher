@@ -184,6 +184,14 @@ class EntropyReport:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class FileTypeReport:
+    detected: str | None = None
+    extension: str = ""
+    mismatch: bool = False
+    note: str = ""
+
+
 @dataclass
 class Report:
     indicator: str
