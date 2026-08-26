@@ -177,6 +177,13 @@ class Verdict:
     signals: list[Signal] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class EntropyReport:
+    overall: float = 0.0
+    packed: bool = False
+    note: str = ""
+
+
 @dataclass
 class Report:
     indicator: str
