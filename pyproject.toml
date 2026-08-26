@@ -32,6 +32,11 @@ dev = [
     "respx==0.22.0",
     "tomli==2.2.1; python_version < '3.11'",
 ]
+static = [
+    "pefile>=2023.2.7",
+    "yara-python>=4.5.0",
+    "python-magic>=0.4.27",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

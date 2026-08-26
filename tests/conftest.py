@@ -6,6 +6,7 @@ import pytest
 from hash_searcher.models import (
     CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
 )
+from hash_searcher.static import capabilities
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -51,4 +52,16 @@ def sample_report():
                           country="NL", ports=[80, 443], new_hostnames=["new.example"])],
         whois=[WhoisRecord(domain="bad.example", created="2020-01-01",
                            expires="2027-01-01", registrar="R")],
+    )
+
+
+def requires(name: str):
+    """Skip, never fail, when an optional analysis library is absent.
+
+    Global Constraint 3: the suite must pass with none of the [static]
+    extras installed, and CI runs a leg that proves it.
+    """
+    return pytest.mark.skipif(
+        not capabilities.have(name),
+        reason=f"optional dependency {name!r} is not installed",
     )
