@@ -192,6 +192,23 @@ class FileTypeReport:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class PESection:
+    name: str
+    size: int = 0
+    entropy: float = 0.0
+    executable: bool = False
+
+
+@dataclass(frozen=True)
+class PEStaticReport:
+    imports: dict[str, list[str]] = field(default_factory=dict)
+    sections: list[PESection] = field(default_factory=list)
+    compiled: str | None = None
+    suspicious_imports: list[str] = field(default_factory=list)
+    note: str = ""
+
+
 @dataclass
 class Report:
     indicator: str
