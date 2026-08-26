@@ -7,7 +7,7 @@ A fast, asynchronous Python tool to check file hashes across VirusTotal, AbuseIP
 
 Multi-engine search: Fetches data from VT, OTX, AbuseIPDB, Censys, and WHOIS simultaneously.
 
-ZIP Intelligence: Detects ZIP files, prompts for a password, and hashes every file inside. Nested archives are not unpacked.
+ZIP Intelligence: Detects ZIP files, prompts for a password, and hashes every member — but only the first is analyzed. The remaining hashes are listed as `not analyzed` and are never sent to the providers. Nested archives are not unpacked.
 
 OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relations.
 

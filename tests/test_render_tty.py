@@ -495,3 +495,35 @@ def test_the_whois_separator_matches_the_header_width(capsys, sample_report):
     separator = lines[lines.index(header) + 1]
     assert len(separator) == 92
     assert separator == "-" * 92
+
+
+def test_an_entry_dropped_for_a_missing_ip_leaves_no_blank_row(capsys):
+    """Ledger, Task 4: the extractor drops an AbuseIPDB entry with no
+    `ipAddress` where the pre-branch code printed a row of empty columns.
+    That deviation was authorized but never pinned at the rendering layer --
+    a blank row is worse than no row, because it reads as a real IP the tool
+    failed to describe. Assert the exact bytes, not just the row count.
+    """
+    from hash_searcher.analysis.ipdb import extract_ips
+
+    report = Report(
+        indicator="test",
+        generated_at="2026-08-23",
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
+        ips=extract_ips([
+            {"data": {"ipAddress": "198.51.100.10", "abuseConfidenceScore": 90,
+                      "reports": 2}},
+            {"data": {"abuseConfidenceScore": 90, "reports": 2}},
+        ]),
+        hosts=[],
+        whois=[],
+    )
+    render_ips(report)
+    assert capsys.readouterr().out == (
+        "\n==================================================\n"
+        "IP               CONFIDENCE   REPORTS   \n"
+        "----------------------------------------\n"
+        "198.51.100.10    90%          2         \n"
+        "----------------------------------------\n"
+    )

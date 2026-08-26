@@ -16,9 +16,28 @@ def test_run_is_importable_and_callable():
 
 
 def test_readme_does_not_advertise_a_missing_script():
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    """The second assertion used to be `"hash-searcher " in readme`, which the
+    string "hash-searcher.py is gone" would satisfy. Pin the usage line itself,
+    and take the command name from pyproject so a rename cannot leave the
+    README documenting a script that no longer exists.
+    """
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text()
+    scripts = tomllib.loads((root / "pyproject.toml").read_text())["project"]["scripts"]
+    name = next(iter(scripts))
     assert "python hash-searcher.py" not in readme
-    assert "hash-searcher " in readme
+    assert f"    {name} <file_path_or_hash> [-o report.json | report.pdf]" in readme
+
+
+def test_readme_does_not_claim_every_archive_member_is_analyzed():
+    """R20: the README describes what the tool does. get_zip_hash hashes every
+    member, but cli.run_cli sends only resolved[0] to the providers and prints
+    the rest as "not analyzed" -- so "hashes every file inside", full stop,
+    overpromises.
+    """
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    assert "hashes every file inside" not in readme
+    assert "only the first is analyzed" in readme
 
 
 def test_readme_states_nested_archives_are_not_unpacked():
