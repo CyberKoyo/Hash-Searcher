@@ -1,9 +1,11 @@
+from xml.sax.saxutils import escape
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from ..models import Report
+from ..models import Report, Verdict
 
 TABLE_STYLE = TableStyle([
     ('BACKGROUND',      (0, 0), (-1, 0), colors.grey),
@@ -15,6 +17,20 @@ TABLE_STYLE = TableStyle([
 ])
 
 
+def _x(value) -> str:
+    """Escape a provider-supplied value for reportlab's mini-HTML parser.
+
+    Paragraph does not render a stray '<' oddly -- it raises. A crafted
+    Authenticode signer name or YARA rule name containing one killed
+    `-o report.pdf` with a traceback on an otherwise successful run. Every
+    interpolated value in this module comes from a provider payload, which is
+    to say from someone else; this module's own markup (the ATT&CK ampersand,
+    the <b> around a Sigma title) is written literally around the escaped
+    value, never through it.
+    """
+    return escape(str(value))
+
+
 def _table(rows, widths=None) -> Table:
     """One style, three tables. It was copy-pasted per table before."""
     table = Table(rows, colWidths=widths)
@@ -22,23 +38,26 @@ def _table(rows, widths=None) -> Table:
     return table
 
 
-def write_pdf(report: Report, path: str, verdict=None) -> str:
-    doc = SimpleDocTemplate(path, pagesize=letter)
+def build_story(report: Report, verdict: Verdict | None = None) -> list:
+    """Every flowable, in order. Separate from write_pdf so the content can be
+    asserted on directly -- there is no PDF text extractor in the dev
+    dependencies, and asserting on bytes reportlab just compressed would test
+    zlib rather than this module."""
     styles = getSampleStyleSheet()
     story = []
 
     story.append(Paragraph("Threat Intelligence Report", styles['Title']))
-    story.append(Paragraph(f"Hash: {report.indicator}", styles['Normal']))
-    story.append(Paragraph(f"Generated: {report.generated_at}", styles['Normal']))
+    story.append(Paragraph(f"Hash: {_x(report.indicator)}", styles['Normal']))
+    story.append(Paragraph(f"Generated: {_x(report.generated_at)}", styles['Normal']))
     story.append(Spacer(1, 12))
 
     if verdict is not None:
         story.append(Paragraph(
-            f"Verdict: {verdict.level} (score {verdict.score})", styles['Heading1']))
+            f"Verdict: {_x(verdict.level)} (score {verdict.score})", styles['Heading1']))
         if verdict.signals:
             story.append(_table(
                 [["Points", "Signal", "Why"]]
-                + [[f"{s.points:+d}", Paragraph(s.name), Paragraph(s.detail)]
+                + [[f"{s.points:+d}", Paragraph(_x(s.name)), Paragraph(_x(s.detail))]
                    for s in verdict.signals],
                 widths=[50, 90, 250],
             ))
@@ -49,30 +68,31 @@ def write_pdf(report: Report, path: str, verdict=None) -> str:
     if report.vt.detection:
         story.append(Paragraph("Detections", styles['Heading1']))
         story.append(Paragraph(
-            f"{report.vt.detection.ratio} engines flagged this file "
+            f"{_x(report.vt.detection.ratio)} engines flagged this file "
             f"(suspicious {report.vt.detection.suspicious}, "
             f"undetected {report.vt.detection.undetected})", styles['Normal']))
         story.append(Spacer(1, 12))
 
     story.append(Paragraph("OTX Intelligence", styles['Heading1']))
     story.append(Paragraph(
-        f"Recorded Instances: {report.otx.recorded_instances}", styles['Normal']))
+        f"Recorded Instances: {_x(report.otx.recorded_instances)}", styles['Normal']))
     for technique in report.otx.attack_techniques:
-        story.append(Paragraph(f"• {technique}", styles['Normal']))
+        story.append(Paragraph(f"• {_x(technique)}", styles['Normal']))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("AbuseIPDB", styles['Heading1']))
     story.append(_table(
         [["IP", "Confidence", "Reports"]]
-        + [[i.ip, f"{i.confidence}%", str(i.reports)] for i in report.ips.values()]
+        + [[_x(i.ip), f"{_x(i.confidence)}%", _x(i.reports)] for i in report.ips.values()]
     ))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Censys Enrichment", styles['Heading1']))
     story.append(_table(
         [["IP", "Org", "ASN", "Country", "Ports"]]
-        + [[Paragraph(h.ip), Paragraph(h.org or "N/A"), Paragraph(str(h.asn)),
-            Paragraph(h.country), Paragraph(", ".join(str(p) for p in h.ports))]
+        + [[Paragraph(_x(h.ip)), Paragraph(_x(h.org or "N/A")), Paragraph(_x(h.asn)),
+            Paragraph(_x(h.country)),
+            Paragraph(_x(", ".join(str(p) for p in h.ports)))]
            for h in report.hosts],
         widths=[80, 120, 70, 60, 120],
     ))
@@ -81,8 +101,8 @@ def write_pdf(report: Report, path: str, verdict=None) -> str:
     story.append(Paragraph("WHOIS Data", styles['Heading1']))
     story.append(_table(
         [["Domain", "Created", "Expires", "Registrar"]]
-        + [[Paragraph(w.domain), Paragraph(w.created),
-            Paragraph(w.expires), Paragraph(w.registrar)]
+        + [[Paragraph(_x(w.domain)), Paragraph(_x(w.created)),
+            Paragraph(_x(w.expires)), Paragraph(_x(w.registrar))]
            for w in report.whois if not w.error],
         widths=[150, 70, 70, 150],
     ))
@@ -92,27 +112,29 @@ def write_pdf(report: Report, path: str, verdict=None) -> str:
     if any((vt.threat, vt.signature, vt.sandbox, vt.yara, vt.pe, vt.techniques)):
         story.append(Paragraph("Attribution", styles['Heading1']))
         if vt.threat:
-            story.append(Paragraph(f"Label: {vt.threat.label}", styles['Normal']))
+            story.append(Paragraph(f"Label: {_x(vt.threat.label)}", styles['Normal']))
             if vt.threat.family:
-                story.append(Paragraph(f"Family: {vt.threat.family}", styles['Normal']))
+                story.append(Paragraph(f"Family: {_x(vt.threat.family)}", styles['Normal']))
         if vt.signature:
             state = "verified" if vt.signature.verified else "present but NOT verified"
             story.append(Paragraph(
-                f"Signature: {state} ({vt.signature.signer or 'unnamed signer'})",
+                f"Signature: {state} "
+                f"({_x(vt.signature.signer or 'unnamed signer')})",
                 styles['Normal']))
         for sandbox in vt.sandbox:
             story.append(Paragraph(
-                f"Sandbox: {sandbox.sandbox} says {sandbox.category}", styles['Normal']))
+                f"Sandbox: {_x(sandbox.sandbox)} says {_x(sandbox.category)}", styles['Normal']))
         for match in vt.yara:
-            story.append(Paragraph(f"YARA: {match.rule}", styles['Normal']))
+            story.append(Paragraph(f"YARA: {_x(match.rule)}", styles['Normal']))
         if vt.pe:
             story.append(Paragraph(
-                f"PE: {vt.pe.sections} sections, imphash {vt.pe.imphash or 'N/A'}, "
-                f"compiled {vt.pe.compiled or 'N/A'}", styles['Normal']))
+                f"PE: {vt.pe.sections} sections, "
+                f"imphash {_x(vt.pe.imphash or 'N/A')}, "
+                f"compiled {_x(vt.pe.compiled or 'N/A')}", styles['Normal']))
         for technique in vt.techniques:
-            tactic = f" ({technique.tactic})" if technique.tactic else ""
+            tactic = f" ({_x(technique.tactic)})" if technique.tactic else ""
             story.append(Paragraph(
-                f"ATT&amp;CK: {technique.id} {technique.name}{tactic}", styles['Normal']))
+                f"ATT&amp;CK: {_x(technique.id)} {_x(technique.name)}{tactic}", styles['Normal']))
         story.append(Spacer(1, 12))
 
     story.append(Paragraph("VirusTotal Sigma Rules", styles['Heading1']))
@@ -123,8 +145,13 @@ def write_pdf(report: Report, path: str, verdict=None) -> str:
             story.append(Paragraph("None found.", styles['Normal']))
         for rule in rules:
             story.append(Paragraph(
-                f"<b>{rule.title}</b>: {rule.description}", styles['Normal']))
+                f"<b>{_x(rule.title)}</b>: {_x(rule.description)}", styles['Normal']))
 
-    doc.build(story)
+    return story
+
+
+def write_pdf(report: Report, path: str, verdict: Verdict | None = None) -> str:
+    doc = SimpleDocTemplate(path, pagesize=letter)
+    doc.build(build_story(report, verdict))
     print(f"\nReport saved as: {path}")
     return path
