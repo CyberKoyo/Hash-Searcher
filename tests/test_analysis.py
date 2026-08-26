@@ -127,20 +127,10 @@ def test_contacted_ips_is_empty_on_an_error_payload():
     assert contacted_ips(make_error("Hash not found in GetTotal", 404)) == []
 
 
-import json
-from pathlib import Path
-
-FIXTURES = Path(__file__).parent / "fixtures"
-
-
-def _vt_fixture() -> dict:
-    return json.loads((FIXTURES / "vt_full_report.json").read_text())
-
-
-def test_detection_ratio_counts_only_the_verdict_buckets():
+def test_detection_ratio_counts_only_the_verdict_buckets(fixture_json):
     from hash_searcher.analysis.vt import extract_vt
 
-    report = extract_vt(_vt_fixture())
+    report = extract_vt(fixture_json("vt_full_report"))
     assert report.detection.malicious == 48
     assert report.detection.suspicious == 2
     # 48 + 2 + 20 + 0 + 2 == 72; type-unsupported and failure are excluded.
@@ -161,13 +151,13 @@ def test_detection_is_none_on_an_error_payload():
     assert extract_vt(make_error("Hash not found in GetTotal", 404)).detection is None
 
 
-def test_threat_classification_takes_the_most_popular_family():
+def test_threat_classification_takes_the_most_popular_family(fixture_json):
     """The payload's lists are not pre-sorted, so the first entry is not
     reliably the most popular one. The fixture's first entry is the LOWER
     count on purpose."""
     from hash_searcher.analysis.vt import extract_vt
 
-    threat = extract_vt(_vt_fixture()).threat
+    threat = extract_vt(fixture_json("vt_full_report")).threat
     assert threat.label == "trojan.emotet/heurgeneric"
     assert threat.family == "emotet"
     assert threat.categories == ["trojan", "downloader"]
@@ -179,10 +169,10 @@ def test_threat_is_none_when_vt_has_no_classification():
     assert extract_vt({"data": {"attributes": {}}}).threat is None
 
 
-def test_submission_history_is_rendered_as_a_utc_iso_date():
+def test_submission_history_is_rendered_as_a_utc_iso_date(fixture_json):
     from hash_searcher.analysis.vt import extract_vt
 
-    submission = extract_vt(_vt_fixture()).submission
+    submission = extract_vt(fixture_json("vt_full_report")).submission
     assert submission.first_seen == "2019-04-02"
     assert submission.times_submitted == 417
     assert submission.names == ["invoice.doc", "rechnung.doc", "sample.bin"]
@@ -196,14 +186,14 @@ def test_submission_first_seen_is_none_without_a_timestamp():
     assert submission.times_submitted == 3
 
 
-def test_signature_verified_is_a_bool_derived_from_vts_string():
+def test_signature_verified_is_a_bool_derived_from_vts_string(fixture_json):
     """VT's signature_info.verified is prose ('Signed file, verified
     signature'), not a boolean. Any truthiness check on it reports every
     signed-but-INVALID file as verified -- and the verdict layer subtracts
     points for a verified signature, so that error flips real results."""
     from hash_searcher.analysis.vt import extract_vt
 
-    sig = extract_vt(_vt_fixture()).signature
+    sig = extract_vt(fixture_json("vt_full_report")).signature
     assert sig.verified is True
     assert sig.signer == "Contoso Ltd"
     assert sig.product == "Contoso Updater"
@@ -219,29 +209,29 @@ def test_signature_with_an_invalid_verification_string_is_not_verified():
     assert extract_vt(raw).signature.verified is False
 
 
-def test_sandbox_verdicts_keep_only_the_flagged_ones():
+def test_sandbox_verdicts_keep_only_the_flagged_ones(fixture_json):
     """A dozen sandboxes reporting 'undetected' is noise; the one that
     reported 'malicious' is the finding."""
     from hash_searcher.analysis.vt import extract_vt
 
-    verdicts = extract_vt(_vt_fixture()).sandbox
+    verdicts = extract_vt(fixture_json("vt_full_report")).sandbox
     assert [v.sandbox for v in verdicts] == ["Zenbox"]
     assert verdicts[0].category == "malicious"
     assert verdicts[0].malware_names == ["Emotet"]
 
 
-def test_yara_matches_are_extracted():
+def test_yara_matches_are_extracted(fixture_json):
     from hash_searcher.analysis.vt import extract_vt
 
-    yara = extract_vt(_vt_fixture()).yara
+    yara = extract_vt(fixture_json("vt_full_report")).yara
     assert [y.rule for y in yara] == ["Emotet_Loader"]
     assert yara[0].author == "Some Researcher"
 
 
-def test_pe_info_counts_sections_and_dates_the_build():
+def test_pe_info_counts_sections_and_dates_the_build(fixture_json):
     from hash_searcher.analysis.vt import extract_vt
 
-    pe = extract_vt(_vt_fixture()).pe
+    pe = extract_vt(fixture_json("vt_full_report")).pe
     assert pe.imphash == "5f0b1e9a8c3d4e2f1a0b9c8d7e6f5a4b"
     assert pe.sections == 3
     assert pe.compiled == "2019-04-02"
@@ -335,7 +325,7 @@ def test_contacted_ips_skips_an_entry_with_no_id():
     assert contacted_ips(payload) == ["198.51.100.10", "203.0.113.7"]
 
 
-def test_vt_techniques_are_resolved_and_attached():
+def test_vt_techniques_are_resolved_and_attached(fixture_json):
     """The VT half of the ATT&CK wiring had no test: the fixture carried no
     behaviour_mitre_trees, so `techniques=[]` in extract_vt kept the suite
     green. technique_ids_from_vt was unit-tested in isolation; the wiring
@@ -343,7 +333,7 @@ def test_vt_techniques_are_resolved_and_attached():
     """
     from hash_searcher.analysis.vt import extract_vt
 
-    report = extract_vt(_vt_fixture())
+    report = extract_vt(fixture_json("vt_full_report"))
     assert [t.id for t in report.techniques] == ["T1055", "T1497", "T1059"], (
         "first-seen order, deduplicated across sandboxes"
     )

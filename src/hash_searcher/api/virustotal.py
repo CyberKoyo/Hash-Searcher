@@ -1,3 +1,14 @@
+"""VirusTotal fetcher.
+
+Note the import direction: this module reaches into `analysis/`, which is the
+reverse of the usual api -> analysis -> render flow. It is deliberate --
+`contacted_ips` and `analysis.vt.relationship_ids` had diverged, and one of
+them guarded a missing "id" key while the other raised KeyError (ruling R31).
+Delegating rather than keeping a second copy is what closed that. The chain is
+api.virustotal -> analysis.vt -> api.base_call, which is not a cycle; do not
+"fix" it by importing back this way.
+"""
+
 import httpx
 
 from ..analysis.vt import relationship_ids

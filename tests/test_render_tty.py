@@ -347,7 +347,7 @@ def test_verdict_section_leads_with_the_level_and_lists_every_signal(capsys, sam
         Signal("detection", 50, "48/72 engines flagged this file"),
         Signal("otx", 10, "OTX pulses reference this indicator (3 recorded instances)"),
     ])
-    render_verdict(sample_report, verdict)
+    render_verdict(verdict)
 
     assert capsys.readouterr().out == (
         "\n" + RULE + "\n"
@@ -362,7 +362,7 @@ def test_a_verdict_with_no_signals_says_so(capsys, sample_report):
     from hash_searcher.models import Verdict
     from hash_searcher.render.tty import render_verdict
 
-    render_verdict(sample_report, Verdict(level="UNKNOWN", score=0, signals=[]))
+    render_verdict(Verdict(level="UNKNOWN", score=0, signals=[]))
     out = capsys.readouterr().out
     assert "VERDICT: UNKNOWN (score 0)" in out
     assert "No signals fired." in out
@@ -372,7 +372,7 @@ def test_a_negative_signal_prints_its_sign(capsys, sample_report):
     from hash_searcher.models import Signal, Verdict
     from hash_searcher.render.tty import render_verdict
 
-    render_verdict(sample_report, Verdict(level="CLEAN", score=-20, signals=[
+    render_verdict(Verdict(level="CLEAN", score=-20, signals=[
         Signal("signed", -20, "valid signature from Contoso Ltd"),
     ]))
     assert "  -20  signed" in capsys.readouterr().out

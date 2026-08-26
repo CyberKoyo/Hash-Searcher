@@ -4,7 +4,8 @@ import pytest
 
 from hash_searcher.api.base_call import make_error
 from hash_searcher.cli import (
-    EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN, build_parser, output_format, run_cli,
+    EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
+    build_parser, output_format, run_cli,
 )
 
 
@@ -257,3 +258,49 @@ async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
     assert exit_code == EXIT_NO_DATA
     assert "isn't in an accessible directory" in out
     assert "Traceback" not in out
+
+
+async def test_a_full_run_on_a_malicious_file_exits_two(monkeypatch, fixture_json, capsys):
+    """The exit-code map is unit-tested over all four levels, but the whole
+    path -- data_puller to extract to score to exit -- was only ever exercised
+    for SUSPICIOUS and UNKNOWN. These are the two verdicts a pipeline actually
+    branches on.
+    """
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": fixture_json("vt_full_report"),
+        "otx": fixture_json("otx_pulses"),
+        "ipdb": [],
+        "censys": [],
+        "ips": [],
+    })
+    _stub_who_is(monkeypatch)
+
+    exit_code = await run_cli(["deadbeef", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_MALICIOUS
+    assert "VERDICT: MALICIOUS" in out
+    assert "48/72 engines flagged this file" in out
+
+
+async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, capsys):
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": {"data": {"attributes": {
+            "last_analysis_stats": {"malicious": 0, "suspicious": 0, "harmless": 0,
+                                    "undetected": 72, "timeout": 0},
+        }}},
+        "otx": {"pulse_info": {"pulses": []}},
+        "ipdb": [],
+        "censys": [],
+        "ips": [],
+    })
+    _stub_who_is(monkeypatch)
+
+    exit_code = await run_cli(["deadbeef", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_CLEAN
+    assert "VERDICT: CLEAN" in out
+    assert "No signals fired." in out

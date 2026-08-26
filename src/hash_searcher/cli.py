@@ -14,7 +14,7 @@ from .api.base_call import error_status
 from .api.who_is import who_is
 from .cache import ResponseCache
 from .hashing import check_env
-from .models import Report
+from .models import Report, Verdict
 from .render.json_out import write_json
 from .render.pdf import write_pdf
 from .render.tty import render
@@ -34,7 +34,7 @@ _EXIT_BY_LEVEL = {
 }
 
 
-def exit_code(verdict) -> int:
+def exit_code(verdict: Verdict) -> int:
     """Unknown levels fail safe to EXIT_UNKNOWN, never to EXIT_CLEAN."""
     return _EXIT_BY_LEVEL.get(verdict.level, EXIT_UNKNOWN)
 
@@ -58,7 +58,8 @@ def output_format(path: str) -> str | None:
     return {".json": "json", ".pdf": "pdf"}.get(ext)
 
 
-def write_report(report: Report, output: str, verdict=None) -> None:
+def write_report(report: Report, output: str,
+                 verdict: Verdict | None = None) -> None:
     """Resolve output relative to the CWD and dispatch on the extension.
 
     This used to join onto BASE_DIR -- the installed package directory --

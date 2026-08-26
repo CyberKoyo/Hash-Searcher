@@ -111,7 +111,13 @@ def test_json_carries_the_new_vt_blocks(sample_report, tmp_path):
     write_json(sample_report, str(path))
     vt = json.loads(path.read_text())["report"]["vt"]
 
-    assert vt["detection"] == {"malicious": 48, "total": 72, "ratio": "48/72"}
+    assert vt["detection"] == {
+        # All five buckets, not just malicious/total/ratio: the TTY prints
+        # suspicious and undetected, and a JSON consumer that cannot
+        # reconstruct what the terminal showed is reading a different report.
+        "malicious": 48, "suspicious": 2, "harmless": 0, "undetected": 20,
+        "timeout": 2, "total": 72, "ratio": "48/72",
+    }
     assert vt["threat"]["family"] == "emotet"
     assert vt["signature"]["verified"] is True
     assert vt["pe"]["sections"] == 3
@@ -130,3 +136,29 @@ def test_json_vt_blocks_vt_never_returned_are_null(sample_report, tmp_path):
     assert vt["detection"] is None
     assert vt["threat"] is None
     assert vt["sandbox"] == [] and vt["yara"] == [] and vt["techniques"] == []
+
+
+def test_a_failed_censys_lookup_is_visible_in_the_json(sample_report, tmp_path):
+    """The TTY names the error; the JSON used to omit it, so a 403 serialized
+    as a host with null org, null asn, and no ports -- indistinguishable from
+    a real host Censys knew nothing about."""
+    import json
+    from hash_searcher.models import CensysHost
+    from hash_searcher.render.json_out import write_json
+
+    sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
+    path = tmp_path / "out.json"
+    write_json(sample_report, str(path))
+    host = json.loads(path.read_text())["report"]["censys"][0]
+    assert host["error"] == "Censys 403: forbidden"
+    assert host["ip"] == "198.51.100.10"
+
+
+def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):
+    """Phase 1 schema compatibility: the success shape is unchanged."""
+    import json
+    from hash_searcher.render.json_out import write_json
+
+    path = tmp_path / "out.json"
+    write_json(sample_report, str(path))
+    assert "error" not in json.loads(path.read_text())["report"]["censys"][0]

@@ -1,6 +1,6 @@
 """Reduce the MITRE ATT&CK STIX bundle to what analysis/attack.py reads.
 
-The full enterprise bundle is ~35MB, nearly all of it prose fields this tool
+The full enterprise bundle is ~26MB, nearly all of it prose fields this tool
 never touches. Keeping only attack-pattern objects and four fields each gets
 it under 1MB, small enough to vendor and to review in a diff.
 """

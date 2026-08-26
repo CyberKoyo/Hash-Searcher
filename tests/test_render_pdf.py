@@ -100,3 +100,14 @@ def test_markup_in_a_provider_string_is_escaped_not_parsed(tmp_path, sample_repo
 
     path = write_pdf(sample_report, str(tmp_path / "markup.pdf"), verdict)
     assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
+    """It used to render as a row of "None" -- the lookup failed and the PDF
+    showed it as a host Censys had nothing on."""
+    from hash_searcher.models import CensysHost
+
+    sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
+    texts = _texts(build_story(sample_report, None))
+    assert "Censys 403: forbidden" in texts
+    assert "None" not in texts

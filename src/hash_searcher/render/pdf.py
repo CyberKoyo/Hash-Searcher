@@ -90,9 +90,12 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
     story.append(Paragraph("Censys Enrichment", styles['Heading1']))
     story.append(_table(
         [["IP", "Org", "ASN", "Country", "Ports"]]
-        + [[Paragraph(_x(h.ip)), Paragraph(_x(h.org or "N/A")), Paragraph(_x(h.asn)),
-            Paragraph(_x(h.country)),
-            Paragraph(_x(", ".join(str(p) for p in h.ports)))]
+        # An errored host used to render as a row of "None": the lookup failed
+        # and the PDF showed it as a host Censys had nothing on. Say which.
+        + [[Paragraph(_x(h.ip)), Paragraph(_x(h.error)), "", "", ""] if h.error
+           else [Paragraph(_x(h.ip)), Paragraph(_x(h.org or "N/A")), Paragraph(_x(h.asn)),
+                 Paragraph(_x(h.country)),
+                 Paragraph(_x(", ".join(str(p) for p in h.ports)))]
            for h in report.hosts],
         widths=[80, 120, 70, 60, 120],
     ))

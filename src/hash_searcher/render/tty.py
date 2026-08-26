@@ -114,7 +114,7 @@ def render_otx(report: Report) -> None:
 SIGNAL_NAME_WIDTH = 11
 
 
-def render_verdict(report: Report, verdict: Verdict) -> None:
+def render_verdict(verdict: Verdict) -> None:
     """Score first, then every signal that produced it.
 
     The rationale lines are the point. A verdict an analyst cannot decompose
@@ -182,7 +182,7 @@ def render_domains(report: Report) -> None:
 
 def render(report: Report, verdict: Verdict | None = None) -> None:
     if verdict is not None:
-        render_verdict(report, verdict)
+        render_verdict(verdict)
     render_detection(report)
     render_vt(report)
     render_attribution(report)

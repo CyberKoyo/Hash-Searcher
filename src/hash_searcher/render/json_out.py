@@ -1,12 +1,18 @@
 import json
 from dataclasses import asdict
 
-from ..models import CensysHost, Report, VTReport, WhoisRecord
+from ..models import CensysHost, Report, Verdict, VTReport, WhoisRecord
 
 
 def _censys_dict(host: CensysHost) -> dict:
-    """Reproduce the old censys_formatter shape: no `hostnames` key."""
-    return {
+    """Reproduce the old censys_formatter shape: no `hostnames` key.
+
+    A failed lookup adds an `error` key -- without it a 403 serialized as a
+    host with null org, null asn, and no ports, indistinguishable from a real
+    host Censys knew nothing about. Added only when set, the same way
+    _whois_dict has always handled it, so the success shape is unchanged.
+    """
+    body = {
         "ip": host.ip,
         "org": host.org,
         "asn": host.asn,
@@ -14,6 +20,9 @@ def _censys_dict(host: CensysHost) -> dict:
         "ports": host.ports,
         "new_hostnames": host.new_hostnames,
     }
+    if host.error:
+        body["error"] = host.error
+    return body
 
 
 def _whois_dict(record: WhoisRecord) -> dict:
@@ -29,7 +38,7 @@ def _whois_dict(record: WhoisRecord) -> dict:
     }
 
 
-def _verdict_dict(verdict) -> dict:
+def _verdict_dict(verdict: Verdict) -> dict:
     return {
         "level": verdict.level,
         "score": verdict.score,
@@ -51,8 +60,16 @@ def _vt_dict(vt: VTReport) -> dict:
     """
     detection = vt.detection
     return {
+        # All five buckets: the TTY prints suspicious and undetected, and a
+        # consumer that could not reconstruct what the terminal showed would
+        # be reading a different report from the one the analyst saw.
         "detection": (
-            {"malicious": detection.malicious, "total": detection.total,
+            {"malicious": detection.malicious,
+             "suspicious": detection.suspicious,
+             "harmless": detection.harmless,
+             "undetected": detection.undetected,
+             "timeout": detection.timeout,
+             "total": detection.total,
              "ratio": detection.ratio}
             if detection else None
         ),
@@ -67,7 +84,7 @@ def _vt_dict(vt: VTReport) -> dict:
     }
 
 
-def to_dict(report: Report, verdict=None) -> dict:
+def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
         "hash": report.indicator,
         "otx": {
@@ -93,7 +110,7 @@ def to_dict(report: Report, verdict=None) -> dict:
     }
 
 
-def write_json(report: Report, path: str, verdict=None) -> str:
+def write_json(report: Report, path: str, verdict: Verdict | None = None) -> str:
     with open(path, "w") as out:
         json.dump(to_dict(report, verdict), out, sort_keys=True, indent=4,
                   ensure_ascii=False)
