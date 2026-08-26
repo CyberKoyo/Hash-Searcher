@@ -65,6 +65,11 @@ def resolve(technique_ids: list[str], bundle: dict | None = None) -> list[Attack
     An ID absent from the bundle survives as itself rather than being
     dropped: a stale bundle should degrade the output, not censor it.
     """
+    if not technique_ids:
+        # The index costs ~28 ms to build on first use. Most payloads carry no
+        # ATT&CK data at all, and building 649 entries to resolve nothing is
+        # pure cost.
+        return []
     index = _index(bundle) if bundle is not None else _default_index()
     out: list[AttackTechnique] = []
     seen: set[str] = set()

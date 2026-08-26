@@ -1,5 +1,8 @@
-from hash_searcher.render.tty import render, render_hosts, render_ips, render_otx, render_vt, render_whois
-from hash_searcher.models import CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord
+from hash_searcher.render.tty import RULE, render, render_hosts, render_ips, render_otx, render_vt, render_whois
+from hash_searcher.models import (
+    AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
+    SigmaRule, Signature, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
+)
 
 
 def test_render_emits_every_section(capsys, sample_report):
@@ -394,13 +397,95 @@ def test_detection_section_is_silent_without_stats(capsys, sample_report):
     assert capsys.readouterr().out == ""
 
 
-def test_contacted_domains_are_printed(capsys, sample_report):
+def test_contacted_domains_exact_formatting(capsys, sample_report):
+    """R14. This asserted `"CONTACTED DOMAINS" in out and "evil.example" in out`,
+    which left the body format of a whole new section unpinned -- changing it
+    to `- {domain}` kept the suite green."""
     from hash_searcher.render.tty import render_domains
 
-    sample_report.vt.contacted_domains = ["evil.example"]
+    sample_report.vt.contacted_domains = ["evil.example", "worse.example"]
     render_domains(sample_report)
-    out = capsys.readouterr().out
-    assert "CONTACTED DOMAINS" in out and "evil.example" in out
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "CONTACTED DOMAINS\n"
+        + RULE + "\n"
+        "evil.example\n"
+        "worse.example\n"
+    )
+
+
+def test_render_domains_is_silent_when_vt_reported_none(capsys, sample_report):
+    from hash_searcher.render.tty import render_domains
+
+    sample_report.vt.contacted_domains = []
+    render_domains(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_render_attribution_exact_formatting(capsys, sample_report):
+    """R14, and the largest gap the review found: seven output shapes and no
+    test called this function at all. Its only exercise anywhere was
+    `out.index("ATTRIBUTION")` in the ordering test, so rewriting the
+    signature line to `SIG={state}` kept 189 tests green.
+    """
+    from hash_searcher.render.tty import render_attribution
+
+    vt = sample_report.vt
+    vt.threat = ThreatClass(label="trojan.emotet", family="emotet",
+                            categories=["trojan", "downloader"])
+    vt.signature = Signature(verified=False, signer="Contoso Ltd")
+    vt.sandbox = [SandboxVerdict(sandbox="Zenbox", category="malicious",
+                                 malware_names=["Emotet"]),
+                  SandboxVerdict(sandbox="Lastline", category="malicious")]
+    vt.yara = [YaraMatch(rule="malw_emotet", author="Marc Rivero"),
+               YaraMatch(rule="anonymous_rule")]
+    vt.pe = PEInfo(sections=5, imphash="d41d8c", compiled="2024-01-02 03:04:05")
+    vt.submission = Submission(times_submitted=12, first_seen="2024-01-01",
+                               names=["invoice.exe", "setup.exe"])
+    vt.techniques = [AttackTechnique(id="T1055", name="Process Injection",
+                                     tactic="defense-evasion"),
+                     AttackTechnique(id="T9999", name="Unmapped")]
+
+    render_attribution(sample_report)
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "ATTRIBUTION\n"
+        + RULE + "\n"
+        "Label:      trojan.emotet\n"
+        "Family:     emotet\n"
+        "Categories: trojan, downloader\n"
+        "Signature:  present but NOT verified (Contoso Ltd)\n"
+        "Sandbox:    Zenbox says malicious -- Emotet\n"
+        "Sandbox:    Lastline says malicious\n"
+        "YARA:       malw_emotet (Marc Rivero)\n"
+        "YARA:       anonymous_rule (unknown author)\n"
+        "PE:         5 sections, imphash d41d8c, compiled 2024-01-02 03:04:05\n"
+        "Submitted:  12 times, first seen 2024-01-01\n"
+        "Names:      invoice.exe, setup.exe\n"
+        "ATT&CK:     T1055 Process Injection (defense-evasion)\n"
+        "ATT&CK:     T9999 Unmapped\n"
+    )
+
+
+def test_render_attribution_is_silent_when_vt_returned_none_of_it(capsys, sample_report):
+    """The gate at the top of the section. sample_report carries sigma rules
+    and contacted IPs but no attribution fields, which is the common case for
+    a file VT has seen and nothing has classified."""
+    from hash_searcher.render.tty import render_attribution
+
+    render_attribution(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_a_verified_signature_reads_differently_from_an_unverified_one(capsys, sample_report):
+    """VT's signature_info.verified is prose and every value of it is truthy;
+    the extractor compares against the one string that means verified. Pin
+    both renderings so the distinction cannot collapse."""
+    from hash_searcher.render.tty import render_attribution
+
+    sample_report.vt.signature = Signature(verified=True, signer=None)
+    render_attribution(sample_report)
+    assert "Signature:  verified (unnamed signer)\n" in capsys.readouterr().out
 
 
 def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):

@@ -93,6 +93,50 @@
             "name": ".data"
           }
         ]
+      },
+      "behaviour_mitre_trees": {
+        "Zenbox": {
+          "tactics": [
+            {
+              "id": "TA0005",
+              "name": "Defense Evasion",
+              "techniques": [
+                {
+                  "id": "T1055",
+                  "name": "Process Injection"
+                },
+                {
+                  "id": "T1497",
+                  "name": "Virtualization/Sandbox Evasion"
+                }
+              ]
+            },
+            {
+              "id": "TA0002",
+              "name": "Execution",
+              "techniques": [
+                {
+                  "id": "T1059",
+                  "name": "Command and Scripting Interpreter"
+                }
+              ]
+            }
+          ]
+        },
+        "C2AE": {
+          "tactics": [
+            {
+              "id": "TA0005",
+              "name": "Defense Evasion",
+              "techniques": [
+                {
+                  "id": "T1055",
+                  "name": "Process Injection"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     "relationships": {

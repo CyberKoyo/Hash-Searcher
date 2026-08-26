@@ -79,3 +79,34 @@ def test_technique_ids_tolerate_an_error_payload():
 
     assert technique_ids_from_otx(make_error("nope", 404)) == []
     assert technique_ids_from_vt(make_error("nope", 404)) == []
+
+
+def test_the_vendored_bundle_resolves_a_real_technique():
+    """Every other test here runs against tests/fixtures/mitre_mini.json, and
+    load_bundle degrades silently on OSError/ValueError -- so replacing the
+    shipped 897 KB bundle with `{"objects": []}` left the whole suite green.
+    Nothing verified the file we actually ship is a bundle at all, which also
+    means nothing guarded the packaging.
+    """
+    from hash_searcher.analysis.attack import BUNDLE_PATH, resolve
+
+    assert BUNDLE_PATH.exists(), BUNDLE_PATH
+    technique = resolve(["T1055"])[0]
+    assert technique.name == "Process Injection"
+    assert technique.tactic == "defense-evasion"
+    assert technique.url == "https://attack.mitre.org/techniques/T1055"
+
+
+def test_resolving_nothing_does_not_read_the_bundle():
+    """The 649-entry index was built before the loop ran, so every extract_vt
+    call parsed 897 KB whether or not the payload had any ATT&CK data."""
+    from hash_searcher.analysis import attack
+
+    calls = []
+    original = attack._default_index
+    attack._default_index = lambda: calls.append(1) or {}
+    try:
+        assert attack.resolve([]) == []
+    finally:
+        attack._default_index = original
+    assert calls == []

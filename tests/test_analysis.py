@@ -333,3 +333,21 @@ def test_contacted_ips_skips_an_entry_with_no_id():
         {"id": "198.51.100.10"}, {"no_id": "here"}, {"id": "203.0.113.7"},
     ]}}}}
     assert contacted_ips(payload) == ["198.51.100.10", "203.0.113.7"]
+
+
+def test_vt_techniques_are_resolved_and_attached():
+    """The VT half of the ATT&CK wiring had no test: the fixture carried no
+    behaviour_mitre_trees, so `techniques=[]` in extract_vt kept the suite
+    green. technique_ids_from_vt was unit-tested in isolation; the wiring
+    was not. (Plan gap, Task 5 Step 1 -- it asked for the OTX side only.)
+    """
+    from hash_searcher.analysis.vt import extract_vt
+
+    report = extract_vt(_vt_fixture())
+    assert [t.id for t in report.techniques] == ["T1055", "T1497", "T1059"], (
+        "first-seen order, deduplicated across sandboxes"
+    )
+    injection = report.techniques[0]
+    assert injection.name == "Process Injection"
+    assert injection.tactic == "defense-evasion"
+    assert injection.url and injection.url.endswith("T1055")
