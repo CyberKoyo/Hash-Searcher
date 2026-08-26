@@ -80,3 +80,45 @@ def test_entropy_reads_at_most_the_cap(tmp_path):
     finally:
         del entropy.open
     assert sum(read) <= 4096
+
+
+def test_entropy_on_zero_byte_file_on_disk(tmp_path):
+    """Finding 2: test analyze_entropy / file_entropy against zero-byte file."""
+    from hash_searcher.static.entropy import analyze_entropy
+
+    target = tmp_path / "empty.bin"
+    target.write_bytes(b"")
+
+    report = analyze_entropy(str(target))
+    assert report.overall == 0.0
+    assert report.packed is False
+    assert "normal range" in report.note
+
+
+def test_packed_flag_pins_the_boundary(tmp_path):
+    """Finding 3: pin the PACKED_AT = 7.2 boundary behavior for packed flag.
+
+    Creates data with mixed entropy levels just under and just over 7.2 to
+    ensure the > comparison is enforced.
+    """
+    from hash_searcher.static.entropy import PACKED_AT, analyze_entropy
+
+    # Data below 7.2: mix 80% random (ent ~8.0) + 20% null bytes (ent 0.0)
+    # Expected entropy: ~6.4
+    below_threshold = os.urandom(800) + (b"\x00" * 200)
+    target_below = tmp_path / "below.bin"
+    target_below.write_bytes(below_threshold)
+
+    report_below = analyze_entropy(str(target_below))
+    assert report_below.overall < PACKED_AT
+    assert report_below.packed is False
+
+    # Data above 7.2: mix 95% random (ent ~8.0) + 5% null bytes (ent 0.0)
+    # Expected entropy: ~7.6
+    above_threshold = os.urandom(950) + (b"\x00" * 50)
+    target_above = tmp_path / "above.bin"
+    target_above.write_bytes(above_threshold)
+
+    report_above = analyze_entropy(str(target_above))
+    assert report_above.overall > PACKED_AT
+    assert report_above.packed is True
