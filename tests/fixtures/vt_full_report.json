@@ -1,0 +1,162 @@
+{
+  "data": {
+    "id": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+    "type": "file",
+    "attributes": {
+      "last_analysis_stats": {
+        "malicious": 48,
+        "suspicious": 2,
+        "undetected": 20,
+        "harmless": 0,
+        "timeout": 2,
+        "confirmed-timeout": 0,
+        "failure": 0,
+        "type-unsupported": 5
+      },
+      "sigma_analysis_results": [
+        {
+          "rule_title": "Suspicious Process",
+          "rule_description": "A process did something odd",
+          "rule_level": "high"
+        }
+      ],
+      "popular_threat_classification": {
+        "suggested_threat_label": "trojan.emotet/heurgeneric",
+        "popular_threat_category": [
+          {
+            "count": 30,
+            "value": "trojan"
+          },
+          {
+            "count": 12,
+            "value": "downloader"
+          }
+        ],
+        "popular_threat_name": [
+          {
+            "count": 4,
+            "value": "heurgeneric"
+          },
+          {
+            "count": 22,
+            "value": "emotet"
+          }
+        ]
+      },
+      "first_submission_date": 1554210000,
+      "times_submitted": 417,
+      "names": [
+        "invoice.doc",
+        "rechnung.doc",
+        "sample.bin"
+      ],
+      "signature_info": {
+        "verified": "Signed file, verified signature",
+        "signers": "Contoso Ltd; Contoso Code Signing CA",
+        "product": "Contoso Updater",
+        "description": "Contoso Updater Service"
+      },
+      "sandbox_verdicts": {
+        "Zenbox": {
+          "category": "malicious",
+          "sandbox_name": "Zenbox",
+          "malware_names": [
+            "Emotet"
+          ],
+          "confidence": 90
+        },
+        "C2AE": {
+          "category": "undetected",
+          "sandbox_name": "C2AE"
+        }
+      },
+      "crowdsourced_yara_results": [
+        {
+          "rule_name": "Emotet_Loader",
+          "author": "Some Researcher",
+          "description": "Detects the Emotet loader stub",
+          "source": "https://example.invalid/rules"
+        }
+      ],
+      "pe_info": {
+        "imphash": "5f0b1e9a8c3d4e2f1a0b9c8d7e6f5a4b",
+        "entry_point": 4096,
+        "timestamp": 1554200000,
+        "sections": [
+          {
+            "name": ".text"
+          },
+          {
+            "name": ".rdata"
+          },
+          {
+            "name": ".data"
+          }
+        ]
+      },
+      "behaviour_mitre_trees": {
+        "Zenbox": {
+          "tactics": [
+            {
+              "id": "TA0005",
+              "name": "Defense Evasion",
+              "techniques": [
+                {
+                  "id": "T1055",
+                  "name": "Process Injection"
+                },
+                {
+                  "id": "T1497",
+                  "name": "Virtualization/Sandbox Evasion"
+                }
+              ]
+            },
+            {
+              "id": "TA0002",
+              "name": "Execution",
+              "techniques": [
+                {
+                  "id": "T1059",
+                  "name": "Command and Scripting Interpreter"
+                }
+              ]
+            }
+          ]
+        },
+        "C2AE": {
+          "tactics": [
+            {
+              "id": "TA0005",
+              "name": "Defense Evasion",
+              "techniques": [
+                {
+                  "id": "T1055",
+                  "name": "Process Injection"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "relationships": {
+      "contacted_ips": {
+        "data": [
+          {
+            "id": "198.51.100.10"
+          },
+          {
+            "id": "203.0.113.7"
+          }
+        ]
+      },
+      "contacted_domains": {
+        "data": [
+          {
+            "id": "evil.example"
+          }
+        ]
+      }
+    }
+  }
+}

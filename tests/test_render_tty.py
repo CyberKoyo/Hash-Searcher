@@ -1,5 +1,8 @@
-from hash_searcher.render.tty import render, render_hosts, render_ips, render_otx, render_vt, render_whois
-from hash_searcher.models import CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord
+from hash_searcher.render.tty import RULE, render, render_hosts, render_ips, render_otx, render_vt, render_whois
+from hash_searcher.models import (
+    AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
+    SigmaRule, Signature, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
+)
 
 
 def test_render_emits_every_section(capsys, sample_report):
@@ -36,8 +39,8 @@ def test_render_ips_exact_formatting(capsys):
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90, reports=2)},
         hosts=[],
         whois=[],
@@ -55,12 +58,17 @@ def test_render_ips_exact_formatting(capsys):
 
 
 def test_render_whois_exact_formatting(capsys):
-    """Assert exact column alignment and separator in WHOIS table."""
+    """Assert exact column alignment and separator in WHOIS table.
+
+    The separator is 92 as of R13: the header pads to
+    35 + 1 + 12 + 1 + 12 + 1 + 30 == 92, and the 89 pinned here through
+    Phase 1 was a faithful port of formatters.py:183-184's defect.
+    """
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[],
         whois=[
@@ -79,7 +87,7 @@ def test_render_whois_exact_formatting(capsys):
         "WHOIS DATA\n"
         "==================================================\n"
         "DOMAIN                              CREATED      EXPIRES      REGISTRAR                     \n"
-        "-----------------------------------------------------------------------------------------\n"
+        "--------------------------------------------------------------------------------------------\n"
         "bad.example                         2020-01-01   2027-01-01   R                             \n"
     )
     assert out == expected
@@ -100,7 +108,7 @@ def test_render_vt_exact_formatting_matches_pre_branch_bytes(capsys):
             SigmaRule("Odd Registry Write", "writes to Run key", "medium"),
             SigmaRule("Benign Marker", "harmless indicator", "low"),
         ]),
-        otx=None,
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[],
         whois=[],
@@ -131,7 +139,7 @@ def test_render_vt_exact_formatting_matches_pre_branch_bytes(capsys):
 def test_render_vt_empty_levels_say_so_with_no_extra_blank_lines(capsys):
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=True, sigma=[]),
-        otx=None, ips={}, hosts=[], whois=[],
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
     )
     render_vt(report)
     out = capsys.readouterr().out
@@ -159,8 +167,8 @@ def test_render_hosts_exact_formatting(capsys):
     report = Report(
         indicator="test",
         generated_at="2026-08-23",
-        vt=None,
-        otx=None,
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
         ips={},
         hosts=[
             CensysHost(ip="198.51.100.10", org="Example AS", asn=64496,
@@ -193,9 +201,9 @@ def test_render_hosts_exact_formatting(capsys):
 
 def test_render_otx_exact_formatting_with_data(capsys):
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances=7, attack_techniques=["T1059 Command"],
-                      has_pulse_info=True),
+                      otx_responded=True),
         ips={}, hosts=[], whois=[],
     )
     render_otx(report)
@@ -215,7 +223,7 @@ def test_render_otx_matches_original_message_when_no_pulse_info(capsys):
     the bare 'N/A' extract_otx sets in that branch) printed 'No OTX data
     available.' in the original -- not a bare 'Recorded instances: N/A'."""
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A"),
         ips={}, hosts=[], whois=[],
     )
@@ -235,9 +243,9 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
     the recorded-instances line AND folded 'No recorded instances' into it
     via the fallback string, not a bare 'N/A'."""
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A, No recorded instances",
-                      has_pulse_info=True),
+                      otx_responded=True),
         ips={}, hosts=[], whois=[],
     )
     render_otx(report)
@@ -253,7 +261,7 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
 
 def test_render_otx_error_path_unaffected(capsys):
     report = Report(
-        indicator="test", generated_at="x", vt=None,
+        indicator="test", generated_at="x", vt=VTReport(found=False),
         otx=OTXReport(recorded_instances="N/A", error="OTX key not set"),
         ips={}, hosts=[], whois=[],
     )
@@ -313,11 +321,11 @@ def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
     render_otx used to branch on `recorded_instances == "N/A"`, overloading a
     value as a control signal. The original gated on `if not pulse_info:`
     (formatters.py:otx_formatter at 129ff8d), so this input printed
-    "Recorded instances: N/A" there. Gating on has_pulse_info restores that.
+    "Recorded instances: N/A" there. Gating on otx_responded restores that.
     """
     report = Report(
-        indicator="test", generated_at="x", vt=None,
-        otx=OTXReport(recorded_instances="N/A", has_pulse_info=True),
+        indicator="test", generated_at="x", vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A", otx_responded=True),
         ips={}, hosts=[], whois=[],
     )
     render_otx(report)
@@ -329,3 +337,278 @@ def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
         "Recorded instances: N/A\n"
     )
     assert out == expected
+
+
+def test_verdict_section_leads_with_the_level_and_lists_every_signal(capsys, sample_report):
+    from hash_searcher.models import Signal, Verdict
+    from hash_searcher.render.tty import RULE, render_verdict
+
+    verdict = Verdict(level="MALICIOUS", score=60, signals=[
+        Signal("detection", 50, "48/72 engines flagged this file"),
+        Signal("otx", 10, "OTX pulses reference this indicator (3 recorded instances)"),
+    ])
+    render_verdict(verdict)
+
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "VERDICT: MALICIOUS (score 60)\n"
+        + RULE + "\n"
+        "  +50  detection   48/72 engines flagged this file\n"
+        "  +10  otx         OTX pulses reference this indicator (3 recorded instances)\n"
+    )
+
+
+def test_a_verdict_with_no_signals_says_so(capsys, sample_report):
+    from hash_searcher.models import Verdict
+    from hash_searcher.render.tty import render_verdict
+
+    render_verdict(Verdict(level="UNKNOWN", score=0, signals=[]))
+    out = capsys.readouterr().out
+    assert "VERDICT: UNKNOWN (score 0)" in out
+    assert "No signals fired." in out
+
+
+def test_a_negative_signal_prints_its_sign(capsys, sample_report):
+    from hash_searcher.models import Signal, Verdict
+    from hash_searcher.render.tty import render_verdict
+
+    render_verdict(Verdict(level="CLEAN", score=-20, signals=[
+        Signal("signed", -20, "valid signature from Contoso Ltd"),
+    ]))
+    assert "  -20  signed" in capsys.readouterr().out
+
+
+def test_detection_section_prints_the_ratio(capsys, sample_report):
+    from hash_searcher.models import Detection
+    from hash_searcher.render.tty import render_detection
+
+    sample_report.vt.detection = Detection(malicious=48, suspicious=0, undetected=24)
+    render_detection(sample_report)
+    assert capsys.readouterr().out == (
+        "\nDetections: 48/72  (suspicious 0, undetected 24)\n"
+    )
+
+
+def test_detection_section_is_silent_without_stats(capsys, sample_report):
+    from hash_searcher.render.tty import render_detection
+
+    sample_report.vt.detection = None
+    render_detection(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_contacted_domains_exact_formatting(capsys, sample_report):
+    """R14. This asserted `"CONTACTED DOMAINS" in out and "evil.example" in out`,
+    which left the body format of a whole new section unpinned -- changing it
+    to `- {domain}` kept the suite green."""
+    from hash_searcher.render.tty import render_domains
+
+    sample_report.vt.contacted_domains = ["evil.example", "worse.example"]
+    render_domains(sample_report)
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "CONTACTED DOMAINS\n"
+        + RULE + "\n"
+        "evil.example\n"
+        "worse.example\n"
+    )
+
+
+def test_render_domains_is_silent_when_vt_reported_none(capsys, sample_report):
+    from hash_searcher.render.tty import render_domains
+
+    sample_report.vt.contacted_domains = []
+    render_domains(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_render_attribution_exact_formatting(capsys, sample_report):
+    """R14, and the largest gap the review found: seven output shapes and no
+    test called this function at all. Its only exercise anywhere was
+    `out.index("ATTRIBUTION")` in the ordering test, so rewriting the
+    signature line to `SIG={state}` kept 189 tests green.
+    """
+    from hash_searcher.render.tty import render_attribution
+
+    vt = sample_report.vt
+    vt.threat = ThreatClass(label="trojan.emotet", family="emotet",
+                            categories=["trojan", "downloader"])
+    vt.signature = Signature(verified=False, signer="Contoso Ltd")
+    vt.sandbox = [SandboxVerdict(sandbox="Zenbox", category="malicious",
+                                 malware_names=["Emotet"]),
+                  SandboxVerdict(sandbox="Lastline", category="malicious")]
+    vt.yara = [YaraMatch(rule="malw_emotet", author="Marc Rivero"),
+               YaraMatch(rule="anonymous_rule")]
+    vt.pe = PEInfo(sections=5, imphash="d41d8c", compiled="2024-01-02 03:04:05")
+    vt.submission = Submission(times_submitted=12, first_seen="2024-01-01",
+                               names=["invoice.exe", "setup.exe"])
+    vt.techniques = [AttackTechnique(id="T1055", name="Process Injection",
+                                     tactic="defense-evasion"),
+                     AttackTechnique(id="T9999", name="Unmapped")]
+
+    render_attribution(sample_report)
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "ATTRIBUTION\n"
+        + RULE + "\n"
+        "Label:      trojan.emotet\n"
+        "Family:     emotet\n"
+        "Categories: trojan, downloader\n"
+        "Signature:  present but NOT verified (Contoso Ltd)\n"
+        "Sandbox:    Zenbox says malicious -- Emotet\n"
+        "Sandbox:    Lastline says malicious\n"
+        "YARA:       malw_emotet (Marc Rivero)\n"
+        "YARA:       anonymous_rule (unknown author)\n"
+        "PE:         5 sections, imphash d41d8c, compiled 2024-01-02 03:04:05\n"
+        "Submitted:  12 times, first seen 2024-01-01\n"
+        "Names:      invoice.exe, setup.exe\n"
+        "ATT&CK:     T1055 Process Injection (defense-evasion)\n"
+        "ATT&CK:     T9999 Unmapped\n"
+    )
+
+
+def test_render_attribution_is_silent_when_vt_returned_none_of_it(capsys, sample_report):
+    """The gate at the top of the section. sample_report carries sigma rules
+    and contacted IPs but no attribution fields, which is the common case for
+    a file VT has seen and nothing has classified."""
+    from hash_searcher.render.tty import render_attribution
+
+    render_attribution(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_a_verified_signature_reads_differently_from_an_unverified_one(capsys, sample_report):
+    """VT's signature_info.verified is prose and every value of it is truthy;
+    the extractor compares against the one string that means verified. Pin
+    both renderings so the distinction cannot collapse."""
+    from hash_searcher.render.tty import render_attribution
+
+    sample_report.vt.signature = Signature(verified=True, signer=None)
+    render_attribution(sample_report)
+    assert "Signature:  verified (unnamed signer)\n" in capsys.readouterr().out
+
+
+def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):
+    """The per-section exact-output tests pin each section's bytes, but
+    nothing pinned the ORDER render() prints them in -- so Task 7's
+    reordering could have drifted silently. Verdict leads, the detection
+    ratio sits above the sigma rules it summarizes, attribution follows the
+    rules, and contacted domains land with the other network indicators
+    rather than after OTX.
+    """
+    from hash_searcher.models import Detection, Signal, ThreatClass, Verdict
+    from hash_searcher.render.tty import render
+
+    sample_report.vt.detection = Detection(malicious=48, undetected=24)
+    sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet")
+    sample_report.vt.contacted_domains = ["evil.example"]
+    render(sample_report, Verdict(level="MALICIOUS", score=50,
+                                  signals=[Signal("detection", 50, "48/72 engines flagged this file")]))
+
+    out = capsys.readouterr().out
+    markers = [
+        "VERDICT: MALICIOUS (score 50)",
+        "Detections: 48/72",
+        "VIRUSTOTAL SIGMA RULES",
+        "ATTRIBUTION",
+        "CENSYS ENRICHMENT",
+        "WHOIS DATA",
+        "CONTACTED DOMAINS",
+        "OTX DATA",
+    ]
+    positions = [out.index(marker) for marker in markers]
+    assert positions == sorted(positions), (
+        f"sections drifted out of order: "
+        f"{[m for _, m in sorted(zip(positions, markers))]}"
+    )
+
+
+def test_render_without_a_verdict_prints_no_verdict_section(capsys, sample_report):
+    """render(report) keeps working for every pre-Phase-2 call site."""
+    from hash_searcher.render.tty import render
+
+    render(sample_report)
+    assert "VERDICT:" not in capsys.readouterr().out
+
+
+def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):
+    from hash_searcher.models import CensysHost
+    from hash_searcher.render.tty import render_hosts
+
+    sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
+    render_hosts(sample_report)
+    assert "Censys 403: forbidden" in capsys.readouterr().out
+
+
+def test_render_hosts_error_branch_exact_formatting(capsys, sample_report):
+    from hash_searcher.models import CensysHost
+    from hash_searcher.render.tty import RULE, render_hosts
+
+    sample_report.hosts = [
+        CensysHost(ip="198.51.100.10", error="Censys 403: forbidden"),
+        CensysHost(ip="N/A", error="Rate limited"),
+    ]
+    render_hosts(sample_report)
+    assert capsys.readouterr().out == (
+        "\n" + RULE + "\n"
+        "CENSYS ENRICHMENT\n"
+        + RULE + "\n"
+        "\nIP:      198.51.100.10\n"
+        "Censys: Censys 403: forbidden\n"
+        "\nIP:      N/A\n"
+        "Censys: Rate limited\n"
+    )
+
+
+def test_render_ips_says_so_when_abuseipdb_returned_nothing(capsys, sample_report):
+    """S3: 'No data from IPDB available.' -- an empty table looks like a bug."""
+    from hash_searcher.render.tty import render_ips
+
+    sample_report.ips = {}
+    render_ips(sample_report)
+    assert "No data from IPDB available." in capsys.readouterr().out
+
+
+def test_the_whois_separator_matches_the_header_width(capsys, sample_report):
+    """R13: 35+1+12+1+12+1+30 == 92. The separator was 89 -- three short, a
+    faithful port of a defect in formatters.py:183-184."""
+    from hash_searcher.render.tty import render_whois
+
+    render_whois(sample_report)
+    lines = capsys.readouterr().out.splitlines()
+    header = next(line for line in lines if line.startswith("DOMAIN"))
+    separator = lines[lines.index(header) + 1]
+    assert len(separator) == 92
+    assert separator == "-" * 92
+
+
+def test_an_entry_dropped_for_a_missing_ip_leaves_no_blank_row(capsys):
+    """Ledger, Task 4: the extractor drops an AbuseIPDB entry with no
+    `ipAddress` where the pre-branch code printed a row of empty columns.
+    That deviation was authorized but never pinned at the rendering layer --
+    a blank row is worse than no row, because it reads as a real IP the tool
+    failed to describe. Assert the exact bytes, not just the row count.
+    """
+    from hash_searcher.analysis.ipdb import extract_ips
+
+    report = Report(
+        indicator="test",
+        generated_at="2026-08-23",
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
+        ips=extract_ips([
+            {"data": {"ipAddress": "198.51.100.10", "abuseConfidenceScore": 90,
+                      "reports": 2}},
+            {"data": {"abuseConfidenceScore": 90, "reports": 2}},
+        ]),
+        hosts=[],
+        whois=[],
+    )
+    render_ips(report)
+    assert capsys.readouterr().out == (
+        "\n==================================================\n"
+        "IP               CONFIDENCE   REPORTS   \n"
+        "----------------------------------------\n"
+        "198.51.100.10    90%          2         \n"
+        "----------------------------------------\n"
+    )

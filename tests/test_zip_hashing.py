@@ -1,7 +1,13 @@
 import hashlib
 import zipfile
 
+import pyzipper
+
 from hash_searcher.hashing import get_zip_hash
+
+# password="" everywhere below, never omitted: get_zip_hash prompts on
+# stdin when password is None, and reading stdin while pytest captures
+# output raises OSError. Do not "clean this up" -- it reintroduces a hang.
 
 A = b"first member contents"
 B = b"second member contents"
@@ -54,3 +60,33 @@ def test_plain_file_returns_single_element_list(tmp_path):
     target.write_bytes(A)
 
     assert get_zip_hash(str(target)) == [_sha(A)]
+
+
+def _aes_archive(path, password: bytes) -> None:
+    """Write an AES-256 encrypted archive.
+
+    The stdlib zipfile can only READ encrypted archives, and only the legacy
+    ZipCrypto kind -- it cannot create either. pyzipper is what the reader
+    uses, so it is what builds the fixture.
+    """
+    with pyzipper.AESZipFile(path, "w", compression=pyzipper.ZIP_DEFLATED,
+                             encryption=pyzipper.WZ_AES) as z:
+        z.setpassword(password)
+        z.writestr("a.bin", A)
+
+
+def test_the_correct_password_reads_an_encrypted_member(tmp_path):
+    """The encrypted path was verified by hand in Phase 0 and never pinned."""
+    archive = tmp_path / "sealed.zip"
+    _aes_archive(archive, b"s3cret")
+
+    assert get_zip_hash(str(archive), password="s3cret") == [_sha(A)]
+
+
+def test_a_wrong_password_skips_the_member_rather_than_aborting(tmp_path, capsys):
+    archive = tmp_path / "sealed.zip"
+    _aes_archive(archive, b"s3cret")
+
+    assert get_zip_hash(str(archive), password="wrong") == []
+    out = capsys.readouterr().out
+    assert "a.bin" in out

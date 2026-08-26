@@ -14,6 +14,81 @@ class SigmaRule:
     level: str
 
 
+@dataclass(frozen=True)
+class AttackTechnique:
+    id: str
+    name: str
+    tactic: str | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class Detection:
+    """VT's last_analysis_stats, reduced to the five verdict buckets.
+
+    VT also reports failure/type-unsupported/confirmed-timeout; those are
+    engine bookkeeping, not verdicts, and VT's own UI leaves them out of the
+    denominator. Counting them would silently deflate every ratio.
+    """
+    malicious: int = 0
+    suspicious: int = 0
+    harmless: int = 0
+    undetected: int = 0
+    timeout: int = 0
+
+    @property
+    def total(self) -> int:
+        return (self.malicious + self.suspicious + self.harmless
+                + self.undetected + self.timeout)
+
+    @property
+    def ratio(self) -> str:
+        return f"{self.malicious}/{self.total}"
+
+
+@dataclass(frozen=True)
+class ThreatClass:
+    label: str
+    family: str | None = None
+    categories: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Submission:
+    first_seen: str | None = None
+    times_submitted: int = 0
+    names: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Signature:
+    verified: bool = False
+    signer: str | None = None
+    product: str | None = None
+
+
+@dataclass(frozen=True)
+class SandboxVerdict:
+    sandbox: str
+    category: str
+    malware_names: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class YaraMatch:
+    rule: str
+    author: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class PEInfo:
+    imphash: str | None = None
+    entry_point: int | None = None
+    sections: int = 0
+    compiled: str | None = None
+
+
 @dataclass
 class VTReport:
     found: bool
@@ -21,6 +96,14 @@ class VTReport:
     contacted_ips: list[str] = field(default_factory=list)
     contacted_domains: list[str] = field(default_factory=list)
     error: str | None = None
+    detection: Detection | None = None
+    threat: ThreatClass | None = None
+    submission: Submission | None = None
+    signature: Signature | None = None
+    sandbox: list[SandboxVerdict] = field(default_factory=list)
+    yara: list[YaraMatch] = field(default_factory=list)
+    pe: PEInfo | None = None
+    techniques: list[AttackTechnique] = field(default_factory=list)
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]
@@ -28,11 +111,26 @@ class VTReport:
 
 @dataclass
 class OTXReport:
-    recorded_instances: object
+    """Two flags, two genuinely different questions.
+
+    `otx_responded` answers "did OTX return a pulse_info block at all";
+    `has_pulses` answers "does that block contain any pulses". They are not
+    redundant -- OTX answering with an empty pulse list is real data, and
+    conflating the two is what caused ruling R28.
+    """
+
+    #: int when OTX reported a count, else the string it substitutes
+    #: ("N/A, No recorded instances", or "N/A" on an error). Typed for both
+    #: because it genuinely holds both; `object` said nothing at all.
+    recorded_instances: int | str
     attack_techniques: list[str] = field(default_factory=list)
     error: str | None = None
+    #: bool(pulse_info["pulses"]) -- OTX has at least one pulse for this
+    #: indicator.
     has_pulses: bool = False
-    has_pulse_info: bool = False
+    #: bool(pulse_info) -- OTX returned a pulse_info block, whatever is in it.
+    otx_responded: bool = False
+    techniques: list[AttackTechnique] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +151,7 @@ class CensysHost:
     ports: list[int] = field(default_factory=list)
     hostnames: list[str] = field(default_factory=list)
     new_hostnames: list[str] = field(default_factory=list)
+    error: str | None = None
 
 
 @dataclass
@@ -62,6 +161,20 @@ class WhoisRecord:
     expires: str = "N/A"
     registrar: str = "N/A"
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class Signal:
+    name: str
+    points: int
+    detail: str
+
+
+@dataclass(frozen=True)
+class Verdict:
+    level: str
+    score: int
+    signals: list[Signal] = field(default_factory=list)
 
 
 @dataclass

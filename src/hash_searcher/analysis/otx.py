@@ -1,5 +1,6 @@
 from ..api.base_call import error_message, is_error
 from ..models import OTXReport
+from .attack import resolve, technique_ids_from_otx
 
 RECENT_PULSES = 5
 
@@ -23,5 +24,6 @@ def extract_otx(raw) -> OTXReport:
         recorded_instances=pulse_info.get("count", "N/A, No recorded instances"),
         attack_techniques=techniques,
         has_pulses=bool(pulse_info.get("pulses")),
-        has_pulse_info=True,
+        otx_responded=True,
+        techniques=resolve(technique_ids_from_otx(raw)),
     )

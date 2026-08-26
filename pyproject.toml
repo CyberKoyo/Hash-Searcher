@@ -22,6 +22,9 @@ hash-searcher = "hash_searcher.cli:run"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+hash_searcher = ["data/*.json"]
+
 [project.optional-dependencies]
 dev = [
     "pytest==8.3.4",

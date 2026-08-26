@@ -1,4 +1,4 @@
-from ..api.base_call import is_error
+from ..api.base_call import error_indicator, error_message, is_error
 from ..models import CensysHost, IPReport
 
 
@@ -17,6 +17,13 @@ def extract_hosts(raw_list, ips: dict[str, IPReport]) -> tuple[list[str], list[C
     hosts: list[CensysHost] = []
     for raw in raw_list:
         if is_error(raw):
+            # Carried, not skipped: dropping it lost main's "Censys: <error>"
+            # line entirely (ledger S2). A failed lookup contributes no
+            # hostnames, so it must not widen the WHOIS domain set either.
+            hosts.append(CensysHost(
+                ip=error_indicator(raw) or "N/A",
+                error=error_message(raw),
+            ))
             continue
 
         result = raw.get("result", {}).get("resource", {})

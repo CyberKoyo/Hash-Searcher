@@ -60,4 +60,5 @@ def by_name(name: str, providers: list[Provider] | None = None) -> Provider:
     for provider in pool:
         if provider.name == name:
             return provider
-    raise LookupError(f"no provider named {name!r} in PROVIDERS")
+    where = "PROVIDERS" if providers is None else "the supplied provider pool"
+    raise LookupError(f"no provider named {name!r} in {where}")

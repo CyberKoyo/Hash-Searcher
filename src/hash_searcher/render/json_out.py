@@ -1,12 +1,18 @@
 import json
 from dataclasses import asdict
 
-from ..models import CensysHost, Report, WhoisRecord
+from ..models import CensysHost, Report, Verdict, VTReport, WhoisRecord
 
 
 def _censys_dict(host: CensysHost) -> dict:
-    """Reproduce the old censys_formatter shape: no `hostnames` key."""
-    return {
+    """Reproduce the old censys_formatter shape: no `hostnames` key.
+
+    A failed lookup adds an `error` key -- without it a 403 serialized as a
+    host with null org, null asn, and no ports, indistinguishable from a real
+    host Censys knew nothing about. Added only when set, the same way
+    _whois_dict has always handled it, so the success shape is unchanged.
+    """
+    body = {
         "ip": host.ip,
         "org": host.org,
         "asn": host.asn,
@@ -14,6 +20,9 @@ def _censys_dict(host: CensysHost) -> dict:
         "ports": host.ports,
         "new_hostnames": host.new_hostnames,
     }
+    if host.error:
+        body["error"] = host.error
+    return body
 
 
 def _whois_dict(record: WhoisRecord) -> dict:
@@ -29,29 +38,80 @@ def _whois_dict(record: WhoisRecord) -> dict:
     }
 
 
-def to_dict(report: Report) -> dict:
+def _verdict_dict(verdict: Verdict) -> dict:
     return {
-        "file": report.source_file or report.indicator,
-        "time": report.generated_at,
-        "report": {
-            "hash": report.indicator,
-            "otx": {
-                "recorded_instances": report.otx.recorded_instances,
-                "attack_techniques": report.otx.attack_techniques,
-            },
-            "censys": [_censys_dict(h) for h in report.hosts],
-            "whois": [_whois_dict(w) for w in report.whois],
-            "ipdb": [asdict(i) for i in report.ips.values()],
-            "vt_rules": {
-                level: [{"title": r.title, "description": r.description}
-                        for r in report.vt.by_level(level)]
-                for level in ("high", "medium", "low")
-            },
-        },
+        "level": verdict.level,
+        "score": verdict.score,
+        "signals": [
+            {"name": s.name, "points": s.points, "detail": s.detail}
+            for s in verdict.signals
+        ],
     }
 
 
-def write_json(report: Report, path: str) -> str:
+def _vt_dict(vt: VTReport) -> dict:
+    """The Phase 2 VT blocks, under their own key.
+
+    Present-but-null rather than omitted when VT returned nothing for a
+    block: a consumer can then tell "VT had no classification" from "this
+    tool never looked". The Phase 1 keys stay exactly where they were --
+    `vt_rules` is not folded in here, because moving it would be a schema
+    break for anything already reading it.
+    """
+    detection = vt.detection
+    return {
+        # All five buckets: the TTY prints suspicious and undetected, and a
+        # consumer that could not reconstruct what the terminal showed would
+        # be reading a different report from the one the analyst saw.
+        "detection": (
+            {"malicious": detection.malicious,
+             "suspicious": detection.suspicious,
+             "harmless": detection.harmless,
+             "undetected": detection.undetected,
+             "timeout": detection.timeout,
+             "total": detection.total,
+             "ratio": detection.ratio}
+            if detection else None
+        ),
+        "threat": asdict(vt.threat) if vt.threat else None,
+        "submission": asdict(vt.submission) if vt.submission else None,
+        "signature": asdict(vt.signature) if vt.signature else None,
+        "sandbox": [asdict(v) for v in vt.sandbox],
+        "yara": [asdict(y) for y in vt.yara],
+        "pe": asdict(vt.pe) if vt.pe else None,
+        "techniques": [asdict(t) for t in vt.techniques],
+        "contacted_domains": vt.contacted_domains,
+    }
+
+
+def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
+    body = {
+        "hash": report.indicator,
+        "otx": {
+            "recorded_instances": report.otx.recorded_instances,
+            "attack_techniques": report.otx.attack_techniques,
+        },
+        "censys": [_censys_dict(h) for h in report.hosts],
+        "whois": [_whois_dict(w) for w in report.whois],
+        "ipdb": [asdict(i) for i in report.ips.values()],
+        "vt_rules": {
+            level: [{"title": r.title, "description": r.description}
+                    for r in report.vt.by_level(level)]
+            for level in ("high", "medium", "low")
+        },
+        "vt": _vt_dict(report.vt),
+    }
+    if verdict is not None:
+        body["verdict"] = _verdict_dict(verdict)
+    return {
+        "file": report.source_file or report.indicator,
+        "time": report.generated_at,
+        "report": body,
+    }
+
+
+def write_json(report: Report, path: str, verdict: Verdict | None = None) -> str:
     with open(path, "w") as out:
-        json.dump(to_dict(report), out, sort_keys=True, indent=4, ensure_ascii=False)
+        json.dump(to_dict(report, verdict), out, sort_keys=True, indent=4,
+                  ensure_ascii=False)
     return path

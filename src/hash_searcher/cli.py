@@ -14,13 +14,29 @@ from .api.base_call import error_status
 from .api.who_is import who_is
 from .cache import ResponseCache
 from .hashing import check_env
-from .models import Report
+from .models import Report, Verdict
 from .render.json_out import write_json
 from .render.pdf import write_pdf
 from .render.tty import render
+from .scoring import score
 
-EXIT_OK = 0
-EXIT_NO_DATA = 3
+EXIT_CLEAN = 0
+EXIT_SUSPICIOUS = 1
+EXIT_MALICIOUS = 2
+EXIT_UNKNOWN = 3
+EXIT_NO_DATA = 3  # an unusable run and an unknown sample answer a script alike
+
+_EXIT_BY_LEVEL = {
+    "CLEAN": EXIT_CLEAN,
+    "SUSPICIOUS": EXIT_SUSPICIOUS,
+    "MALICIOUS": EXIT_MALICIOUS,
+    "UNKNOWN": EXIT_UNKNOWN,
+}
+
+
+def exit_code(verdict: Verdict) -> int:
+    """Unknown levels fail safe to EXIT_UNKNOWN, never to EXIT_CLEAN."""
+    return _EXIT_BY_LEVEL.get(verdict.level, EXIT_UNKNOWN)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,7 +58,8 @@ def output_format(path: str) -> str | None:
     return {".json": "json", ".pdf": "pdf"}.get(ext)
 
 
-def write_report(report, output: str) -> None:
+def write_report(report: Report, output: str,
+                 verdict: Verdict | None = None) -> None:
     """Resolve output relative to the CWD and dispatch on the extension.
 
     This used to join onto BASE_DIR -- the installed package directory --
@@ -52,9 +69,9 @@ def write_report(report, output: str) -> None:
     path = os.path.abspath(output)
     fmt = output_format(output)
     if fmt == "json":
-        write_json(report, path)
+        write_json(report, path, verdict)
     elif fmt == "pdf":
-        write_pdf(report, path)
+        write_pdf(report, path, verdict)
     else:
         print(f"Unrecognized output extension: {output} (use .json or .pdf)")
 
@@ -64,7 +81,14 @@ async def run_cli(argv: list[str] | None = None) -> int:
     if not check_env():
         return EXIT_NO_DATA
 
-    resolved = resolve_hash(args.indicator, args.zip_password)
+    try:
+        resolved = resolve_hash(args.indicator, args.zip_password)
+    except FileNotFoundError as e:
+        # The exception is constructed with a perfectly good user-facing
+        # string and was simply never caught, so `hash-searcher notahash`
+        # printed a traceback. Pre-existing on 43e9f92 and on 129ff8d.
+        print(e)
+        return EXIT_NO_DATA
     if not resolved:
         return EXIT_NO_DATA
 
@@ -101,12 +125,13 @@ async def run_cli(argv: list[str] | None = None) -> int:
         source_file=args.indicator,
     )
 
-    render(report)
+    verdict = score(report)
+    render(report, verdict)
 
     if args.output:
-        write_report(report, args.output)
+        write_report(report, args.output, verdict)
 
-    return EXIT_OK
+    return exit_code(verdict)
 
 
 def run() -> None:

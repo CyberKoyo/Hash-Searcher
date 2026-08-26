@@ -3,7 +3,10 @@ import os
 import pytest
 
 from hash_searcher.api.base_call import make_error
-from hash_searcher.cli import EXIT_NO_DATA, EXIT_OK, build_parser, output_format, run_cli
+from hash_searcher.cli import (
+    EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
+    build_parser, output_format, run_cli,
+)
 
 
 def test_positional_indicator_is_required():
@@ -91,7 +94,10 @@ async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, f
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
     out = capsys.readouterr().out
-    assert exit_code == EXIT_OK
+    # vt_malicious carries one high sigma rule (15) and otx_pulses carries
+    # pulses (10): 25 points, which bands SUSPICIOUS.
+    assert exit_code == EXIT_SUSPICIOUS
+    assert "VERDICT: SUSPICIOUS" in out
     assert "CENSYS ENRICHMENT" in out
     assert "WHOIS DATA" in out
 
@@ -136,7 +142,11 @@ async def test_vt_network_error_with_no_otx_pulses_does_not_bail(monkeypatch, ca
 
     out = capsys.readouterr().out
     assert "Invalid hash. Please check filename or hash." not in out
-    assert exit_code == EXIT_OK
+    # Nothing saw this file, so the verdict is UNKNOWN. That the code equals
+    # EXIT_NO_DATA is a deliberate collision, not a bail -- the absent
+    # "Invalid hash" line above is what proves the run completed.
+    assert exit_code == EXIT_UNKNOWN
+    assert "VERDICT: UNKNOWN" in out
 
 
 async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
@@ -159,7 +169,9 @@ async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Invalid hash. Please check filename or hash." not in out
-    assert exit_code == EXIT_OK
+    # No provider returned anything, so no signal can fire: UNKNOWN.
+    assert exit_code == EXIT_UNKNOWN
+    assert "VERDICT: UNKNOWN" in out
 
 
 def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatch):
@@ -171,8 +183,124 @@ def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     written = {}
     monkeypatch.setattr(cli, "write_json",
-                        lambda report, path: written.setdefault("path", path))
+                        lambda report, path, verdict=None: written.setdefault("path", path))
 
     cli.write_report(object(), "report.json")
 
     assert written["path"] == os.path.join(str(tmp_path), "report.json")
+
+
+@pytest.mark.parametrize("level,expected", [
+    ("CLEAN", 0), ("SUSPICIOUS", 1), ("MALICIOUS", 2), ("UNKNOWN", 3),
+])
+def test_exit_code_maps_each_verdict_level(level, expected):
+    from hash_searcher.cli import exit_code
+    from hash_searcher.models import Verdict
+
+    assert exit_code(Verdict(level=level, score=0)) == expected
+
+
+def test_an_unrecognized_level_exits_unknown_rather_than_claiming_clean():
+    """Fail safe: a level this function has never heard of must not be
+    reported to a shell script as a clean file."""
+    from hash_searcher.cli import exit_code
+    from hash_searcher.models import Verdict
+
+    assert exit_code(Verdict(level="WAT", score=0)) == 3
+
+
+def test_write_report_dispatches_a_pdf_extension(tmp_path, monkeypatch):
+    """Only the json branch was ever covered."""
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    written = {}
+    monkeypatch.setattr(cli, "write_pdf",
+                        lambda report, path, verdict=None: written.setdefault("path", path))
+
+    cli.write_report(object(), "report.pdf")
+
+    assert written["path"] == os.path.join(str(tmp_path), "report.pdf")
+
+
+def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, capsys):
+    """The deferred-minors plan asserted 'the existing unrecognized-extension
+    test must still pass'; `grep -rn Unrecognized tests/` returned nothing --
+    no such test ever existed, so that verification step was vacuous. This is
+    the test it assumed."""
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(cli, "write_json", lambda *a, **k: calls.append("json"))
+    monkeypatch.setattr(cli, "write_pdf", lambda *a, **k: calls.append("pdf"))
+
+    cli.write_report(object(), "report.txt")
+
+    assert calls == []
+    assert "Unrecognized output extension: report.txt (use .json or .pdf)" \
+        in capsys.readouterr().out
+
+
+async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
+        monkeypatch, capsys):
+    """`hash-searcher notahash` raised FileNotFoundError out of resolve_hash
+    and printed a full traceback. Pre-existing on 43e9f92 and on 129ff8d.
+
+    check_env only is stubbed here -- _stub_entry also replaces resolve_hash,
+    which is the function under test.
+    """
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+
+    exit_code = await run_cli(["notahash", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_NO_DATA
+    assert "isn't in an accessible directory" in out
+    assert "Traceback" not in out
+
+
+async def test_a_full_run_on_a_malicious_file_exits_two(monkeypatch, fixture_json, capsys):
+    """The exit-code map is unit-tested over all four levels, but the whole
+    path -- data_puller to extract to score to exit -- was only ever exercised
+    for SUSPICIOUS and UNKNOWN. These are the two verdicts a pipeline actually
+    branches on.
+    """
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": fixture_json("vt_full_report"),
+        "otx": fixture_json("otx_pulses"),
+        "ipdb": [],
+        "censys": [],
+        "ips": [],
+    })
+    _stub_who_is(monkeypatch)
+
+    exit_code = await run_cli(["deadbeef", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_MALICIOUS
+    assert "VERDICT: MALICIOUS" in out
+    assert "48/72 engines flagged this file" in out
+
+
+async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, capsys):
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": {"data": {"attributes": {
+            "last_analysis_stats": {"malicious": 0, "suspicious": 0, "harmless": 0,
+                                    "undetected": 72, "timeout": 0},
+        }}},
+        "otx": {"pulse_info": {"pulses": []}},
+        "ipdb": [],
+        "censys": [],
+        "ips": [],
+    })
+    _stub_who_is(monkeypatch)
+
+    exit_code = await run_cli(["deadbeef", "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_CLEAN
+    assert "VERDICT: CLEAN" in out
+    assert "No signals fired." in out

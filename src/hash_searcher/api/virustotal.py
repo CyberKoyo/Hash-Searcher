@@ -1,7 +1,19 @@
+"""VirusTotal fetcher.
+
+Note the import direction: this module reaches into `analysis/`, which is the
+reverse of the usual api -> analysis -> render flow. It is deliberate --
+`contacted_ips` and `analysis.vt.relationship_ids` had diverged, and one of
+them guarded a missing "id" key while the other raised KeyError (ruling R31).
+Delegating rather than keeping a second copy is what closed that. The chain is
+api.virustotal -> analysis.vt -> api.base_call, which is not a cycle; do not
+"fix" it by importing back this way.
+"""
+
 import httpx
 
-from .base_call import api_get
+from ..analysis.vt import relationship_ids
 from . import config
+from .base_call import api_get
 
 VT_FILES_URL = 'https://www.virustotal.com/api/v3/files'
 
@@ -27,17 +39,13 @@ async def get_vt(client: httpx.AsyncClient, hash) -> dict:
     )
 
 
-def contacted_ips(payload) -> list[str]:
+def contacted_ips(payload: dict) -> list[str]:
     """IPs the sample contacted, per VT. [] on any error payload.
 
-    On an error dict these .get() chains bottom out at [], so the result is
-    empty rather than raising -- the same behavior the inline comprehension
-    inside get_vt had.
+    Delegates to analysis.vt._relationship_ids rather than repeating the
+    walk. The two used to disagree: this one did an unguarded entry['id'],
+    so a VT entry missing `id` raised KeyError out of data_puller and killed
+    the run, while extract_vt skipped it on the same payload. Skipping is the
+    better behavior and it lives in the layer that owns pure extraction.
     """
-    return [
-        ip['id']
-        for ip in payload.get('data', {})
-                         .get('relationships', {})
-                         .get('contacted_ips', {})
-                         .get('data', [])
-    ]
+    return relationship_ids(payload, 'contacted_ips')

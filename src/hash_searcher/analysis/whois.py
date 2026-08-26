@@ -5,7 +5,11 @@ def extract_whois(raw_list) -> list[WhoisRecord]:
     records = []
     for entry in raw_list:
         if "error" in entry:
-            records.append(WhoisRecord(domain=entry["domain"], error=entry["error"]))
+            # .get(), like the success path below: api/who_is.py happens to
+            # set `domain` alongside `error` today, but that is a coupling
+            # between two modules, not a guarantee this one can rely on.
+            records.append(WhoisRecord(
+                domain=entry.get("domain", ""), error=entry["error"]))
             continue
         records.append(WhoisRecord(
             domain=entry.get("domain", "N/A"),

@@ -73,7 +73,11 @@ def get_zip_hash(file_path: str, password: str | None = None) -> list[str]:
                 digest = sha256.hexdigest()
                 print(f"Result: {digest}")
                 digests.append(digest)
-    except Exception as e:
+    except (pyzipper.BadZipFile, RuntimeError, OSError) as e:
+        # Narrowed from a bare `except Exception`, which could mask bugs that
+        # have nothing to do with the archive. These three are what pyzipper
+        # actually raises here: a malformed archive, a password/compression
+        # failure, and an unreadable file respectively.
         print(f'Error opening ZIP: {e}')
         return []
 
