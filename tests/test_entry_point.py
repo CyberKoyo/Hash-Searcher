@@ -46,3 +46,23 @@ def test_readme_states_nested_archives_are_not_unpacked():
     # absence of "ZIPS in ZIPS" was vacuous — that string was never in the README.
     assert "Nested archives are not unpacked" in readme
     assert "recursiv" not in readme.lower()
+
+
+def test_readme_documents_the_real_exit_codes():
+    """R20 again, this time for the codes a shell script branches on. Read
+    them from cli rather than restating them, so renumbering an exit code
+    without touching the README fails here.
+    """
+    from hash_searcher.cli import _EXIT_BY_LEVEL
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    for level, code in _EXIT_BY_LEVEL.items():
+        assert f"| `{code}` | {level} " in readme
+
+
+def test_readme_documents_the_real_verdict_thresholds():
+    from hash_searcher.scoring import MALICIOUS_AT, SUSPICIOUS_AT
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    assert f"score >= {MALICIOUS_AT}" in readme
+    assert f"score >= {SUSPICIOUS_AT}" in readme
