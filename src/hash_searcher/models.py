@@ -216,6 +216,19 @@ class YaraHit:
     tags: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class IOCSet:
+    ips: list[str] = field(default_factory=list)
+    domains: list[str] = field(default_factory=list)
+    urls: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StringsReport:
+    count: int = 0
+    iocs: IOCSet = field(default_factory=IOCSet)
+
+
 @dataclass
 class Report:
     indicator: str
