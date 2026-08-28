@@ -17,10 +17,12 @@ Report Production: Automatically formatted output to either .json or PDF.
 
 Cache System: VirusTotal, OTX, AbuseIPDB, and Censys responses are cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`), each for 24 hours. WHOIS is not cached. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
+Local Static Analysis: Before any network call, a supplied file (not a bare hash) is inspected locally -- entropy, a file-type-versus-extension check, and printable-string/IOC extraction always run; PE parsing and YARA scanning run when their optional libraries are installed. See 🔬 Static Analysis below.
+
 🛠️ Setup
 
 1. Clone the repo: `git clone https://github.com/yourusername/hash-searcher.git`
-2. Install: `pip install -e .`  (add `[dev]` for the test suite)
+2. Install: `pip install -e .`  (add `[dev]` for the test suite, `[static]` for local static analysis -- see 🔬 Static Analysis below)
 3. Copy `.env.example.txt` to `.env` and fill in your VirusTotal, AlienVault OTX,
    AbuseIPDB, and Censys keys.
 
@@ -36,6 +38,7 @@ recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
 
     hash-searcher <file_path_or_hash> [-o report.json | report.pdf]
                   [--zip-password PASSWORD] [--no-cache] [--refresh]
+                  [--no-static] [--yara-rules DIR]
 
 Accepts MD5, SHA-1, and SHA-256 digests, or a path to a file.
 
@@ -43,6 +46,71 @@ Accepts MD5, SHA-1, and SHA-256 digests, or a path to a file.
     --zip-password PASS   password for an encrypted ZIP; prompts if omitted
     --no-cache            ignore and bypass the cache
     --refresh             force fresh calls, then re-cache
+    --no-static           skip local static analysis (entropy, PE, YARA, strings)
+    --yara-rules DIR      scan against this directory of .yar/.yara rules
+                          instead of the default (see 🔬 Static Analysis)
+
+🔬 Static Analysis
+
+Before any provider is contacted, a supplied file (not a bare hash) is read
+locally and passed through a handful of static analyzers. None of them
+execute, unpack, or otherwise run the sample -- they only read bytes and
+parse structures. Every analyzer takes a size cap, so a hostile input
+cannot hang the tool or exhaust memory.
+
+Two of the analyzers always run, using only the standard library:
+
+- **Entropy**: Shannon entropy over the first 8 MiB. Above 7.2 bits/byte is
+  flagged `packed` -- compressed or encrypted data, which for an executable
+  usually means a packer.
+- **File type**: the first bytes are checked against a small signature
+  table (PE, ELF, PDF, ZIP) and compared against the file's extension; a
+  mismatch is reported, an unrecognized type never is.
+- **Strings**: printable ASCII/UTF-16 strings are extracted and scanned for
+  IP addresses, domains, and URLs. IPs harvested this way are fed into the
+  same AbuseIPDB/Censys/WHOIS enrichment as IPs VT reports -- so a sample
+  nobody has ever uploaded to VT can still surface indicators.
+
+Two more analyzers need optional libraries that are **not** installed by
+default. Install them with:
+
+    pip install 'hash-searcher[static]'
+
+which adds `pefile`, `yara-python`, and `python-magic`. Without it, the
+tool runs exactly as before -- the gated analyzers are named in the
+report's `Skipped:` line rather than failing the run, and the file-type
+check falls back to the built-in signature table instead of `python-magic`.
+
+- **PE parsing** (`pefile`): imports, sections, and the build timestamp of
+  a Windows PE file, plus a short list of imported APIs commonly associated
+  with process injection or evasion.
+- **YARA scanning** (`yara-python`): the sample is matched against every
+  `.yar`/`.yara` file under a rules directory. **No rules ship with this
+  tool** -- open rulesets are large, fast-moving, and variously licensed,
+  so you supply your own. The default directory is
+  `$XDG_DATA_HOME/hash-searcher/yara/` (or `~/.local/share/hash-searcher/yara/`
+  if `XDG_DATA_HOME` is unset); a missing directory is a quiet empty
+  result, not an error. Point at a different directory with
+  `--yara-rules DIR`.
+
+`python-magic` additionally needs the system `libmagic` library, which is a
+separate install from the Python package:
+
+    apt install libmagic1
+
+Without it, `python-magic` fails to import and the file-type check silently
+falls back to the built-in signature table, same as without the extra at
+all.
+
+Run `hash-searcher` with `--no-static` to skip this pass entirely.
+
+Static analysis is heuristic, not a verdict. High entropy, an unusual
+import, or a YARA hit is something to look at, not proof of anything --
+**a packed binary is not automatically malicious**; plenty of legitimate
+software is packed or compressed. These findings do feed the score
+(see 🎯 Verdict below) and can pull a file that VT has never seen out of
+the default `UNKNOWN`, because they are evidence the tool itself examined
+the file and found something -- not evidence the file is bad.
 
 🎯 Verdict
 
@@ -55,7 +123,7 @@ sum:
 | `MALICIOUS`  | score >= 50 | Strong, corroborated evidence. |
 | `SUSPICIOUS` | score >= 15 | Something fired, but not enough to convict. |
 | `CLEAN`      | below that  | VT has a record of the file and the evidence did not reach the suspicious threshold. |
-| `UNKNOWN`    | VT has no record of the file | Nobody analyzed this sample. Not the bottom of the scale — a distinct answer, and it preempts the bands: OTX pulses are reported as a signal but cannot make an unanalyzed file `CLEAN`. |
+| `UNKNOWN`    | VT has no record of the file **and** local static analysis found nothing | Nobody has analyzed this sample, online or locally. Not the bottom of the scale — a distinct answer, and it preempts the bands: OTX pulses are reported as a signal but cannot make an unanalyzed file `CLEAN`. A `packed`, `suspicious_imports`, or `yara_local` finding is evidence the tool itself examined the file, so it escapes this guard even with zero VT record — the file falls through to `CLEAN`/`SUSPICIOUS`/`MALICIOUS` on the score like any other. |
 
 The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
 
@@ -69,6 +137,9 @@ The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
 | otx       | +10 | OTX pulses reference the indicator |
 | abuseipdb | +10 | A contacted IP scores 75% or higher on AbuseIPDB |
 | signed    | **-20** | A valid, verified code signature, **and no engine flagged the file** — evidence *against*. Suppressed once any engine convicts, because a signature is attacker-attached metadata and must not erase independent detections |
+| packed    | +10 | Local entropy analysis flags the file as packed (see 🔬 Static Analysis) |
+| suspicious_imports | +15 | A locally-parsed PE imports 3 or more APIs associated with process injection or evasion |
+| yara_local | +20 | A local YARA rule (from `--yara-rules` or the default rules directory) matched |
 
 These weights are a coarse triage aid, not a classifier. They are constants at
 the top of one file precisely so you can argue with them and change them.
@@ -92,6 +163,13 @@ YARA matches, PE metadata, submission history, and resolved MITRE ATT&CK
 techniques), contacted domains, and — when VT reports contacted IPs — the
 AbuseIPDB table, Censys enrichment, and WHOIS records for those IPs. Sections
 with nothing to say stay silent rather than printing an empty frame.
+
+When a file (not a bare hash) is analyzed and `--no-static` was not passed, a
+STATIC ANALYSIS section prints the local findings — entropy, file-type
+mismatch, PE summary, YARA hits, and extracted-string counts — followed by
+`Skipped:` and `Failed:` lines that are always printed, by name, even when
+both are empty; a section that goes silent instead is indistinguishable from
+one with nothing to report.
 
 🗺️ MITRE ATT&CK
 
