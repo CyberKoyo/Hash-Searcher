@@ -21,35 +21,41 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12"]
         # Global Constraint 3 (every optional dependency -- pefile,
-        # yara-python, python-magic -- stays genuinely optional) is only
-        # real if CI actually installs the project without [static] and
-        # checks that the tests gated on those libraries degrade to
-        # skipped rather than failed, instead of just trusting that
-        # nobody ever installs the extra by accident.
-        #
-        # A "static" (with-extras) value belongs on this axis too, and
-        # was evaluated for this change: installing [dev,static] into a
-        # throwaway venv and running the suite there does make the five
-        # previously-skipped tests pass. But it also flips two unrelated
-        # tests in tests/test_static_runner.py from passing to failing --
-        # they mock the capability gate via `builtins.__import__`, which
-        # `capabilities.have()` never calls (it goes through
-        # `importlib.import_module`, which does not consult
-        # `builtins.__import__`); those two tests only pass today by the
-        # accident of pefile being absent from every environment they
-        # have ever run in. Adding "static" here now would make this leg
-        # red from its first push over a pre-existing test defect, not a
-        # regression this change introduced. Fix the two capability-gate
-        # tests first, then add "static" to this list.
-        extras: ["none"]
+        # yara-python, python-magic -- stays genuinely optional) needs both
+        # halves enforced, not just claimed:
+        #   "none"   installs without [static] and proves the tests gated
+        #            on those libraries degrade to skipped, not failed --
+        #            the guard below fails the leg if nothing skipped.
+        #   "static" installs [dev,static] (plus the system libmagic1
+        #            python-magic needs) and proves the suite is fully
+        #            green with the real libraries present -- the guard
+        #            below fails the leg if anything still skipped, which
+        #            would mean an extra silently failed to install.
+        # A prior version of this file left "static" out because two
+        # tests in tests/test_static_runner.py mocked the capability gate
+        # via `builtins.__import__`, which `capabilities.have()` never
+        # calls (it goes through `importlib.import_module`, which does
+        # not consult `builtins.__import__`) -- they passed today only by
+        # the accident of pefile being absent everywhere they'd run. That
+        # is now fixed: they patch `importlib.import_module` directly, so
+        # this leg is expected to be green.
+        extras: ["none", "static"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - name: Install libmagic (with-extras leg only)
+        # python-magic wraps the system libmagic; the Python package
+        # installs regardless, but importing it fails without this. A
+        # GitHub runner does not have it preinstalled -- unlike the
+        # machine this workflow was authored on, which happened to
+        # already carry it as another package's dependency.
+        if: matrix.extras == 'static'
+        run: sudo apt-get update && sudo apt-get install -y libmagic1
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev${{ matrix.extras == 'static' && ',static' || '' }}]"
       - name: Test
         run: python -m pytest tests/ -v
       - name: Prove the no-extras leg actually exercised the optional path
@@ -66,3 +72,21 @@ jobs:
           python -m pytest tests/ -q -rs | tee /tmp/out.txt
           grep -q "skipped" /tmp/out.txt \
             || (echo "no tests skipped; this leg proved nothing" && exit 1)
+      - name: Prove the with-extras leg actually installed its libraries
+        if: matrix.extras == 'static'
+        run: |
+          # Mirror image of the guard above: there, a skip is the proof;
+          # here, a skip is the failure -- it means pefile, yara-python,
+          # or python-magic did not actually import, and this leg quietly
+          # degraded into re-running the no-extras leg instead of testing
+          # anything new. Matched on the exact skip reason
+          # tests/conftest.py::requires() uses ("optional dependency
+          # 'x' is not installed") rather than on "skipped" generically,
+          # so an unrelated skip added by some future test -- a slow-test
+          # marker, a platform guard -- can never trip this guard by
+          # accident.
+          set -o pipefail
+          python -m pytest tests/ -q -rs | tee /tmp/out.txt
+          grep -q "optional dependency" /tmp/out.txt \
+            && (echo "a static-extras test was skipped; an optional library failed to import" && exit 1)
+          exit 0
