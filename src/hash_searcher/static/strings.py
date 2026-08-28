@@ -16,10 +16,30 @@ IOC_LIMIT = 50   # per category, after de-duplication. Global Constraint 5:
                  # every entry reaches Task 9's rate-limited free-tier lookup.
 
 # These appear in nearly every signed Windows binary. Reporting them is
-# noise that buries the one domain that actually matters.
+# noise that buries the one domain that actually matters. Matched against
+# a candidate domain or any of its parent domains -- www.microsoft.com and
+# crl.digicert.com are as common, and as uninteresting, as the bare names.
 IGNORED_DOMAINS = {
     "microsoft.com", "w3.org", "verisign.com", "digicert.com", "symcb.com",
     "globalsign.com", "schemas.xmlsoap.org", "example.com",
+}
+
+# Filename extensions that read as a domain TLD to _DOMAIN_RE but are
+# overwhelmingly PE import-table entries or plain filenames in practice --
+# kernel32.dll, readme.txt, setup.exe. Every extension here is checked to
+# NOT be a live TLD; .com is deliberately excluded even though it is also
+# a DOS executable extension, because it is also the most common TLD on
+# earth and excluding it would silently drop genuine .com domains.
+#
+# .zip and .mov ARE live TLDs (Google registered both in 2023) and are
+# kept in this set anyway: a ".zip" or ".mov" string embedded in a binary
+# is overwhelmingly a filename, not a URL shortener's idea of a domain,
+# and the risk of losing a rare genuine .zip/.mov domain IOC is accepted
+# as the smaller cost against the near-certainty of filename noise.
+FILENAME_EXTENSIONS = {
+    "dll", "exe", "sys", "scr", "ocx", "cpl", "bin",
+    "dat", "ini", "txt", "log", "tmp",
+    "zip", "mov",
 }
 
 # RFC 1918 -- the private ranges an analyst never wants looked up. See
@@ -121,11 +141,26 @@ def _find_urls(text: str) -> list[str]:
     return _URL_RE.findall(text)
 
 
+def _is_ignored_domain(domain: str) -> bool:
+    """True for an exact ignored domain or any subdomain of one.
+
+    www.microsoft.com and crl.digicert.com appear in essentially every
+    signed Windows binary just as often as the bare names do.
+    """
+    return any(
+        domain == ignored or domain.endswith("." + ignored)
+        for ignored in IGNORED_DOMAINS
+    )
+
+
 def _find_domains(text: str) -> list[str]:
     found = []
     for match in _DOMAIN_RE.finditer(text):
         domain = match.group(0).lower()
-        if domain in IGNORED_DOMAINS:
+        tld = domain.rsplit(".", 1)[-1]
+        if tld in FILENAME_EXTENSIONS:
+            continue
+        if _is_ignored_domain(domain):
             continue
         found.append(domain)
     return found

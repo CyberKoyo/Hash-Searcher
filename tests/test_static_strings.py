@@ -61,3 +61,36 @@ def test_iocs_are_deduplicated_and_capped():
     ips = harvest_iocs(strings).ips
     assert len(ips) <= IOC_LIMIT
     assert len(ips) == len(set(ips))
+
+
+def test_pe_import_filenames_are_not_reported_as_domains():
+    """kernel32.dll and friends cluster early in a PE's string table and,
+    uncapped, would crowd the one genuine domain IOC out of IOC_LIMIT."""
+    from hash_searcher.static.strings import harvest_iocs
+
+    domains = harvest_iocs([
+        "KERNEL32.dll", "USER32.dll", "ADVAPI32.dll", "readme.txt", "setup.exe",
+    ]).domains
+    assert domains == []
+
+
+def test_a_genuine_dot_com_domain_is_still_reported():
+    """Guards against an over-broad filename blocklist: .com is both the
+    most common TLD and a DOS executable extension, and must stay a
+    reportable domain."""
+    from hash_searcher.static.strings import harvest_iocs
+
+    assert harvest_iocs(["evil-domain.com"]).domains == ["evil-domain.com"]
+
+
+def test_subdomains_of_ignored_domains_are_filtered():
+    from hash_searcher.static.strings import harvest_iocs
+
+    domains = harvest_iocs(["www.microsoft.com", "crl.digicert.com"]).domains
+    assert domains == []
+
+
+def test_subdomain_of_a_non_ignored_domain_is_still_reported():
+    from hash_searcher.static.strings import harvest_iocs
+
+    assert harvest_iocs(["c2.evil.example"]).domains == ["c2.evil.example"]
