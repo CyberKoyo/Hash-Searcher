@@ -128,6 +128,54 @@ def render_verdict(verdict: Verdict) -> None:
         print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
 
 
+def render_static(report: Report) -> None:
+    """Local findings from the analyzers in static/. Absent entirely when
+    static analysis never ran (--no-static, a bare hash argument, or an
+    analyzer-fan-out failure) -- but once report.static exists, `skipped`
+    and `failed` are always printed by name, even when both are empty. A
+    silently missing section is indistinguishable from a clean result.
+    """
+    static = report.static
+    if static is None:
+        return
+    _header("STATIC ANALYSIS")
+    print(f"File:   {static.path} ({static.size} bytes)")
+    print(f"SHA256: {static.sha256}")
+
+    if static.entropy:
+        state = "packed" if static.entropy.packed else "normal"
+        print(f"Entropy: {static.entropy.overall} ({state}) -- {static.entropy.note}")
+
+    if static.filetype:
+        ft = static.filetype
+        if ft.mismatch:
+            print(f"File type: {ft.detected} -- {ft.note}")
+        elif ft.detected:
+            print(f"File type: {ft.detected}")
+
+    if static.pe:
+        pe = static.pe
+        if pe.note:
+            print(f"PE: {pe.note}")
+        else:
+            print(f"PE: {len(pe.sections)} sections, "
+                  f"{sum(len(names) for names in pe.imports.values())} imports, "
+                  f"compiled {pe.compiled or 'N/A'}")
+            if pe.suspicious_imports:
+                print(f"Suspicious imports: {', '.join(pe.suspicious_imports)}")
+
+    for hit in static.yara:
+        print(f"YARA:   {hit.rule} ({hit.namespace})")
+
+    if static.strings:
+        iocs = static.strings.iocs
+        print(f"Strings: {static.strings.count} extracted, "
+              f"{len(iocs.ips)} IPs, {len(iocs.domains)} domains, {len(iocs.urls)} URLs")
+
+    print(f"Skipped: {', '.join(static.skipped) if static.skipped else 'none'}")
+    print(f"Failed:  {', '.join(static.failed) if static.failed else 'none'}")
+
+
 def render_detection(report: Report) -> None:
     detection = report.vt.detection
     if not detection:
@@ -183,6 +231,7 @@ def render_domains(report: Report) -> None:
 def render(report: Report, verdict: Verdict | None = None) -> None:
     if verdict is not None:
         render_verdict(verdict)
+    render_static(report)
     render_detection(report)
     render_vt(report)
     render_attribution(report)

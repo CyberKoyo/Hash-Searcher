@@ -19,6 +19,7 @@ from .render.json_out import write_json
 from .render.pdf import write_pdf
 from .render.tty import render
 from .scoring import score
+from .static.runner import analyze
 
 EXIT_CLEAN = 0
 EXIT_SUSPICIOUS = 1
@@ -50,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
     parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
+    parser.add_argument("--no-static", action="store_true",
+                        help="skip local static analysis (entropy, PE, YARA, strings)")
+    parser.add_argument("--yara-rules", dest="yara_rules",
+                        help="directory of .yar/.yara rules to scan the sample against")
     return parser
 
 
@@ -98,6 +103,22 @@ async def run_cli(argv: list[str] | None = None) -> int:
         for skipped in resolved[1:]:
             print(f"    not analyzed: {skipped}")
 
+    # Static analysis runs before any network call. If it ran after
+    # data_puller, the early bail on a VT 404 with no OTX pulses below would
+    # skip it entirely on exactly the sample this phase exists to serve: one
+    # nobody has ever uploaded. os.path.isfile guards a bare hash argument --
+    # there is no file to analyze, and attempting one is a crash, not a
+    # smaller report.
+    static_report = None
+    if not args.no_static and os.path.isfile(args.indicator):
+        try:
+            static_report = analyze(args.indicator, yara_rules=args.yara_rules)
+        except Exception:
+            # A local analyzer failure must never block the network pass --
+            # this phase exists to ADD information, not to become a new way
+            # the tool can fail to run at all.
+            static_report = None
+
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
@@ -123,6 +144,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
         generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
+        static=static_report,
     )
 
     verdict = score(report)

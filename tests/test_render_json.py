@@ -154,6 +154,51 @@ def test_a_failed_censys_lookup_is_visible_in_the_json(sample_report, tmp_path):
     assert host["ip"] == "198.51.100.10"
 
 
+# --- Phase 3: the static block ------------------------------------------
+
+
+def test_static_block_is_omitted_when_report_static_is_none(sample_report, tmp_path):
+    """Backward compatibility, the same rule Phase 2's verdict block
+    established: a consumer of the pre-Phase-3 schema must not start seeing
+    a new key -- null or otherwise -- it never had to handle."""
+    from hash_searcher.render.json_out import write_json
+
+    path = tmp_path / "out.json"
+    write_json(sample_report, str(path))
+    assert "static" not in json.loads(path.read_text())["report"]
+
+
+def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
+    from hash_searcher.models import EntropyReport, StaticReport, YaraHit
+    from hash_searcher.render.json_out import write_json
+
+    sample_report.static = StaticReport(
+        path="/tmp/sample.exe", size=2048, sha256="a" * 64,
+        entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
+        yara=[YaraHit(rule="Emotet_Loader")],
+        skipped=["magic"], failed=["pe"],
+    )
+    path = tmp_path / "out.json"
+    write_json(sample_report, str(path))
+    static = json.loads(path.read_text())["report"]["static"]
+
+    assert static["path"] == "/tmp/sample.exe"
+    assert static["size"] == 2048
+    assert static["sha256"] == "a" * 64
+    assert static["entropy"] == {"overall": 7.9, "packed": True, "note": "packed"}
+    assert static["yara"] == [
+        {"rule": "Emotet_Loader", "namespace": "default", "tags": []}
+    ]
+    # Present-but-null for an analyzer that never produced a result, same
+    # rule _vt_dict already follows: a consumer can tell "this analyzer had
+    # nothing" from "this tool never ran it".
+    assert static["filetype"] is None
+    assert static["pe"] is None
+    assert static["strings"] is None
+    assert static["skipped"] == ["magic"]
+    assert static["failed"] == ["pe"]
+
+
 def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):
     """Phase 1 schema compatibility: the success shape is unchanged."""
     import json

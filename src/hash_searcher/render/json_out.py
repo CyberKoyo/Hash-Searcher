@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 
-from ..models import CensysHost, Report, Verdict, VTReport, WhoisRecord
+from ..models import CensysHost, Report, StaticReport, Verdict, VTReport, WhoisRecord
 
 
 def _censys_dict(host: CensysHost) -> dict:
@@ -84,6 +84,28 @@ def _vt_dict(vt: VTReport) -> dict:
     }
 
 
+def _static_dict(static: StaticReport) -> dict:
+    """report.static's full field set, under its own key.
+
+    Component fields are present-but-null when that analyzer never produced
+    a result -- same rule _vt_dict already follows -- so a consumer can tell
+    "this analyzer had nothing" from "this tool never ran it". `skipped` and
+    `failed` always carry the analyzer names, empty list or not.
+    """
+    return {
+        "path": static.path,
+        "size": static.size,
+        "sha256": static.sha256,
+        "entropy": asdict(static.entropy) if static.entropy else None,
+        "filetype": asdict(static.filetype) if static.filetype else None,
+        "pe": asdict(static.pe) if static.pe else None,
+        "yara": [asdict(hit) for hit in static.yara],
+        "strings": asdict(static.strings) if static.strings else None,
+        "skipped": static.skipped,
+        "failed": static.failed,
+    }
+
+
 def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
         "hash": report.indicator,
@@ -103,6 +125,8 @@ def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     }
     if verdict is not None:
         body["verdict"] = _verdict_dict(verdict)
+    if report.static is not None:
+        body["static"] = _static_dict(report.static)
     return {
         "file": report.source_file or report.indicator,
         "time": report.generated_at,

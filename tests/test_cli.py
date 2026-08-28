@@ -40,6 +40,16 @@ def test_zip_password_flag_is_accepted():
     assert build_parser().parse_args(["a.zip", "--zip-password", "s3cret"]).zip_password == "s3cret"
 
 
+def test_no_static_flag_is_accepted():
+    assert build_parser().parse_args(["abc", "--no-static"]).no_static is True
+    assert build_parser().parse_args(["abc"]).no_static is False
+
+
+def test_yara_rules_flag_is_accepted():
+    assert build_parser().parse_args(["abc", "--yara-rules", "/rules"]).yara_rules == "/rules"
+    assert build_parser().parse_args(["abc"]).yara_rules is None
+
+
 # --- run_cli coverage -------------------------------------------------------
 #
 # data_puller, who_is, check_env, and resolve_hash are monkeypatched as they
@@ -282,6 +292,132 @@ async def test_a_full_run_on_a_malicious_file_exits_two(monkeypatch, fixture_jso
     assert exit_code == EXIT_MALICIOUS
     assert "VERDICT: MALICIOUS" in out
     assert "48/72 engines flagged this file" in out
+
+
+# --- Phase 3: static analysis wiring ----------------------------------------
+#
+# test_static_analysis_runs_before_the_network_pass and
+# test_the_unknown_guard_mutation_proof (see below) do NOT stub check_env or
+# resolve_hash -- they run the real path against a real tmp_path file, which
+# is the whole point of the ordering test. The other two tests below deviate
+# from the brief's literal code by additionally stubbing data_puller (via
+# _stub_entry/_stub_data_puller): this repo's .env carries real API keys
+# (confirmed via `bool(os.getenv(...))`, never printed), so an unstubbed
+# data_puller would make a live network call -- a violation of Global
+# Constraint 7 (the suite is offline and needs no key). The brief's example
+# code for those two tests did not anticipate that; stubbing here keeps the
+# same assertion (`analyze` was never called) while keeping the run offline.
+
+async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatch):
+    """The whole point of the phase. If the static pass ran after
+    data_puller, an early bail on 'Invalid hash' would skip it entirely --
+    which is exactly the case this phase exists to serve."""
+    order = []
+    monkeypatch.setattr("hash_searcher.cli.analyze",
+                        lambda path, yara_rules=None: order.append("static"))
+
+    async def fake_puller(file_hash, cache, extra_ips=None):
+        order.append("network")
+        return {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []}
+
+    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"MZ" + b"\x00" * 512)
+    await run_cli([str(target)])
+
+    assert order == ["static", "network"]
+
+
+async def test_no_static_skips_the_pass(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr("hash_searcher.cli.analyze",
+                        lambda path, yara_rules=None: called.append(1))
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    await run_cli([str(target), "--no-static", "--no-cache"])
+    assert called == []
+
+
+async def test_a_bare_hash_argument_skips_static_analysis(monkeypatch):
+    """There is no file to analyze. Attempting one would be a crash, not a
+    smaller report."""
+    called = []
+    monkeypatch.setattr("hash_searcher.cli.analyze",
+                        lambda path, yara_rules=None: called.append(1))
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+
+    await run_cli(["a" * 64, "--no-cache"])
+    assert called == []
+
+
+async def test_a_static_report_is_attached_to_the_report_and_rendered(
+        tmp_path, monkeypatch, capsys):
+    """Not just called -- its result must actually reach the Report the
+    renderer (and --output) sees."""
+    from hash_searcher.models import EntropyReport, StaticReport
+
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+
+    fake = StaticReport(path="x", size=4, sha256="a" * 64,
+                        entropy=EntropyReport(overall=7.9, packed=True, note="packed"))
+    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    await run_cli([str(target), "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert "STATIC ANALYSIS" in out
+    assert "packed" in out
+
+
+async def test_yara_rules_flag_is_forwarded_to_analyze(tmp_path, monkeypatch):
+    from hash_searcher.models import StaticReport
+
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+
+    seen = {}
+
+    def fake_analyze(path, yara_rules=None):
+        seen["yara_rules"] = yara_rules
+        return StaticReport(path=path, size=1, sha256="a" * 64)
+
+    monkeypatch.setattr("hash_searcher.cli.analyze", fake_analyze)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    await run_cli([str(target), "--yara-rules", "/opt/rules", "--no-cache"])
+
+    assert seen["yara_rules"] == "/opt/rules"
+
+
+async def test_a_static_analysis_failure_does_not_block_the_network_pass(
+        tmp_path, monkeypatch, capsys):
+    """A local analyzer raising must never take the network pass down with
+    it -- static analysis exists to ADD information, not to become a new way
+    the whole run can fail."""
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+
+    def boom(path, yara_rules=None):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("hash_searcher.cli.analyze", boom)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    exit_code = await run_cli([str(target), "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert "STATIC ANALYSIS" not in out
+    assert exit_code == EXIT_CLEAN
 
 
 async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, capsys):

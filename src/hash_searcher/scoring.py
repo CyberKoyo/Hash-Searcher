@@ -26,6 +26,13 @@ W_ABUSEIPDB = 10
 W_SIGNED = -20            # a valid signature is evidence AGAINST, not for
 W_DETECTION_SUSPICIOUS = 10   # engines hedging, none convicting
 
+# Phase 3: local static analysis, no VT record required. These are the only
+# three signals that can fire from report.static -- score()'s UNKNOWN guard
+# checks for exactly these names among the fired signals, see below.
+W_PACKED = 10
+W_SUSPICIOUS_IMPORTS = 15
+W_YARA_LOCAL = 20
+
 # The sigma term is the only one that scales with the input, and VT's
 # crowdsourced Sigma corpus fires readily on benign installers and on anything
 # that spawns a shell. Uncapped, four matches outvoted seventy-two engines
@@ -36,6 +43,7 @@ SIGMA_CAP = 30
 STRONG_DETECTION = 5
 SUSPICIOUS_ENGINES = 3    # below this, engine hedging is noise
 ABUSE_CONFIDENCE = 75
+SUSPICIOUS_IMPORT_FLOOR = 3   # below this, one or two hits could be legitimate
 
 
 def _detection_signal(report: Report) -> Signal | None:
@@ -133,10 +141,48 @@ def _signed_signal(report: Report) -> Signal | None:
                          f"{signature.signer or 'an unnamed signer'}")
 
 
+def _packed_signal(report: Report) -> Signal | None:
+    static = report.static
+    if not static or not static.entropy or not static.entropy.packed:
+        return None
+    return Signal(name="packed", points=W_PACKED,
+                  detail=f"entropy {static.entropy.overall} -- {static.entropy.note}")
+
+
+def _suspicious_imports_signal(report: Report) -> Signal | None:
+    static = report.static
+    if not static or not static.pe:
+        return None
+    imports = static.pe.suspicious_imports
+    if len(imports) < SUSPICIOUS_IMPORT_FLOOR:
+        return None
+    return Signal(name="suspicious_imports", points=W_SUSPICIOUS_IMPORTS,
+                  detail=f"imports {len(imports)} APIs associated with process "
+                         f"injection or evasion: {', '.join(imports)}")
+
+
+def _yara_local_signal(report: Report) -> Signal | None:
+    static = report.static
+    if not static or not static.yara:
+        return None
+    return Signal(name="yara_local", points=W_YARA_LOCAL,
+                  detail="local YARA rules matched: "
+                         + ", ".join(h.rule for h in static.yara))
+
+
 SIGNALS = (
     _detection_signal, _sigma_signal, _family_signal, _sandbox_signal,
     _yara_signal, _otx_signal, _abuseipdb_signal, _signed_signal,
+    _packed_signal, _suspicious_imports_signal, _yara_local_signal,
 )
+
+# The signal names produced by report.static, and only those. score() checks
+# membership of a *fired* signal's name against this set rather than
+# re-inspecting report.static's fields by hand -- adding a fourth static
+# signal means adding its maker to SIGNALS and its name here, in one place,
+# rather than teaching the UNKNOWN guard a new field path that can drift out
+# of sync with what the signal functions above actually check.
+STATIC_SIGNAL_NAMES = frozenset({"packed", "suspicious_imports", "yara_local"})
 
 
 def score(report: Report) -> Verdict:
@@ -150,13 +196,25 @@ def score(report: Report) -> Verdict:
     signals.sort(key=lambda s: -s.points)
     total = sum(s.points for s in signals)
 
-    if not report.vt.found:
+    has_static_findings = any(s.name in STATIC_SIGNAL_NAMES for s in signals)
+
+    if not report.vt.found and not has_static_findings:
         # VT having no record of the file is what "nobody analyzed this"
-        # means. OTX pulses used to escape this guard, but the only signal
-        # escaping it can produce is otx at +10 -- under SUSPICIOUS_AT -- so
-        # an indicator sitting in OTX threat pulses fell through to CLEAN and
-        # exit 0. Pulses are evidence ABOUT an indicator, not evidence the
-        # file was analyzed; they are still reported in signals.
+        # means -- but Phase 3 gives the tool its own eyes on a file VT has
+        # never seen. A packed sample, a PE importing CreateRemoteThread, or
+        # a local YARA hit is evidence the tool itself has now examined the
+        # file and found something, even with zero network corroboration --
+        # that is no longer "nobody has ever seen this", it is "nothing
+        # ONLINE has ever seen this, and this tool looked and found X". OTX
+        # pulses used to escape this guard the same way, but the only signal
+        # escaping it could produce is otx at +10 -- under SUSPICIOUS_AT --
+        # so an indicator sitting in OTX threat pulses fell through to CLEAN
+        # and exit 0; pulses are evidence ABOUT an indicator, not evidence
+        # the file was analyzed, and were folded back into this guard for
+        # exactly that reason. Static findings are evidence the file WAS
+        # analyzed -- by this tool, locally -- which is the one thing OTX
+        # pulses could never claim, so they are allowed to escape where OTX
+        # is not.
         return Verdict(level="UNKNOWN", score=total, signals=signals)
     if total >= MALICIOUS_AT:
         level = "MALICIOUS"

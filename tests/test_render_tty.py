@@ -491,23 +491,26 @@ def test_a_verified_signature_reads_differently_from_an_unverified_one(capsys, s
 def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):
     """The per-section exact-output tests pin each section's bytes, but
     nothing pinned the ORDER render() prints them in -- so Task 7's
-    reordering could have drifted silently. Verdict leads, the detection
-    ratio sits above the sigma rules it summarizes, attribution follows the
-    rules, and contacted domains land with the other network indicators
-    rather than after OTX.
+    reordering could have drifted silently. Verdict leads, static analysis
+    (Task 8) sits directly under it and ahead of everything network-derived,
+    the detection ratio sits above the sigma rules it summarizes, attribution
+    follows the rules, and contacted domains land with the other network
+    indicators rather than after OTX.
     """
-    from hash_searcher.models import Detection, Signal, ThreatClass, Verdict
+    from hash_searcher.models import Detection, Signal, StaticReport, ThreatClass, Verdict
     from hash_searcher.render.tty import render
 
     sample_report.vt.detection = Detection(malicious=48, undetected=24)
     sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet")
     sample_report.vt.contacted_domains = ["evil.example"]
+    sample_report.static = StaticReport(path="x", size=1, sha256="a" * 64)
     render(sample_report, Verdict(level="MALICIOUS", score=50,
                                   signals=[Signal("detection", 50, "48/72 engines flagged this file")]))
 
     out = capsys.readouterr().out
     markers = [
         "VERDICT: MALICIOUS (score 50)",
+        "STATIC ANALYSIS",
         "Detections: 48/72",
         "VIRUSTOTAL SIGMA RULES",
         "ATTRIBUTION",
@@ -529,6 +532,106 @@ def test_render_without_a_verdict_prints_no_verdict_section(capsys, sample_repor
 
     render(sample_report)
     assert "VERDICT:" not in capsys.readouterr().out
+
+
+# --- Phase 3: render_static --------------------------------------------------
+
+
+def test_render_static_is_silent_when_no_static_report(capsys, sample_report):
+    """sample_report.static defaults to None -- render() keeps working for
+    every pre-Phase-3 call site, the same guarantee Phase 2 gave render()
+    without a verdict."""
+    from hash_searcher.render.tty import render_static
+
+    render_static(sample_report)
+    assert capsys.readouterr().out == ""
+
+
+def test_render_static_exact_formatting(capsys):
+    from hash_searcher.models import (
+        EntropyReport, FileTypeReport, IOCSet, PEStaticReport, PESection,
+        StaticReport, StringsReport, YaraHit,
+    )
+    from hash_searcher.render.tty import render_static
+
+    report = Report(
+        indicator="test", generated_at="x", vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
+        static=StaticReport(
+            path="/tmp/sample.exe", size=2048, sha256="a" * 64,
+            entropy=EntropyReport(
+                overall=7.91, packed=True,
+                note="high entropy: compressed or encrypted, commonly a packer"),
+            filetype=FileTypeReport(
+                detected="PE", extension=".txt", mismatch=True,
+                note="content looks like PE but the name says '.txt'"),
+            pe=PEStaticReport(
+                imports={"kernel32.dll": ["VirtualAllocEx", "WriteProcessMemory"]},
+                sections=[PESection(name=".text", size=512, entropy=6.5, executable=True)],
+                compiled="2024-01-02",
+                suspicious_imports=["VirtualAllocEx", "WriteProcessMemory",
+                                    "CreateRemoteThread"],
+            ),
+            yara=[YaraHit(rule="Emotet_Loader", namespace="default", tags=["trojan"])],
+            strings=StringsReport(
+                count=42,
+                iocs=IOCSet(ips=["203.0.113.7"], domains=["evil.example"], urls=[])),
+            skipped=["magic"],
+            failed=["yara"],
+        ),
+    )
+    render_static(report)
+    out = capsys.readouterr().out
+    assert out == (
+        "\n" + RULE + "\n"
+        "STATIC ANALYSIS\n"
+        + RULE + "\n"
+        "File:   /tmp/sample.exe (2048 bytes)\n"
+        "SHA256: " + "a" * 64 + "\n"
+        "Entropy: 7.91 (packed) -- high entropy: compressed or encrypted, "
+        "commonly a packer\n"
+        "File type: PE -- content looks like PE but the name says '.txt'\n"
+        "PE: 1 sections, 2 imports, compiled 2024-01-02\n"
+        "Suspicious imports: VirtualAllocEx, WriteProcessMemory, CreateRemoteThread\n"
+        "YARA:   Emotet_Loader (default)\n"
+        "Strings: 42 extracted, 1 IPs, 1 domains, 0 URLs\n"
+        "Skipped: magic\n"
+        "Failed:  yara\n"
+    )
+
+
+def test_render_static_prints_none_for_empty_skipped_and_failed(capsys):
+    """Skipped and failed must be printed by name -- a silently missing
+    section is indistinguishable from a clean result. When both are empty
+    that must still be said explicitly, not left implicit by omission."""
+    from hash_searcher.models import StaticReport
+    from hash_searcher.render.tty import render_static
+
+    report = Report(
+        indicator="test", generated_at="x", vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
+        static=StaticReport(path="x", size=1, sha256="a" * 64),
+    )
+    render_static(report)
+    out = capsys.readouterr().out
+    assert "Skipped: none" in out
+    assert "Failed:  none" in out
+
+
+def test_render_static_names_what_was_skipped_and_failed(capsys):
+    from hash_searcher.models import StaticReport
+    from hash_searcher.render.tty import render_static
+
+    report = Report(
+        indicator="test", generated_at="x", vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
+        static=StaticReport(path="x", size=1, sha256="a" * 64,
+                            skipped=["pefile", "yara"], failed=["strings"]),
+    )
+    render_static(report)
+    out = capsys.readouterr().out
+    assert "Skipped: pefile, yara" in out
+    assert "Failed:  strings" in out
 
 
 def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):

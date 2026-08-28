@@ -263,3 +263,7 @@ class Report:
     hosts: list[CensysHost]
     whois: list[WhoisRecord]
     source_file: str | None = None
+    #: None when static analysis was skipped (--no-static, a bare hash
+    #: argument with no file, or an analyzer-fan-out failure) -- never a
+    #: half-built StaticReport standing in for "we didn't run it".
+    static: StaticReport | None = None
