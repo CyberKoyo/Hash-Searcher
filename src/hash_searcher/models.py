@@ -230,6 +230,30 @@ class StringsReport:
 
 
 @dataclass
+class StaticReport:
+    """One assembly point for every local static analyzer.
+
+    `skipped` and `failed` name analyzers, not libraries: an analyzer
+    lands in `skipped` when its capability gate says the library it needs
+    is absent, and in `failed` when it ran and raised. Every analyzer
+    field below carries a default (`None` or an empty list) precisely so
+    a partially-populated report -- one analyzer skipped, one failed,
+    the rest present -- is a valid StaticReport and not a construction
+    error.
+    """
+    path: str
+    size: int
+    sha256: str
+    entropy: EntropyReport | None = None
+    filetype: FileTypeReport | None = None
+    pe: PEStaticReport | None = None
+    yara: list[YaraHit] = field(default_factory=list)
+    strings: StringsReport | None = None
+    skipped: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Report:
     indicator: str
     generated_at: str
