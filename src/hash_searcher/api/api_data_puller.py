@@ -11,6 +11,7 @@ from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .base_call import is_error, make_error, tag_indicator
 from .registry import available, by_name
+from ..static.strings import IOC_LIMIT
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
 
@@ -89,7 +90,25 @@ async def fetch_censys(client, ips, cache):
     return results
 
 
-async def data_puller(file_hash: str, cache):
+def _merge_ips(vt_ips: list[str], extra_ips: list[str] | None) -> list[str]:
+    """Order-preserving de-duplicated union, VT's own IPs first.
+
+    Capped at IOC_LIMIT -- the same per-category cap Task 6 put on the
+    strings harvester -- so this merge cannot turn into an unbounded list
+    of AbuseIPDB lookups. extra_ips already arrives at or under IOC_LIMIT,
+    but vt_ips is not itself capped upstream, so the cap is enforced here,
+    on the merged result, rather than trusted from either input.
+    """
+    result = []
+    for ip in (*vt_ips, *(extra_ips or ())):
+        if ip not in result:
+            result.append(ip)
+        if len(result) == IOC_LIMIT:
+            break
+    return result
+
+
+async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None):
     enabled = {p.name for p in available()}
 
     async with httpx.AsyncClient() as client:
@@ -105,9 +124,11 @@ async def data_puller(file_hash: str, cache):
             vt_data = await _cached(
                 cache, "virustotal", file_hash, lambda: get_vt(client, file_hash)
             )
-            ips = contacted_ips(vt_data)
+            vt_ips = contacted_ips(vt_data)
         else:
-            vt_data, ips = make_error("VirusTotal key not set"), []
+            vt_data, vt_ips = make_error("VirusTotal key not set"), []
+
+        ips = _merge_ips(vt_ips, extra_ips)
 
         ipdb_task = (
             asyncio.gather(*(

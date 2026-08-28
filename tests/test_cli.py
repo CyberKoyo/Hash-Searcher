@@ -69,7 +69,7 @@ def _stub_entry(monkeypatch):
 
 
 def _stub_data_puller(monkeypatch, raw):
-    async def _fake(file_hash, cache):
+    async def _fake(file_hash, cache, extra_ips=None):
         return raw
     monkeypatch.setattr("hash_searcher.cli.data_puller", _fake)
 

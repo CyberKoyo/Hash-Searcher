@@ -119,10 +119,18 @@ async def run_cli(argv: list[str] | None = None) -> int:
             # the tool can fail to run at all.
             static_report = None
 
+    # strings-derived IOCs feed back into the enrichment path: a sample
+    # nobody has ever uploaded to VT still yields IPs to look up. static_report
+    # is None on --no-static/a bare hash, and .strings is None when that one
+    # analyzer landed in `failed` -- neither may crash this pass.
+    extra_ips = None
+    if static_report is not None and static_report.strings is not None:
+        extra_ips = static_report.strings.iocs.ips
+
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
-        raw = await data_puller(file_hash, cache)
+        raw = await data_puller(file_hash, cache, extra_ips=extra_ips)
     finally:
         cache.close()
     if not raw:

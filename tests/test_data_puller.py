@@ -213,6 +213,88 @@ async def test_no_cache_disables_caching_entirely(monkeypatch, tmp_path):
     assert len(calls) == 2
 
 
+async def test_ips_harvested_from_strings_reach_abuseipdb(monkeypatch):
+    """Closing the loop: a sample nobody has uploaded still yields IPs to
+    enrich, which is the entire argument for the strings analyzer."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.cache import ResponseCache
+
+    seen = []
+
+    async def fake_ipdb(client, ip):
+        seen.append(ip)
+        return {"data": {"ipAddress": ip, "abuseConfidenceScore": 10}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("abuseipdb")])
+
+    await data_puller("a" * 64, ResponseCache(enabled=False),
+                      extra_ips=["198.51.100.10"])
+    assert seen == ["198.51.100.10"]
+
+
+async def test_extra_ips_merge_with_vts_own_without_duplicating(monkeypatch):
+    """An IP that VT reported AND the strings contain must be looked up once,
+    not twice -- AbuseIPDB's free tier is 1000 requests/day."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.cache import ResponseCache
+
+    seen = []
+
+    async def fake_ipdb(client, ip):
+        seen.append(ip)
+        return {"data": {"ipAddress": ip}}
+
+    async def fake_vt(client, file_hash):
+        return {"data": {"relationships": {"contacted_ips": {
+            "data": [{"id": "198.51.100.10"}]
+        }}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("abuseipdb")])
+
+    await data_puller("a" * 64, ResponseCache(enabled=False),
+                      extra_ips=["198.51.100.10", "203.0.113.7"])
+    assert seen == ["198.51.100.10", "203.0.113.7"]
+
+
+async def test_extra_ips_merge_is_capped_at_ioc_limit(monkeypatch):
+    """extra_ips can arrive already at Task 6's 50-entry cap. VT can also
+    report its own IPs. The merge must not concatenate the two into
+    something bigger than the cap -- that is the exact failure this task
+    exists to prevent."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.api.api_data_puller import IOC_LIMIT
+    from hash_searcher.cache import ResponseCache
+
+    seen = []
+
+    async def fake_ipdb(client, ip):
+        seen.append(ip)
+        return {"data": {"ipAddress": ip}}
+
+    async def fake_vt(client, file_hash):
+        return {"data": {"relationships": {"contacted_ips": {
+            "data": [{"id": "10.0.0.1"}, {"id": "10.0.0.2"}]
+        }}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("abuseipdb")])
+
+    extra = [f"203.0.113.{i}" for i in range(IOC_LIMIT)]  # already at the cap
+    await data_puller("a" * 64, ResponseCache(enabled=False), extra_ips=extra)
+
+    assert len(seen) == IOC_LIMIT
+    # VT's own IPs come first and must not be pushed out by the cap.
+    assert seen[0] == "10.0.0.1"
+    assert seen[1] == "10.0.0.2"
+
+
 async def test_a_failed_virustotal_call_is_not_cached(monkeypatch, tmp_path):
     """cache.put refuses error payloads; this pins that the new VT path
     actually relies on that rather than storing a transient failure."""
