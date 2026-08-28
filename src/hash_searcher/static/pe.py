@@ -32,6 +32,25 @@ SUSPICIOUS_IMPORTS = {
 _LOOKUP = {name.lower(): name for name in SUSPICIOUS_IMPORTS}
 EXECUTABLE_FLAG = 0x20000000  # IMAGE_SCN_MEM_EXECUTE
 
+# branch-review.md I1: section.get_data() is bounded only by the section's
+# own (attacker-controlled) SizeOfRawData, and the list comprehension below
+# runs it once per section -- pefile.MAX_SECTIONS is 2048, so an unbounded
+# per-section read is O(sections x file size). Measured on this branch
+# before this cap: a synthetic 4MB PE with 600 sections each mapping the
+# whole file took 167.26s; at pefile's 2048-section ceiling this is hours,
+# and it raises no exception, so the runner's try/except never catches it.
+#
+# 16 KiB keeps this bounded even at pefile's hard 2048-section ceiling:
+# measured end to end through analyze_pe() against a synthetic PE where
+# every section falsely claims to map the whole file (the same shape as
+# the 167.26s repro above) -- 600 sections 1.46s, 2048 sections 4.22s.
+# A 64 KiB cap was tried first and measured 16.45s at 2048 sections; still
+# bounded, but noticeably more "the tool is thinking" than "the tool
+# returned". Entropy converges long before either number, the same
+# reasoning entropy.py already gives for its own (much larger) file-level
+# cap -- 16 KiB is not a precision compromise, only a speed one.
+SECTION_ENTROPY_CAP = 16 * 1024
+
 
 def suspicious(imports: dict[str, list[str]]) -> list[str]:
     """Canonical names of the suspicious APIs present, sorted for stability."""
@@ -76,15 +95,27 @@ def analyze_pe(path: str) -> PEStaticReport | None:
             for imp in entry.imports if imp.name
         ]
 
-    sections = [
-        PESection(
+    truncated_sections = 0
+    sections = []
+    for section in binary.sections:
+        # `length=` bounds the bytes pefile actually slices out of the
+        # mapped file for this section -- unlike `get_data()[:cap]`, which
+        # would still materialise the full (attacker-controlled) section
+        # first and only then discard the rest.
+        raw = section.get_data(length=SECTION_ENTROPY_CAP)
+        if section.SizeOfRawData and section.SizeOfRawData > SECTION_ENTROPY_CAP:
+            truncated_sections += 1
+        sections.append(PESection(
             name=(section.Name or b"").rstrip(b"\x00").decode("utf-8", "replace"),
             size=section.SizeOfRawData,
-            entropy=round(shannon(section.get_data()), 2),
+            entropy=round(shannon(raw), 2),
             executable=bool(section.Characteristics & EXECUTABLE_FLAG),
-        )
-        for section in binary.sections
-    ]
+        ))
+    section_note = (
+        f"entropy computed over the first {SECTION_ENTROPY_CAP} bytes of "
+        f"{truncated_sections} of {len(sections)} sections (Global Constraint 5)"
+        if truncated_sections else ""
+    )
 
     ts = getattr(binary.FILE_HEADER, "TimeDateStamp", 0)
     compiled = None
@@ -104,4 +135,5 @@ def analyze_pe(path: str) -> PEStaticReport | None:
         sections=sections,
         compiled=compiled,
         suspicious_imports=suspicious(imports),
+        section_entropy_note=section_note,
     )

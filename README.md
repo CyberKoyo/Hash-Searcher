@@ -52,13 +52,19 @@ Accepts MD5, SHA-1, and SHA-256 digests, or a path to a file.
 
 🔬 Static Analysis
 
-Before any provider is contacted, a supplied file (not a bare hash) is read
-locally and passed through a handful of static analyzers. None of them
-execute, unpack, or otherwise run the sample -- they only read bytes and
-parse structures. Every analyzer takes a size cap, so a hostile input
-cannot hang the tool or exhaust memory.
+Before any provider is contacted -- and even with no API key configured at
+all -- a supplied file (not a bare hash) is read locally and passed through
+a handful of static analyzers. None of them execute, unpack, or otherwise
+run the sample -- they only read bytes and parse structures. Every analyzer
+bounds how much it reads or how long it can run: entropy and strings cap
+the bytes read from the file, PE section entropy caps the bytes hashed per
+section, and YARA scanning caps both the number of rule files it will
+consider and the total wall-clock time it can spend across all of them --
+a hostile input, or an accidental `--yara-rules ~`, cannot hang the tool.
+When a cap actually truncates something, the report says so in a `note`
+rather than silently showing a partial result as a complete one.
 
-Two of the analyzers always run, using only the standard library:
+Three of the analyzers always run, using only the standard library:
 
 - **Entropy**: Shannon entropy over the first 8 MiB. Above 7.2 bits/byte is
   flagged `packed` -- compressed or encrypted data, which for an executable
@@ -107,10 +113,24 @@ Run `hash-searcher` with `--no-static` to skip this pass entirely.
 Static analysis is heuristic, not a verdict. High entropy, an unusual
 import, or a YARA hit is something to look at, not proof of anything --
 **a packed binary is not automatically malicious**; plenty of legitimate
-software is packed or compressed. These findings do feed the score
-(see 🎯 Verdict below) and can pull a file that VT has never seen out of
-the default `UNKNOWN`, because they are evidence the tool itself examined
-the file and found something -- not evidence the file is bad.
+software is packed or compressed. All three findings feed the score (see
+🎯 Verdict below), but only `suspicious_imports` and `yara_local` can pull
+a file that VT has never seen out of the default `UNKNOWN` on their own --
+each is independent evidence of malice by itself. `packed` still adds its
+points to the score once something else has already escaped `UNKNOWN`, but
+being packed alone is never enough: it means the tool could not see inside
+the file, not that it found something bad there, so a packed installer VT
+has never seen still reports `UNKNOWN` rather than a false `CLEAN`.
+
+Static analysis runs even when no provider is reachable at all -- no
+network, no `.env`, none of `TOTAL_KEY`/`OTX_KEY`/`IPDB_KEY`/`CENSYS_KEY`
+set. In that case the tool prints "Continuing with local static analysis
+results only," still renders a `STATIC ANALYSIS` section and a verdict
+from whatever the local analyzers found, and exits accordingly -- it does
+not print `Invalid hash` or bail with nothing to show. The same is true
+when VirusTotal has simply never seen the file (a 404 with no OTX pulses):
+the online sources are reported as having no record, but a populated
+static report is never discarded to make room for that message.
 
 🎯 Verdict
 
@@ -123,7 +143,7 @@ sum:
 | `MALICIOUS`  | score >= 50 | Strong, corroborated evidence. |
 | `SUSPICIOUS` | score >= 15 | Something fired, but not enough to convict. |
 | `CLEAN`      | below that  | VT has a record of the file and the evidence did not reach the suspicious threshold. |
-| `UNKNOWN`    | VT has no record of the file **and** local static analysis found nothing | Nobody has analyzed this sample, online or locally. Not the bottom of the scale — a distinct answer, and it preempts the bands: OTX pulses are reported as a signal but cannot make an unanalyzed file `CLEAN`. A `packed`, `suspicious_imports`, or `yara_local` finding is evidence the tool itself examined the file, so it escapes this guard even with zero VT record — the file falls through to `CLEAN`/`SUSPICIOUS`/`MALICIOUS` on the score like any other. |
+| `UNKNOWN`    | VT has no record of the file **and** local static analysis found no `suspicious_imports` or `yara_local` finding | Nobody has analyzed this sample, online or locally. Not the bottom of the scale — a distinct answer, and it preempts the bands: OTX pulses are reported as a signal but cannot make an unanalyzed file `CLEAN`, and neither can `packed` alone. A `suspicious_imports` or `yara_local` finding is independent evidence the tool itself examined the file and found something, so it escapes this guard even with zero VT record — the file falls through to `CLEAN`/`SUSPICIOUS`/`MALICIOUS` on the score like any other. `packed` still contributes its points once escaped this way, but cannot cause the escape by itself. |
 
 The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
 

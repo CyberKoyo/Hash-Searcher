@@ -293,3 +293,35 @@ def test_a_static_report_with_no_findings_stays_unknown():
     report = _report()
     report.static = StaticReport(path="x", size=1, sha256="a" * 64)
     assert score(report).level == "UNKNOWN"
+
+
+def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
+    """branch-review.md I2 ruling: before this, a packed-only static report
+    escaped the UNKNOWN guard (packed's 10 points is a fired signal) and
+    the score itself totalled 10, under SUSPICIOUS_AT (15) -- so the level
+    fell all the way through to CLEAN, exit 0. That is the failure mode the
+    UNKNOWN guard exists to prevent, reached through a different signal
+    than the OTX case score()'s docstring already explains: 'packed' means
+    the tool could not see inside the file, not that it found evidence of
+    anything, and the README's own caveat is that a packed binary is not
+    automatically malicious. suspicious_imports and yara_local are each
+    independent evidence on their own (see the other tests in this class)
+    and correctly do still escape the guard -- only 'packed' alone must
+    not. This pins the resulting LEVEL, not just which signal fired --
+    the gap the reviewer found in
+    test_static_findings_alone_lift_a_sample_out_of_unknown, which only
+    ever exercised yara_local and asserted nothing about packed."""
+    from hash_searcher.models import EntropyReport, StaticReport
+
+    report = _report()  # vt.found is False, no OTX pulses
+    report.static = StaticReport(
+        path="x", size=1, sha256="a" * 64,
+        entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
+    )
+    verdict = score(report)
+    assert verdict.level == "UNKNOWN"
+    # The signal still fires and still carries its points -- W_PACKED keeps
+    # contributing once something else has escaped the guard. Only the
+    # ESCAPE is denied to it, not its weight.
+    assert any(s.name == "packed" and s.points == 10 for s in verdict.signals)
+    assert verdict.score == 10

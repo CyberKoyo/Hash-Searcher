@@ -100,6 +100,7 @@ def _static_dict(static: StaticReport) -> dict:
         "filetype": asdict(static.filetype) if static.filetype else None,
         "pe": asdict(static.pe) if static.pe else None,
         "yara": [asdict(hit) for hit in static.yara],
+        "yara_note": static.yara_note,
         "strings": asdict(static.strings) if static.strings else None,
         "skipped": static.skipped,
         "failed": static.failed,

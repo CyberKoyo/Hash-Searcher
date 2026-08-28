@@ -176,13 +176,26 @@ SIGNALS = (
     _packed_signal, _suspicious_imports_signal, _yara_local_signal,
 )
 
-# The signal names produced by report.static, and only those. score() checks
-# membership of a *fired* signal's name against this set rather than
-# re-inspecting report.static's fields by hand -- adding a fourth static
-# signal means adding its maker to SIGNALS and its name here, in one place,
-# rather than teaching the UNKNOWN guard a new field path that can drift out
-# of sync with what the signal functions above actually check.
-STATIC_SIGNAL_NAMES = frozenset({"packed", "suspicious_imports", "yara_local"})
+# The static signal names allowed to escape the UNKNOWN guard below. This is
+# deliberately NOT every signal report.static can produce -- "packed" is a
+# real signal (see W_PACKED above, and _packed_signal), and still adds its
+# points to the score whenever something else has already escaped UNKNOWN,
+# but it is excluded here on purpose (branch-review.md I2). The UNKNOWN
+# guard's contract is "independent evidence this file is malicious", not
+# merely "this tool looked" -- suspicious_imports and yara_local both clear
+# SUSPICIOUS_AT on their own and are evidence of that kind; a packed file is
+# merely opaque, and the README's own caveat is that packed is not
+# automatically malicious. Before this exclusion, a packed-only sample with
+# no VT record scored 10 (W_PACKED, under SUSPICIOUS_AT), fell through the
+# guard, and landed in CLEAN with exit 0 -- the exact failure mode this
+# guard exists to prevent, just reached through a different signal than OTX
+# (see the comment in score() below). Raising W_PACKED to SUSPICIOUS_AT was
+# considered and rejected: that would call every packed installer
+# SUSPICIOUS on its own, a much stronger claim.
+#
+# Adding a fourth static signal means adding its maker to SIGNALS, and --
+# only if it is independent evidence of malice on its own -- its name here.
+STATIC_SIGNAL_NAMES = frozenset({"suspicious_imports", "yara_local"})
 
 
 def score(report: Report) -> Verdict:

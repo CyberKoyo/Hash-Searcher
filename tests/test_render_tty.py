@@ -634,6 +634,27 @@ def test_render_static_names_what_was_skipped_and_failed(capsys):
     assert "Failed:  strings" in out
 
 
+def test_render_static_prints_the_yara_truncation_note(capsys):
+    """branch-review.md I5: a partial YARA scan must never look identical to
+    a complete one that simply found nothing."""
+    from hash_searcher.models import StaticReport, YaraHit
+    from hash_searcher.render.tty import render_static
+
+    report = Report(
+        indicator="test", generated_at="x", vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"), ips={}, hosts=[], whois=[],
+        static=StaticReport(
+            path="x", size=1, sha256="a" * 64,
+            yara=[YaraHit(rule="Emotet_Loader")],
+            yara_note="stopped after 200 of 500 rule files",
+        ),
+    )
+    render_static(report)
+    out = capsys.readouterr().out
+    assert "YARA:   Emotet_Loader (default)\n" in out
+    assert "YARA:   stopped after 200 of 500 rule files\n" in out
+
+
 def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):
     from hash_searcher.models import CensysHost
     from hash_searcher.render.tty import render_hosts

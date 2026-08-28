@@ -66,7 +66,10 @@ def test_analyze_runs_every_available_analyzer_and_names_the_skips(tmp_path):
     assert report.entropy is not None      # stdlib only, always runs
     assert report.filetype is not None     # stdlib fallback, always runs
     for name in report.skipped:
-        assert name in {"pefile", "yara", "magic"}
+        # Analyzer field names, not library names -- "pe" not "pefile".
+        # See runner.py's module docstring and branch-review.md's minor
+        # skipped/failed-namespace finding.
+        assert name in {"pe", "yara", "magic"}
 
 
 def test_one_failing_analyzer_does_not_take_down_the_others(tmp_path, monkeypatch):
@@ -108,7 +111,12 @@ def test_a_missing_library_is_skipped_not_failed(tmp_path, monkeypatch):
         target.write_bytes(b"MZ" + b"\x00" * 64)
 
         report = runner.analyze(str(target))
-        assert "pefile" in report.skipped
+        # Named by the analyzer field ("pe"), not the library ("pefile") --
+        # the assertion the docstring above already promised, but which the
+        # code did not actually deliver until this round (branch-review.md
+        # minor finding: skipped/failed used two different namespaces).
+        assert "pe" in report.skipped
+        assert "pefile" not in report.skipped
         assert "pefile" not in report.failed
         assert "pe" not in report.failed
         assert report.pe is None
@@ -126,3 +134,28 @@ def test_analyze_hashes_the_file_it_analyzed(tmp_path):
     target.write_bytes(payload)
 
     assert analyze(str(target)).sha256 == hashlib.sha256(payload).hexdigest()
+
+
+def test_analyze_unpacks_the_yara_hits_and_note_into_the_report(tmp_path, monkeypatch):
+    """analyze_yara now returns (hits, note) rather than a bare list
+    (branch-review.md I5) -- analyze() must unpack it into StaticReport.yara
+    and StaticReport.yara_note rather than stashing the tuple itself where a
+    list of YaraHit is expected."""
+    from hash_searcher.models import YaraHit
+    from hash_searcher.static import runner
+
+    def fake_yara(path, rules_path):
+        return [YaraHit(rule="Fake_Rule")], "stopped after 1 of 2 rule files"
+
+    monkeypatch.setattr(runner, "analyze_yara", fake_yara)
+    # Only "yara" -- not "pefile" too, which would send analyze_pe past its
+    # own capability gate and into a real `import pefile` this venv may not
+    # have, an unrelated failure this test has no interest in.
+    monkeypatch.setattr(runner.capabilities, "have", lambda name: name == "yara")
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"anything")
+
+    report = runner.analyze(str(target))
+    assert [h.rule for h in report.yara] == ["Fake_Rule"]
+    assert report.yara_note == "stopped after 1 of 2 rule files"

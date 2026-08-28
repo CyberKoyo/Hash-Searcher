@@ -5,13 +5,19 @@ One assembly point, so `cli.py` calls a single `analyze()` and every
 print.
 
 `skipped` and `failed` name analyzers, not libraries, and they answer
-different questions. `skipped` means the analyzer's capability gate says
-the library it needs is not importable -- read straight off
-`capabilities.have(...)` before the analyzer is ever called. `failed`
-means the analyzer *was* called and raised. An analyzer can never land in
-both: a skipped analyzer is never invoked, so it can never also fail, and
-`entropy`/`filetype`/`strings` carry no capability gate at all -- stdlib
-only -- so for them only `failed` is reachable.
+different questions. Both use the report field name (`pe`, `yara`, ...)
+from `_ANALYZERS` below, even though a skip is decided by checking a
+*library* name (`pefile`, `yara`, ...) -- deliberately: a JSON consumer
+that sees `"pe"` in `failed` needs `"pe"`, not `"pefile"`, in `skipped` to
+tell whether the same analyzer is meant, and `"yara"` names both a library
+and its analyzer, which would otherwise hide the inconsistency in the one
+case most likely to be checked by hand. `skipped` means the analyzer's
+capability gate says the library it needs is not importable -- read
+straight off `capabilities.have(...)` before the analyzer is ever called.
+`failed` means the analyzer *was* called and raised. An analyzer can never
+land in both: a skipped analyzer is never invoked, so it can never also
+fail, and `entropy`/`filetype`/`strings` carry no capability gate at all --
+stdlib only -- so for them only `failed` is reachable.
 """
 
 import os
@@ -58,16 +64,19 @@ def analyze(path: str, yara_rules: str | None = None) -> StaticReport:
     results: dict[str, object] = {}
     skipped: list[str] = []
     failed: list[str] = []
+    yara_note = ""
 
     for field, capability, func_name in _ANALYZERS:
         if capability is not None and not capabilities.have(capability):
-            skipped.append(capability)
+            # Named by the analyzer field, not the library -- see the
+            # module docstring above.
+            skipped.append(field)
             continue
 
         analyzer = globals()[func_name]
         try:
             if func_name == "analyze_yara":
-                results[field] = analyzer(path, yara_rules)
+                results[field], yara_note = analyzer(path, yara_rules)
             else:
                 results[field] = analyzer(path)
         except Exception:
@@ -84,6 +93,7 @@ def analyze(path: str, yara_rules: str | None = None) -> StaticReport:
         filetype=results.get("filetype"),
         pe=results.get("pe"),
         yara=results.get("yara", []),
+        yara_note=yara_note,
         strings=results.get("strings"),
         skipped=skipped,
         failed=failed,

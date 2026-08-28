@@ -176,6 +176,7 @@ def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
         path="/tmp/sample.exe", size=2048, sha256="a" * 64,
         entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
         yara=[YaraHit(rule="Emotet_Loader")],
+        yara_note="stopped after 200 of 500 rule files",
         skipped=["magic"], failed=["pe"],
     )
     path = tmp_path / "out.json"
@@ -189,6 +190,7 @@ def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
     assert static["yara"] == [
         {"rule": "Emotet_Loader", "namespace": "default", "tags": []}
     ]
+    assert static["yara_note"] == "stopped after 200 of 500 rule files"
     # Present-but-null for an analyzer that never produced a result, same
     # rule _vt_dict already follows: a consumer can tell "this analyzer had
     # nothing" from "this tool never ran it".
@@ -197,6 +199,28 @@ def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
     assert static["strings"] is None
     assert static["skipped"] == ["magic"]
     assert static["failed"] == ["pe"]
+
+
+def test_static_pe_block_carries_the_section_entropy_note(sample_report, tmp_path):
+    """branch-review.md I1: a silently truncated number is worse than a
+    stated one -- the note must actually reach the JSON consumer."""
+    from hash_searcher.models import PEStaticReport, StaticReport
+    from hash_searcher.render.json_out import write_json
+
+    sample_report.static = StaticReport(
+        path="/tmp/sample.exe", size=2048, sha256="a" * 64,
+        pe=PEStaticReport(
+            section_entropy_note="entropy computed over the first 16384 "
+                                  "bytes of 2 of 2 sections (Global Constraint 5)",
+        ),
+    )
+    path = tmp_path / "out.json"
+    write_json(sample_report, str(path))
+    static = json.loads(path.read_text())["report"]["static"]
+    assert static["pe"]["section_entropy_note"] == (
+        "entropy computed over the first 16384 bytes of 2 of 2 sections "
+        "(Global Constraint 5)"
+    )
 
 
 def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):

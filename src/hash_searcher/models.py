@@ -206,7 +206,17 @@ class PEStaticReport:
     sections: list[PESection] = field(default_factory=list)
     compiled: str | None = None
     suspicious_imports: list[str] = field(default_factory=list)
+    #: Set only when this PE could not be parsed at all -- mutually
+    #: exclusive with a populated `sections`/`imports`. Distinct from
+    #: `section_entropy_note` below, which can be set on an otherwise
+    #: successful parse.
     note: str = ""
+    #: Non-empty when one or more sections' entropy was computed over a
+    #: bounded prefix rather than the section's full (attacker-controlled)
+    #: claimed size -- see static/pe.py's SECTION_ENTROPY_CAP and
+    #: branch-review.md I1. A silently truncated number is worse than a
+    #: stated one.
+    section_entropy_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -248,6 +258,12 @@ class StaticReport:
     filetype: FileTypeReport | None = None
     pe: PEStaticReport | None = None
     yara: list[YaraHit] = field(default_factory=list)
+    #: Non-empty when the YARA pass stopped before considering every rule
+    #: file under the rules directory -- the aggregate wall-clock budget or
+    #: the rule-file count cap was hit. See static/yara_scan.py and
+    #: branch-review.md I5: a partial scan must never be reported as a
+    #: complete one.
+    yara_note: str = ""
     strings: StringsReport | None = None
     skipped: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)

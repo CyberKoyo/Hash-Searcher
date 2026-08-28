@@ -163,9 +163,13 @@ def render_static(report: Report) -> None:
                   f"compiled {pe.compiled or 'N/A'}")
             if pe.suspicious_imports:
                 print(f"Suspicious imports: {', '.join(pe.suspicious_imports)}")
+        if pe.section_entropy_note:
+            print(f"PE: {pe.section_entropy_note}")
 
     for hit in static.yara:
         print(f"YARA:   {hit.rule} ({hit.namespace})")
+    if static.yara_note:
+        print(f"YARA:   {static.yara_note}")
 
     if static.strings:
         iocs = static.strings.iocs

@@ -137,3 +137,74 @@ def test_many_dotted_quads_do_not_make_ip_matching_quadratic():
     elapsed = time.monotonic() - started
 
     assert elapsed < 3.0, f"took {elapsed:.2f}s -- quadratic IP scanning regressed"
+
+
+# --- branch-review.md I3: analyze_strings itself had zero direct coverage ----
+
+
+def test_analyze_strings_returns_a_report_with_the_expected_count_and_iocs(tmp_path):
+    """The public entry point named in the plan's Interfaces, exercised
+    directly for the first time -- everything above this line tests
+    extract_strings/harvest_iocs, never the function that wires them
+    together and reads the file."""
+    from hash_searcher.static.strings import analyze_strings
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(
+        b"\x00" * 4
+        + b"connect to 198.51.100.10 for c2.evil.example now please\x00"
+        + b"\x00" * 4
+    )
+
+    report = analyze_strings(str(target))
+    assert report.count == 1
+    assert report.iocs.ips == ["198.51.100.10"]
+    assert report.iocs.domains == ["c2.evil.example"]
+
+
+def test_analyze_strings_reads_at_most_max_bytes(tmp_path, monkeypatch):
+    """Global Constraint 5: analyze_strings has no capability gate -- it
+    runs on every file the CLI is pointed at -- so its cap is load-bearing
+    for every run, not just a with-[static] one.
+
+    Modeled directly on test_entropy_reads_at_most_the_cap: counting bytes
+    actually read, not comparing output, because a truncated read of
+    uniform filler data can look identical to an untruncated one either
+    way. `grep -rn "MAX_BYTES\\|analyze_strings" tests/` returned nothing
+    before this test existed, and mutating `handle.read(MAX_BYTES)` to
+    `handle.read()` left the whole suite green.
+
+    `strings.MAX_BYTES` (imported from entropy.py, real default 8 MiB) is
+    patched down to a small value rather than writing an 8 MiB+ fixture --
+    `analyze_strings` has no `cap` parameter of its own the way
+    `file_entropy` does, but it re-reads the module-global name on every
+    call, so patching the module attribute has the same effect entropy's
+    test gets by passing `cap=4096` directly.
+    """
+    from hash_searcher.static import strings
+
+    monkeypatch.setattr(strings, "MAX_BYTES", 4096)
+    target = tmp_path / "big.bin"
+    target.write_bytes(b"A" * (1024 * 1024))
+
+    read = []
+    real_open = open
+
+    def counting_open(path, *args, **kwargs):
+        handle = real_open(path, *args, **kwargs)
+        real_read = handle.read
+
+        def tracked(n=-1):
+            chunk = real_read(n)
+            read.append(len(chunk))
+            return chunk
+
+        handle.read = tracked
+        return handle
+
+    strings.open = counting_open          # module-level shadow, undone below
+    try:
+        strings.analyze_strings(str(target))
+    finally:
+        del strings.open
+    assert sum(read) <= 4096
