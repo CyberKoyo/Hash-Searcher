@@ -209,6 +209,13 @@ class PEStaticReport:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class YaraHit:
+    rule: str
+    namespace: str = "default"
+    tags: list[str] = field(default_factory=list)
+
+
 @dataclass
 class Report:
     indicator: str
