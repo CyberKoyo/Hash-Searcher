@@ -24,11 +24,12 @@ def rules_dir() -> Path:
 def analyze_yara(path: str, rules_path: str | None = None) -> list[YaraHit]:
     if not capabilities.have("yara"):
         return []
-    import yara
 
     directory = Path(rules_path) if rules_path else rules_dir()
     if not directory.is_dir():
         return []
+
+    import yara
 
     hits: list[YaraHit] = []
     for rule_file in sorted(directory.rglob("*")):

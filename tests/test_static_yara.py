@@ -22,14 +22,21 @@ def test_yara_returns_nothing_without_the_library(tmp_path, monkeypatch):
     assert yara_scan.analyze_yara(str(target), str(tmp_path)) == []
 
 
-def test_yara_returns_nothing_when_the_rules_directory_is_absent(tmp_path):
+def test_yara_returns_nothing_when_the_rules_directory_is_absent(tmp_path, monkeypatch):
     """No rules is the default state for a fresh install; it must be a quiet
-    empty result, not an error the user has to silence."""
-    from hash_searcher.static.yara_scan import analyze_yara
+    empty result, not an error the user has to silence.
 
+    capabilities.have is monkeypatched to True so this test reaches and
+    proves the directory-existence guard itself, in every environment --
+    including one where yara-python isn't installed -- rather than passing
+    vacuously because the capability check short-circuits first.
+    """
+    from hash_searcher.static import yara_scan
+
+    monkeypatch.setattr(yara_scan.capabilities, "have", lambda name: True)
     target = tmp_path / "sample.bin"
     target.write_bytes(b"anything")
-    assert analyze_yara(str(target), str(tmp_path / "no-such-dir")) == []
+    assert yara_scan.analyze_yara(str(target), str(tmp_path / "no-such-dir")) == []
 
 
 @requires("yara")
