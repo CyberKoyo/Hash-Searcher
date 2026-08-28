@@ -296,23 +296,19 @@ async def test_a_full_run_on_a_malicious_file_exits_two(monkeypatch, fixture_jso
 
 # --- Phase 3: static analysis wiring ----------------------------------------
 #
-# test_static_analysis_runs_before_the_network_pass and
-# test_the_unknown_guard_mutation_proof (see below) do NOT stub check_env or
-# resolve_hash -- they run the real path against a real tmp_path file, which
-# is the whole point of the ordering test. The other two tests below deviate
-# from the brief's literal code by additionally stubbing data_puller (via
-# _stub_entry/_stub_data_puller): this repo's .env carries real API keys
-# (confirmed via `bool(os.getenv(...))`, never printed), so an unstubbed
-# data_puller would make a live network call -- a violation of Global
-# Constraint 7 (the suite is offline and needs no key). The brief's example
-# code for those two tests did not anticipate that; stubbing here keeps the
-# same assertion (`analyze` was never called) while keeping the run offline.
+# Every test below stubs check_env via _stub_entry -- the suite must pass
+# offline with no .env and no provider keys set (Global Constraint 7). A
+# previous version of test_static_analysis_runs_before_the_network_pass left
+# check_env unstubbed and passed only because this repo's own .env holds
+# real keys; on a runner with no keys check_env() returned False and the
+# whole run bailed before `order` was ever touched. See branch-review.md C1.
 
 async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatch):
     """The whole point of the phase. If the static pass ran after
     data_puller, an early bail on 'Invalid hash' would skip it entirely --
     which is exactly the case this phase exists to serve."""
     order = []
+    _stub_entry(monkeypatch)
     monkeypatch.setattr("hash_searcher.cli.analyze",
                         lambda path, yara_rules=None: order.append("static"))
 
@@ -418,6 +414,100 @@ async def test_a_static_analysis_failure_does_not_block_the_network_pass(
     out = capsys.readouterr().out
     assert "STATIC ANALYSIS" not in out
     assert exit_code == EXIT_CLEAN
+
+
+# --- C3 (branch-review.md): neither bail may discard a computed static
+# report. Both tests below pin the exit code to exit_code(score(report)) --
+# the same mechanism the full online path already uses -- rather than to a
+# fixed EXIT_NO_DATA, so a shell script can rely on the code actually
+# reflecting what the static pass found.
+
+async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailing(
+        tmp_path, monkeypatch, capsys):
+    """With no provider configured, check_env() returns False. That used to
+    return EXIT_NO_DATA above the static-analysis block entirely, so with no
+    keys static analysis never ran at all. It must now render whatever the
+    static pass found and never touch the network."""
+    from hash_searcher.models import PEStaticReport, StaticReport
+
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: False)
+    monkeypatch.setattr(
+        "hash_searcher.cli.resolve_hash",
+        lambda indicator, password: ["deadbeef"],
+    )
+
+    fake = StaticReport(
+        path="x", size=4, sha256="a" * 64,
+        pe=PEStaticReport(suspicious_imports=[
+            "VirtualAlloc", "WriteProcessMemory", "CreateRemoteThread",
+        ]),
+    )
+    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+
+    called = []
+
+    async def fake_puller(*a, **k):
+        called.append(1)
+        return {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []}
+
+    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    exit_code = await run_cli([str(target), "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert called == []  # no provider configured -- data_puller must never run
+    assert "STATIC ANALYSIS" in out
+    assert exit_code == EXIT_SUSPICIOUS
+
+
+async def test_check_env_false_with_no_static_report_still_bails(monkeypatch):
+    """No file, no keys: nothing was computed and there is nothing to
+    render, so the original bail is still correct here."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: False)
+
+    exit_code = await run_cli(["a" * 64, "--no-cache"])
+
+    assert exit_code == EXIT_NO_DATA
+
+
+async def test_vt_404_with_a_static_report_renders_it_instead_of_bailing(
+        tmp_path, monkeypatch, capsys):
+    """VT 404 with no OTX pulses is the definition of 'a sample nobody has
+    ever uploaded' -- the exact case this phase exists to serve. The
+    analyzer ran and produced findings; the tool must not throw them away
+    and print 'Invalid hash'."""
+    from hash_searcher.models import PEStaticReport, StaticReport
+
+    _stub_entry(monkeypatch)
+    fake = StaticReport(
+        path="x", size=4, sha256="a" * 64,
+        pe=PEStaticReport(suspicious_imports=[
+            "VirtualAlloc", "WriteProcessMemory", "CreateRemoteThread",
+        ]),
+    )
+    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+
+    raw = {
+        "vt": make_error("Hash not found in GetTotal", 404),
+        "otx": {},
+        "ipdb": [],
+        "censys": [],
+        "ips": [],
+        "hash": "deadbeef",
+    }
+    _stub_data_puller(monkeypatch, raw)
+    _stub_who_is(monkeypatch)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"data")
+    exit_code = await run_cli([str(target), "--no-cache"])
+
+    out = capsys.readouterr().out
+    assert "Invalid hash. Please check filename or hash." not in out
+    assert "STATIC ANALYSIS" in out
+    assert exit_code == EXIT_SUSPICIOUS
 
 
 async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, capsys):

@@ -24,7 +24,7 @@ IGNORED_DOMAINS = {
     "globalsign.com", "schemas.xmlsoap.org", "example.com",
 }
 
-# Filename extensions that read as a domain TLD to _DOMAIN_RE but are
+# Filename extensions that read as a domain TLD to _DOMAIN_FULL_RE but are
 # overwhelmingly PE import-table entries or plain filenames in practice --
 # kernel32.dll, readme.txt, setup.exe. Every extension here is checked to
 # NOT be a live TLD; .com is deliberately excluded even though it is also
@@ -53,8 +53,30 @@ _RFC1918 = (
 
 _IP_CANDIDATE_RE = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
-_DOMAIN_RE = re.compile(
-    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+
+# A long dotted chain that never ends in a valid TLD -- "11.11.11...", or any
+# sufficiently long "a.b.c.d..." -- makes _DOMAIN_FULL_RE's old use as a
+# finditer pattern catastrophically slow: the trailing [a-zA-Z]{2,} fails,
+# the engine backtracks through every "label." repetition of the `+` group
+# once for the failing match, and finditer then repeats that whole failing
+# match attempt from every subsequent starting position -- O(n) backtrack
+# steps times O(n) starting positions is O(n^2). Measured on this branch:
+# 6KB 0.27s, 12KB 1.08s, 24KB 7.09s, 48KB 25.54s; a 100KB crafted file did
+# not finish in 60s. See branch-review.md C2.
+#
+# The fix tokenises first with a linear, non-backtracking character class,
+# then fullmatch()es the real domain grammar against each token once. A
+# failing fullmatch still backtracks O(len(token)) internally, but that cost
+# is paid once per token instead of once per starting position within it, so
+# the whole pass is O(n) instead of O(n^2). This changes performance only --
+# _DOMAIN_TOKEN_RE's character class is exactly _DOMAIN_FULL_RE's alphabet
+# ([a-zA-Z0-9.-]), so tokenising can never split a candidate domain that the
+# old \b...\b pattern would have matched as one run, and fullmatch requiring
+# the whole token to match is equivalent to the old pattern's greedy `+`
+# always preferring the longest run starting at a given position.
+_DOMAIN_TOKEN_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9.-]*")
+_DOMAIN_FULL_RE = re.compile(
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\Z"
 )
 
 
@@ -83,15 +105,29 @@ def extract_strings(data: bytes, min_length: int = 6) -> list[str]:
     return found
 
 
+_VERSION_MARKER = "version "
+
+
 def _preceded_by_version_marker(text: str, start: int) -> bool:
     """True when the dotted quad at `start` reads like a version number.
 
     `1.2.3.4` is a syntactically valid, publicly routable address --
     `ipaddress` will happily accept it. The only thing separating "product
     version 1.2.3.4" from a real C2 address is the surrounding text.
+
+    Slices only the fixed-width window this actually needs -- at most
+    len("version ") characters -- rather than the original `text[:start]`.
+    That full-prefix slice-and-lower ran once per dotted-quad candidate
+    _find_ips finds, which is O(start) per call; on a long run of
+    dotted-quad-shaped text (the same "11.11.11..." adversarial input that
+    made _DOMAIN_RE quadratic, reached through a different function here)
+    that made the whole scan O(n^2): 100KB 0.60s, 200KB 1.96s, 400KB 5.28s,
+    800KB 29.43s. Bounding the slice makes each call O(1).
     """
-    prefix = text[:start]
-    return prefix[-1:] == "v" or prefix.lower().endswith("version ")
+    if start and text[start - 1] == "v":
+        return True
+    window_start = max(0, start - len(_VERSION_MARKER))
+    return text[window_start:start].lower() == _VERSION_MARKER
 
 
 def _is_uninteresting(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -155,8 +191,15 @@ def _is_ignored_domain(domain: str) -> bool:
 
 def _find_domains(text: str) -> list[str]:
     found = []
-    for match in _DOMAIN_RE.finditer(text):
-        domain = match.group(0).lower()
+    for match in _DOMAIN_TOKEN_RE.finditer(text):
+        # A trailing "." or "-" can never be part of a valid TLD, so it is
+        # always safe to strip -- this keeps "visit evil.example." (a
+        # sentence-ending period swept into the token) matching the same
+        # domain the old \b-anchored pattern found.
+        candidate = match.group(0).rstrip(".-")
+        if not _DOMAIN_FULL_RE.fullmatch(candidate):
+            continue
+        domain = candidate.lower()
         tld = domain.rsplit(".", 1)[-1]
         if tld in FILENAME_EXTENSIONS:
             continue

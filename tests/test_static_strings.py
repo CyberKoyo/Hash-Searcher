@@ -94,3 +94,46 @@ def test_subdomain_of_a_non_ignored_domain_is_still_reported():
     from hash_searcher.static.strings import harvest_iocs
 
     assert harvest_iocs(["c2.evil.example"]).domains == ["c2.evil.example"]
+
+
+def test_a_dotted_chain_with_no_valid_tld_does_not_hang():
+    """branch-review.md C2: the old _DOMAIN_RE backtracked catastrophically
+    on a long dotted chain that never ends in a letters-only TLD -- "11.11.
+    11...". This is real Global Constraint 5 bait: it needs no PE, no YARA,
+    and no optional library, and analyze_strings has no capability gate, so
+    it runs on every file the CLI is pointed at. Measured on the old regex:
+    6KB 0.27s, 12KB 1.08s, 24KB 7.09s, 48KB 25.54s -- clean 4x per 2x,
+    quadratic; a 100KB file did not finish in 60s."""
+    import time
+
+    from hash_searcher.static.strings import harvest_iocs
+
+    started = time.monotonic()
+    result = harvest_iocs(["11." * 20000])
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0, f"took {elapsed:.2f}s -- catastrophic backtracking regressed"
+    # "11.11.11...11" never ends in a letters-only TLD, so it is not a domain.
+    assert result.domains == []
+
+
+def test_many_dotted_quads_do_not_make_ip_matching_quadratic():
+    """Fixing _DOMAIN_RE surfaced a second O(n^2) on the exact same
+    adversarial "11.11.11..." shape, reached through _find_ips instead:
+    _preceded_by_version_marker used to slice the *entire* prefix up to
+    each candidate's start position and lower() it, once per dotted-quad
+    match. Measured before this fix at this exact input (~500KB): 9.31s --
+    the same quadratic signature as C2, just via a different function, and
+    still reachable within analyze_strings' 8 MiB MAX_BYTES cap. The fixed
+    code measures 0.4-0.5s here; the 3s budget leaves generous headroom for
+    a loaded CI runner while still catching a quadratic regression, which
+    gets dramatically worse (not just 6x slower) at this size."""
+    import time
+
+    from hash_searcher.static.strings import harvest_iocs
+
+    started = time.monotonic()
+    harvest_iocs(["11." * 166_667])  # ~500KB
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"took {elapsed:.2f}s -- quadratic IP scanning regressed"
