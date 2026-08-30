@@ -87,10 +87,10 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         "domains": [],
         "rdap": [],
         "crtsh": [],
-        # The keyless sources are absent from the patched pool here, so they
-        # degrade the same way a keyed provider does rather than firing.
-        "bazaar": make_error("MalwareBazaar was not queried"),
-        "threatfox": make_error("ThreatFox was not queried"),
+        # Absent from the patched pool here, so they were never asked --
+        # None rather than an error dict, which would claim a failed call.
+        "bazaar": None,
+        "threatfox": None,
         "shodan": {},
         "greynoise": {},
         "kev": {},
@@ -130,8 +130,8 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "domains": [],
         "rdap": [],
         "crtsh": [],
-        "bazaar": make_error("MalwareBazaar was not queried"),
-        "threatfox": make_error("ThreatFox was not queried"),
+        "bazaar": None,
+        "threatfox": None,
         "shodan": {},
         "greynoise": {},
         "kev": {},

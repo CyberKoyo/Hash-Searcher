@@ -201,9 +201,13 @@ async def run_cli(argv: list[str] | None = None) -> int:
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
         static=static_report,
-        bazaar=extract_bazaar(raw["bazaar"]),
-        threatfox=extract_threatfox(raw["threatfox"]),
-        certs=merge_crtsh(raw["crtsh"]),
+        # None all the way through when the source never ran: a section
+        # printed for a source nobody asked is indistinguishable from one
+        # that ran and found nothing.
+        bazaar=extract_bazaar(raw["bazaar"]) if raw["bazaar"] is not None else None,
+        threatfox=(extract_threatfox(raw["threatfox"])
+                   if raw["threatfox"] is not None else None),
+        certs=merge_crtsh(raw["crtsh"]) if raw["crtsh"] else None,
         shodan=shodan,
         greynoise=greynoise,
         kev=kev,

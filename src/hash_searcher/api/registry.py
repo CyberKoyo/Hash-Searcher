@@ -67,9 +67,12 @@ PROVIDERS: list[Provider] = [
     Provider("abuseipdb", "IPDB_KEY", ("ip",), get_ipdb),
     # Censys rate limits hard, so its calls stay serial with a gap between them.
     Provider("censys", "CENSYS_KEY", ("ip",), get_censys, serial_delay=2.0),
-    # Keyless: key_env=None, so it is always available. A day's TTL --
-    # a sample's family and tags do not change once abuse.ch has it.
-    Provider("malwarebazaar", None, ("hash",), get_bazaar, cache_ttl=86400),
+    # abuse.ch put its APIs behind a free account after this phase was
+    # planned, so these two carry a key_env and are skipped when it is
+    # unset -- firing them anyway would print a 401 on every keyless run.
+    # One account covers both. A day's TTL: a sample's family and tags do
+    # not change once abuse.ch has it.
+    Provider("malwarebazaar", "ABUSECH_KEY", ("hash",), get_bazaar, cache_ttl=86400),
     # A week: registration data changes on the order of years, and
     # rdap.org bootstraps through a redirect, so each lookup is two
     # requests rather than one.
@@ -81,7 +84,7 @@ PROVIDERS: list[Provider] = [
              serial_delay=2.0, cache_ttl=86400),
     # An hour, not a day: ThreatFox's C2 data turns over hourly, and a
     # stale family attribution is worse than none (Constraint 6).
-    Provider("threatfox", None, ("hash", "ip", "domain"), get_threatfox,
+    Provider("threatfox", "ABUSECH_KEY", ("hash", "ip", "domain"), get_threatfox,
              cache_ttl=3600),
     # Community works keyless at a lower rate limit; GREYNOISE_KEY raises it.
     # key_env stays None so an unset key does not mark the source unavailable
@@ -97,8 +100,15 @@ def available(providers: list[Provider] | None = None) -> list[Provider]:
 
 
 def missing_keys(providers: list[Provider] | None = None) -> list[str]:
+    """The unset key variables, named once each.
+
+    De-duplicated because one variable can serve several providers --
+    ABUSECH_KEY covers both MalwareBazaar and ThreatFox -- and check_env
+    printed it twice in the warning line before this.
+    """
     pool = PROVIDERS if providers is None else providers
-    return [p.key_env for p in pool if p.key_env and not p.key_value]
+    return list(dict.fromkeys(
+        p.key_env for p in pool if p.key_env and not p.key_value))
 
 
 def by_name(name: str, providers: list[Provider] | None = None) -> Provider:

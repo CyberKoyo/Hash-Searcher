@@ -246,10 +246,11 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         )
 
         otx_data = await otx_task if otx_task else make_error("OTX key not set")
-        bazaar_data = await bazaar_task if bazaar_task else make_error(
-            "MalwareBazaar was not queried")
-        threatfox_data = await threatfox_task if threatfox_task else make_error(
-            "ThreatFox was not queried")
+        # None, not an error dict: a source that was never asked and one
+        # that was asked and failed are different answers, and the renderers
+        # print the second while staying silent about the first.
+        bazaar_data = await bazaar_task if bazaar_task else None
+        threatfox_data = await threatfox_task if threatfox_task else None
         ipdb_data = await ipdb_task if ipdb_task else []
         censys_results = await censys_task if censys_task else []
         shodan_results = await shodan_task if shodan_task else []

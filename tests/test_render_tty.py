@@ -835,3 +835,19 @@ def test_sections_for_sources_that_never_ran_are_absent(capsys):
     render_certs(empty)
     render_kev(empty)
     assert capsys.readouterr().out == ""
+
+
+def test_a_long_cve_list_is_capped_with_the_total_kept(capsys):
+    """A real Shodan answer for a busy web server carries over a hundred
+    CVEs. Printed whole they are one unreadable line that buries the KEV
+    section underneath -- capped, the count still says how many there were."""
+    from hash_searcher.models import ShodanReport
+    from hash_searcher.render.tty import CVE_DISPLAY_LIMIT, render_ip_intel
+
+    cves = [f"CVE-2021-{n:05d}" for n in range(128)]
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": ShodanReport(ports=[80], vulns=cves)}))
+    out = capsys.readouterr().out
+    assert cves[CVE_DISPLAY_LIMIT] not in out
+    assert f"128 CVEs" in out
+    assert f"showing {CVE_DISPLAY_LIMIT}" in out

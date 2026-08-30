@@ -164,3 +164,10 @@ def test_every_registered_provider_declares_at_least_one_indicator_type():
 
     for provider in PROVIDERS:
         assert provider.indicator_types, f"{provider.name} declares no indicator types"
+
+
+def test_a_key_shared_by_two_providers_is_named_once(monkeypatch):
+    """ABUSECH_KEY covers both MalwareBazaar and ThreatFox; check_env's
+    warning line listed it twice before missing_keys de-duplicated."""
+    monkeypatch.delenv("ABUSECH_KEY", raising=False)
+    assert missing_keys().count("ABUSECH_KEY") == 1

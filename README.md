@@ -1,7 +1,7 @@
 
 ## Hash-Searcher 🔍
 
-A fast, asynchronous Python tool to check file hashes across eleven intelligence sources — six of which need no account at all, so the tool produces a useful report with nothing configured. Supports password-protected ZIP files and modern AES-256 encryption.
+A fast, asynchronous Python tool to check file hashes across eleven intelligence sources — four of which need no account at all and two more of which need only a free one, so the tool produces a useful report with nothing configured. Supports password-protected ZIP files and modern AES-256 encryption.
 
 🚀 Features
 
@@ -181,8 +181,8 @@ the top of one file precisely so you can argue with them and change them.
 | AlienVault OTX | `OTX_KEY` | hash, ip, domain | 24h | Threat pulses and ATT&CK techniques |
 | AbuseIPDB | `IPDB_KEY` | ip | 24h | Abuse confidence and report counts for contacted IPs |
 | Censys | `CENSYS_KEY` | ip | 24h | ASN, org, country, open ports, reverse DNS |
-| MalwareBazaar | none | hash | 24h | Malware family, tags, file type, YARA rules — names families VT may only call `trojan.generic` |
-| ThreatFox | none | hash, ip, domain | 1h | IOC → family attribution with a confidence level |
+| MalwareBazaar | free `ABUSECH_KEY` | hash | 24h | Malware family, tags, file type, YARA rules — names families VT may only call `trojan.generic` |
+| ThreatFox | free `ABUSECH_KEY` | hash, ip, domain | 1h | IOC → family attribution with a confidence level |
 | Shodan InternetDB | none | ip | 24h | Open ports, CPEs, and known CVEs per contacted IP |
 | GreyNoise Community | optional `GREYNOISE_KEY` | ip | 24h | Whether an IP scans the whole internet or was aimed at you |
 | crt.sh | none | domain | 24h | Sibling domains from certificate transparency |
@@ -191,6 +191,14 @@ the top of one file precisely so you can argue with them and change them.
 
 `GREYNOISE_KEY` is **optional**: GreyNoise Community answers without a key and
 the key only raises the rate limit, so leaving it unset costs no coverage.
+
+`ABUSECH_KEY` is free (one account at <https://auth.abuse.ch/> covers both
+MalwareBazaar and ThreatFox). Both APIs were open when this tool first added
+them and now answer `401 {"error": "Unauthorized"}` without a key, so they are
+skipped when it is unset rather than failing on every run.
+
+With nothing at all in `.env`, Shodan InternetDB, crt.sh, RDAP, and CISA KEV
+still run.
 
 CISA KEV is not a per-indicator lookup — it is a ~1MB catalog, downloaded at
 most once per run and only when Shodan actually reported CVEs to intersect it

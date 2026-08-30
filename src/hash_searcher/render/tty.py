@@ -277,6 +277,14 @@ def render_threatfox(report: Report) -> None:
         print(f"Tags:       {', '.join(threatfox.tags)}")
 
 
+#: A real Shodan answer for a busy web server carries well over a hundred
+#: CVEs. Printed whole they are one unreadable line that buries every
+#: section under it -- so the list is capped and the total printed beside
+#: it, the same bargain render_certs makes with sibling domains. The full
+#: list is still in the JSON report.
+CVE_DISPLAY_LIMIT = 12
+
+
 def render_ip_intel(report: Report) -> None:
     """Shodan exposure and GreyNoise noise-vs-targeted, per contacted IP."""
     if not report.shodan and not report.greynoise:
@@ -290,7 +298,11 @@ def render_ip_intel(report: Report) -> None:
         elif shodan:
             print(f"Ports:   {', '.join(str(p) for p in shodan.ports) or 'none known'}")
             if shodan.vulns:
-                print(f"CVEs:    {', '.join(shodan.vulns)}")
+                shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
+                more = (f" (showing {CVE_DISPLAY_LIMIT})"
+                        if len(shodan.vulns) > CVE_DISPLAY_LIMIT else "")
+                print(f"CVEs:    {len(shodan.vulns)} CVEs{more}: "
+                      f"{', '.join(shown)}")
             if shodan.hostnames:
                 print(f"Names:   {', '.join(shodan.hostnames)}")
         noise = report.greynoise.get(ip)
