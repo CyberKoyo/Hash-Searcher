@@ -1,7 +1,7 @@
 """
-Shared asynchronous HTTP GET used by every API module.
+Shared asynchronous HTTP verbs used by every API module.
 
-Every provider follows the same shape: build a URL and headers, GET, switch on
+Every provider follows the same shape: build a URL and headers, request, switch on
 the status code, and hand back parsed JSON or an error dict. This centralizes
 that so each provider module is just its URL, its auth header, and its 404 text.
 
@@ -67,33 +67,39 @@ def error_status(payload) -> int | None:
     return payload.get(STATUS_KEY) if isinstance(payload, dict) else None
 
 
-async def api_get(
+USER_AGENT = "hash-searcher/0.1 (+https://github.com/CyberKoyo/Hash-Searcher)"
+
+
+async def _request(
     client: httpx.AsyncClient,
+    method: str,
     url: str,
     headers: dict[str, str],
     *,
-    source: str,
     params: dict[str, Any] | None = None,
-    not_found: str | None = None,
-    extra_status: dict[int, Callable[[httpx.Response], str]] | None = None,
+    data: Any = None,
+    json: Any = None,
     max_attempts: int = MAX_ATTEMPTS,
-) -> Any:
-    """GET and normalize the result to parsed JSON or an error dict.
+    follow_redirects: bool = False,
+):
+    """The retry loop, shared by every verb.
 
-    source:       name used in error strings, e.g. "GetTotal"
-    not_found:    message for a 404
-    extra_status: per-API special cases, {status: response -> message}
+    Returns (final response, last network error). The response is None when
+    every attempt failed at the transport layer -- the caller turns that into
+    an error dict. USER_AGENT is merged in here so no provider has to
+    remember it: several of these services ask for one, and crt.sh throttles
+    anonymous bulk queries harder without it.
     """
-    if max_attempts < 1:
-        # Falling through the loop returned the nonsense "Network Error: None".
-        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
-
+    sent = {"User-Agent": USER_AGENT, **headers}
     response = None
     last_network_error = None
 
     for attempt in range(1, max_attempts + 1):
         try:
-            response = await client.get(url, headers=headers, params=params)
+            response = await client.request(
+                method, url, headers=sent, params=params, data=data, json=json,
+                follow_redirects=follow_redirects,
+            )
         except httpx.RequestError as e:
             last_network_error = e
             response = None
@@ -109,6 +115,18 @@ async def api_get(
             continue
         break
 
+    return response, last_network_error
+
+
+def _finish(
+    response: httpx.Response | None,
+    last_network_error: Exception | None,
+    *,
+    source: str,
+    not_found: str | None,
+    extra_status: dict[int, Callable[[httpx.Response], str]] | None,
+) -> Any:
+    """Status handling, shared by every verb: 200 -> JSON, else an error dict."""
     if response is None:
         return make_error(f"Network Error: {last_network_error}")
 
@@ -123,3 +141,61 @@ async def api_get(
     if extra_status and status in extra_status:
         return make_error(extra_status[status](response), status)
     return make_error(f"{source} API Error {status}", status)
+
+
+async def api_get(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    *,
+    source: str,
+    params: dict[str, Any] | None = None,
+    not_found: str | None = None,
+    extra_status: dict[int, Callable[[httpx.Response], str]] | None = None,
+    max_attempts: int = MAX_ATTEMPTS,
+    follow_redirects: bool = False,
+) -> Any:
+    """GET and normalize the result to parsed JSON or an error dict.
+
+    source:       name used in error strings, e.g. "GetTotal"
+    not_found:    message for a 404
+    extra_status: per-API special cases, {status: response -> message}
+    """
+    if max_attempts < 1:
+        # Falling through the loop returned the nonsense "Network Error: None".
+        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+
+    response, last_network_error = await _request(
+        client, "GET", url, headers, params=params,
+        max_attempts=max_attempts, follow_redirects=follow_redirects,
+    )
+    return _finish(response, last_network_error, source=source,
+                   not_found=not_found, extra_status=extra_status)
+
+
+async def api_post(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    *,
+    source: str,
+    data: Any = None,
+    json: Any = None,
+    not_found: str | None = None,
+    extra_status: dict[int, Callable[[httpx.Response], str]] | None = None,
+    max_attempts: int = MAX_ATTEMPTS,
+) -> Any:
+    """POST with api_get's exact contract: parsed JSON or an error dict.
+
+    MalwareBazaar and ThreatFox are POST-only. A second copy of the retry
+    loop is how the two verbs drift apart, so both go through _request.
+    """
+    if max_attempts < 1:
+        raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+
+    response, last_network_error = await _request(
+        client, "POST", url, headers, data=data, json=json,
+        max_attempts=max_attempts,
+    )
+    return _finish(response, last_network_error, source=source,
+                   not_found=not_found, extra_status=extra_status)
