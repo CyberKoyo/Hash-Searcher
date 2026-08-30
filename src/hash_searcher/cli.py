@@ -10,7 +10,7 @@ from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
-from .api.base_call import error_status
+from .api.base_call import error_status, make_error
 from .api.who_is import who_is
 from .cache import ResponseCache
 from .hashing import check_env
@@ -19,6 +19,7 @@ from .render.json_out import write_json
 from .render.pdf import write_pdf
 from .render.tty import render
 from .scoring import score
+from .static.runner import analyze
 
 EXIT_CLEAN = 0
 EXIT_SUSPICIOUS = 1
@@ -50,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
     parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
+    parser.add_argument("--no-static", action="store_true",
+                        help="skip local static analysis (entropy, PE, YARA, strings)")
+    parser.add_argument("--yara-rules", dest="yara_rules",
+                        help="directory of .yar/.yara rules to scan the sample against")
     return parser
 
 
@@ -78,8 +83,31 @@ def write_report(report: Report, output: str,
 
 async def run_cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not check_env():
-        return EXIT_NO_DATA
+
+    # Static analysis runs before any network call and before check_env() --
+    # both above the point that used to bail early. A sample nobody has ever
+    # uploaded, or a run with no API key configured at all, is exactly the
+    # case this phase exists to serve: local findings must never be computed
+    # and then thrown away because the online half has nothing to add.
+    # os.path.isfile guards a bare hash argument -- there is no file to
+    # analyze, and attempting one is a crash, not a smaller report.
+    static_report = None
+    if not args.no_static and os.path.isfile(args.indicator):
+        try:
+            static_report = analyze(args.indicator, yara_rules=args.yara_rules)
+        except Exception:
+            # A local analyzer failure must never block the network pass --
+            # this phase exists to ADD information, not to become a new way
+            # the tool can fail to run at all.
+            static_report = None
+
+    # strings-derived IOCs feed back into the enrichment path: a sample
+    # nobody has ever uploaded to VT still yields IPs to look up. static_report
+    # is None on --no-static/a bare hash, and .strings is None when that one
+    # analyzer landed in `failed` -- neither may crash this pass.
+    extra_ips = None
+    if static_report is not None and static_report.strings is not None:
+        extra_ips = static_report.strings.iocs.ips
 
     try:
         resolved = resolve_hash(args.indicator, args.zip_password)
@@ -98,10 +126,37 @@ async def run_cli(argv: list[str] | None = None) -> int:
         for skipped in resolved[1:]:
             print(f"    not analyzed: {skipped}")
 
+    if not check_env():
+        if static_report is None:
+            return EXIT_NO_DATA
+        # No provider is configured at all, but the static pass above still
+        # produced a report -- render it instead of discarding it. This is
+        # the phase's headline case: with no key and no network, a sample
+        # still yields local findings rather than a bare "no usable
+        # sources" and nothing else. vt/otx/ips/hosts/whois all read as "no
+        # online data available" rather than as an error; score() already
+        # treats vt.found is False correctly, escaping UNKNOWN only when the
+        # static pass itself found something.
+        print("Continuing with local static analysis results only.")
+        offline = make_error("no API key configured")
+        report = Report(
+            indicator=file_hash,
+            generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            vt=extract_vt(offline), otx=extract_otx(offline),
+            ips={}, hosts=[], whois=[],
+            source_file=args.indicator,
+            static=static_report,
+        )
+        verdict = score(report)
+        render(report, verdict)
+        if args.output:
+            write_report(report, args.output, verdict)
+        return exit_code(verdict)
+
     print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
-        raw = await data_puller(file_hash, cache)
+        raw = await data_puller(file_hash, cache, extra_ips=extra_ips)
     finally:
         cache.close()
     if not raw:
@@ -111,8 +166,15 @@ async def run_cli(argv: list[str] | None = None) -> int:
     vt = extract_vt(raw["vt"])
     otx = extract_otx(raw["otx"])
     if error_status(raw["vt"]) == 404 and not otx.has_pulses:
-        print("Invalid hash. Please check filename or hash.")
-        return EXIT_NO_DATA
+        if static_report is None:
+            print("Invalid hash. Please check filename or hash.")
+            return EXIT_NO_DATA
+        # VT has never seen this sample and OTX has no pulses on it -- but
+        # the static pass above still examined the file itself. Say the
+        # online sources came up empty and keep going to score()/render()
+        # rather than discarding a computed report.
+        print("VirusTotal has no record of this indicator and OTX reports "
+              "no pulses -- continuing with local static analysis results.")
 
     ips = extract_ips(raw["ipdb"])
     domains, hosts = extract_hosts(raw["censys"], ips)
@@ -123,6 +185,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
         generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
+        static=static_report,
     )
 
     verdict = score(report)

@@ -9,7 +9,8 @@ from hash_searcher.models import (
     ThreatClass, VTReport, YaraMatch,
 )
 from hash_searcher.scoring import (
-    SIGMA_CAP, W_DETECTION_SUSPICIOUS, W_SANDBOX, W_YARA, score,
+    SIGMA_CAP, W_DETECTION_SUSPICIOUS, W_PACKED, W_SANDBOX, W_SUSPICIOUS_IMPORTS,
+    W_YARA, W_YARA_LOCAL, score,
 )
 
 
@@ -212,3 +213,115 @@ def test_the_band_boundaries(vt, expected_score, expected_level):
     verdict = score(_report(vt=vt))
     assert verdict.score == expected_score
     assert verdict.level == expected_level
+
+
+# --- Phase 3: static signals -------------------------------------------------
+
+
+def test_packed_and_suspicious_imports_raise_the_score():
+    from hash_searcher.models import EntropyReport, PEStaticReport, StaticReport
+
+    report = _report()  # the Phase 2 helper in tests/test_scoring.py
+    report.static = StaticReport(
+        path="x", size=1, sha256="a" * 64,
+        entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
+        pe=PEStaticReport(suspicious_imports=[
+            "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread",
+        ]),
+    )
+    names = {s.name for s in score(report).signals}
+    assert "packed" in names and "suspicious_imports" in names
+
+
+def test_a_yara_hit_from_local_rules_is_a_signal():
+    from hash_searcher.models import StaticReport, YaraHit
+
+    report = _report()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 yara=[YaraHit(rule="Emotet_Loader")])
+    assert any(s.name == "yara_local" for s in score(report).signals)
+
+
+def test_the_static_signals_carry_their_pinned_weights():
+    """The scoring layer's weights are the whole argument (module docstring)
+    -- pin them here the same way the Phase 2 signals are pinned elsewhere
+    in this file."""
+    from hash_searcher.models import EntropyReport, PEStaticReport, StaticReport, YaraHit
+
+    report = _report()
+    report.static = StaticReport(
+        path="x", size=1, sha256="a" * 64,
+        entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
+        pe=PEStaticReport(suspicious_imports=["A", "B", "C"]),
+        yara=[YaraHit(rule="R")],
+    )
+    points = {s.name: s.points for s in score(report).signals}
+    assert points["packed"] == W_PACKED
+    assert points["suspicious_imports"] == W_SUSPICIOUS_IMPORTS
+    assert points["yara_local"] == W_YARA_LOCAL
+
+
+def test_fewer_than_three_suspicious_imports_does_not_fire():
+    """'Firing at three or more' -- one or two hits could be a legitimate
+    program that merely resolves LoadLibrary/GetProcAddress."""
+    from hash_searcher.models import PEStaticReport, StaticReport
+
+    report = _report()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 pe=PEStaticReport(suspicious_imports=["A", "B"]))
+    assert not any(s.name == "suspicious_imports" for s in score(report).signals)
+
+
+def test_static_findings_alone_lift_a_sample_out_of_unknown():
+    """The decision this phase forces: a file with local findings and no VT
+    record is no longer 'nobody has ever seen this'. Whichever way this is
+    decided, it must be decided explicitly and pinned here."""
+    from hash_searcher.models import StaticReport, YaraHit
+
+    report = _report()  # vt.found is False, no OTX pulses
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 yara=[YaraHit(rule="Emotet_Loader")])
+    assert score(report).level != "UNKNOWN"
+
+
+def test_a_static_report_with_no_findings_stays_unknown():
+    """The guard must key off signals that actually fired, not off whether a
+    StaticReport merely exists -- a clean local scan is not evidence the file
+    was ever seen anywhere else."""
+    from hash_searcher.models import StaticReport
+
+    report = _report()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64)
+    assert score(report).level == "UNKNOWN"
+
+
+def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
+    """branch-review.md I2 ruling: before this, a packed-only static report
+    escaped the UNKNOWN guard (packed's 10 points is a fired signal) and
+    the score itself totalled 10, under SUSPICIOUS_AT (15) -- so the level
+    fell all the way through to CLEAN, exit 0. That is the failure mode the
+    UNKNOWN guard exists to prevent, reached through a different signal
+    than the OTX case score()'s docstring already explains: 'packed' means
+    the tool could not see inside the file, not that it found evidence of
+    anything, and the README's own caveat is that a packed binary is not
+    automatically malicious. suspicious_imports and yara_local are each
+    independent evidence on their own (see the other tests in this class)
+    and correctly do still escape the guard -- only 'packed' alone must
+    not. This pins the resulting LEVEL, not just which signal fired --
+    the gap the reviewer found in
+    test_static_findings_alone_lift_a_sample_out_of_unknown, which only
+    ever exercised yara_local and asserted nothing about packed."""
+    from hash_searcher.models import EntropyReport, StaticReport
+
+    report = _report()  # vt.found is False, no OTX pulses
+    report.static = StaticReport(
+        path="x", size=1, sha256="a" * 64,
+        entropy=EntropyReport(overall=7.9, packed=True, note="packed"),
+    )
+    verdict = score(report)
+    assert verdict.level == "UNKNOWN"
+    # The signal still fires and still carries its points -- W_PACKED keeps
+    # contributing once something else has escaped the guard. Only the
+    # ESCAPE is denied to it, not its weight.
+    assert any(s.name == "packed" and s.points == 10 for s in verdict.signals)
+    assert verdict.score == 10
