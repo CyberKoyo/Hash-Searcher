@@ -219,6 +219,17 @@ def _find_domains(text: str) -> list[str]:
     for token_match in _DOMAIN_TOKEN_RE.finditer(text):
         # Capping at MAX_DOMAIN bounds _DOMAIN_RE's backtracking to a
         # constant per token -- see the comment above _DOMAIN_TOKEN_RE.
+        #
+        # The cap truncates rather than skips, so a domain sitting past
+        # byte 253 of a single unbroken domain-alphabet run is missed:
+        # "a" * 300 + ".c2.evil.example" yields nothing where the
+        # uncapped pattern finds c2.evil.example. Reaching that needs
+        # 253+ unbroken [A-Za-z0-9._-] characters in front of the domain,
+        # so it costs a real IOC only in input already shaped to hide
+        # one -- and the alternative is the O(n^2) blowup the cap exists
+        # to stop. Stated here because an undisclosed limit is the same
+        # failure as the wrong equivalence claim above: it tells the next
+        # reader there is nothing to check.
         token = token_match.group(0)[:MAX_DOMAIN]
         for candidate in _DOMAIN_RE.findall(token):
             domain = candidate.lower()
