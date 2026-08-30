@@ -1,7 +1,33 @@
 """One entry per intelligence source.
 
 Adding a source means appending a Provider here, not editing the
-orchestrator. key_env=None marks a keyless source, which is always available.
+orchestrator. That promise was prose for two phases and false for one of
+them, so it is executable now: test_a_new_provider_needs_only_a_registry
+_entry enforces every clause below.
+
+The contract each entry signs:
+
+- ``fetch(client, indicator) -> payload or error dict``. Exactly two
+  required parameters, in that order. Anything else -- max_attempts, an
+  indicator_type -- carries a default or arrives through **kwargs. A
+  provider tempted to deviate is a defect in that provider, not in the
+  shape.
+- ``indicator_types``: which of "hash"/"ip"/"domain" this source can
+  answer for. Read by for_indicator(), which is how data_puller decides
+  what to call; an empty tuple makes a source unreachable, so it would
+  silently never run.
+- ``cache_ttl``: chosen per source, never defaulted by accident. CISA KEV
+  changes weekly, ThreatFox hourly, RDAP on the order of years.
+- ``serial_delay``: seconds between calls for a source that rate limits
+  (Censys, crt.sh, GreyNoise). 0 means the fan-out runs in parallel.
+- ``key_env=None`` marks a keyless source, which is always available. It
+  also covers a source whose key is optional -- GreyNoise Community works
+  without one and only raises its rate limit with one, so an unset key
+  must not mark it unavailable.
+
+Every fetch goes through api_get/api_post: that is where retries, backoff,
+the error-dict convention, and the 404 message live, and a provider
+calling client.get directly silently opts out of all four.
 """
 
 from collections.abc import Callable

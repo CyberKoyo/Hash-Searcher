@@ -81,6 +81,35 @@ def test_available_sees_a_key_set_after_import(monkeypatch):
     assert "TOTAL_KEY" not in missing_keys()
 
 
+INDICATOR_NAMES = {"indicator", "ip", "domain", "file_hash", "hash"}
+
+
+def test_a_new_provider_needs_only_a_registry_entry():
+    """The registry's documented promise, executed rather than asserted in
+    prose. The parameter NAME varies meaningfully per source -- pinning one
+    word would be pedantry -- but the POSITION is the actual contract."""
+    import inspect
+
+    from hash_searcher.api.registry import PROVIDERS
+
+    for provider in PROVIDERS:
+        assert provider.fetch is not None, f"{provider.name} has no fetch"
+        params = list(inspect.signature(provider.fetch).parameters.values())
+        required = [
+            p for p in params
+            if p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_KEYWORD,
+                               inspect.Parameter.VAR_POSITIONAL)
+        ]
+        assert len(required) == 2, \
+            f"{provider.name} takes {len(required)} required args, not 2"
+        assert required[0].name == "client", f"{provider.name}'s first arg is not client"
+        assert required[1].name in INDICATOR_NAMES, \
+            f"{provider.name}'s second arg is {required[1].name!r}"
+        assert provider.indicator_types, f"{provider.name} declares no indicator types"
+        assert provider.cache_ttl > 0, f"{provider.name} has no cache TTL"
+
+
 def test_every_provider_fetch_takes_client_and_indicator():
     """Obs. B: the registry's promise -- append a Provider, add a source --
     only holds if every fetch agrees on its call shape."""
