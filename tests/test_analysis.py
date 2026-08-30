@@ -84,13 +84,25 @@ def test_extract_hosts_carries_error_entries_rather_than_dropping_them():
 
 
 def test_extract_whois_preserves_failures():
+    """A failed lookup stays in the list rather than vanishing from it.
+
+    The success entry is an RDAP payload now -- the flat
+    domain/created/expires/registrar dict this used to pass was the shape
+    of api/who_is.py's output, and that module is gone.
+    """
     records = extract_whois([
-        {"domain": "a.example", "created": "2020-01-01", "expires": "2027-01-01",
-         "registrar": "R"},
-        {"domain": "b.example", "error": "No WHOIS data found"},
+        {"domain": "a.example",
+         "events": [{"eventAction": "registration", "eventDate": "2020-01-01T00:00:00Z"},
+                    {"eventAction": "expiration", "eventDate": "2027-01-01T00:00:00Z"}],
+         "entities": [{"roles": ["registrar"],
+                       "vcardArray": ["vcard", [["fn", {}, "text", "R"]]]}]},
+        make_error("No RDAP record for b.example", 404) | {"domain": "b.example"},
     ])
+    assert records[0].created == "2020-01-01"
+    assert records[0].expires == "2027-01-01"
     assert records[0].registrar == "R"
-    assert records[1].error == "No WHOIS data found"
+    assert records[1].domain == "b.example"
+    assert records[1].error == "No RDAP record for b.example"
 
 
 def test_extract_otx_sets_otx_responded_per_branch(fixture_json):

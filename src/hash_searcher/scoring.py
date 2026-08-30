@@ -26,6 +26,16 @@ W_ABUSEIPDB = 10
 W_SIGNED = -20            # a valid signature is evidence AGAINST, not for
 W_DETECTION_SUSPICIOUS = 10   # engines hedging, none convicting
 
+# Phase 4: additional sources. certs is deliberately absent -- sibling
+# domains from certificate transparency are a pivot, not a verdict, and
+# scoring them would make every large hosting provider look malicious.
+# Do not "fix" that omission; test_certificate_siblings_are_informational
+# _and_score_nothing pins it.
+W_BAZAAR = 15
+W_THREATFOX = 15
+W_KEV = 25                # confirmed exploitation in the wild
+W_INTERNET_NOISE = -10    # scanning everyone is not evidence about THIS sample
+
 # Phase 3: local static analysis, no VT record required. These are the only
 # three signals that can fire from report.static -- score()'s UNKNOWN guard
 # checks for exactly these names among the fired signals, see below.
@@ -170,13 +180,62 @@ def _yara_local_signal(report: Report) -> Signal | None:
                          + ", ".join(h.rule for h in static.yara))
 
 
+def _bazaar_signal(report: Report) -> Signal | None:
+    bazaar = report.bazaar
+    if not bazaar or not bazaar.found:
+        return None
+    return Signal(name="bazaar", points=W_BAZAAR,
+                  detail=f"MalwareBazaar holds this sample"
+                         f"{f' as {bazaar.family}' if bazaar.family else ''}")
+
+
+def _threatfox_signal(report: Report) -> Signal | None:
+    threatfox = report.threatfox
+    if not threatfox or not threatfox.found:
+        return None
+    return Signal(name="threatfox", points=W_THREATFOX,
+                  detail=f"ThreatFox names this indicator "
+                         f"{threatfox.malware or 'a known IOC'} "
+                         f"({threatfox.confidence}% confidence)")
+
+
+def _kev_signal(report: Report) -> Signal | None:
+    """Confirmed exploitation in the wild -- the strongest single statement
+    any Phase 4 source makes, which is why it outweighs the rest of them."""
+    if not report.kev:
+        return None
+    return Signal(name="kev", points=W_KEV,
+                  detail="a contacted host exposes CVEs CISA lists as "
+                         "known-exploited: "
+                         + ", ".join(entry.cve for entry in report.kev))
+
+
+def _internet_noise_signal(report: Report) -> Signal | None:
+    """Subtracts, never adds.
+
+    An IP that scans the entire internet is not evidence that THIS sample
+    was aimed at anyone. Scoring GreyNoise's "seen" as a positive would
+    inflate every verdict that touches a contacted IP, which is most of
+    them -- so only the benign classification fires, and it fires downward.
+    """
+    noisy = [ip for ip, r in report.greynoise.items()
+             if r.seen and r.classification == "benign"]
+    if not noisy:
+        return None
+    return Signal(name="internet_noise", points=W_INTERNET_NOISE,
+                  detail="GreyNoise calls these contacted IPs benign internet "
+                         "background noise: " + ", ".join(noisy))
+
+
 SIGNALS = (
     _detection_signal, _sigma_signal, _family_signal, _sandbox_signal,
     _yara_signal, _otx_signal, _abuseipdb_signal, _signed_signal,
     _packed_signal, _suspicious_imports_signal, _yara_local_signal,
+    _bazaar_signal, _threatfox_signal, _kev_signal, _internet_noise_signal,
 )
 
-# The static signal names allowed to escape the UNKNOWN guard below. This is
+# The signal names allowed to escape the UNKNOWN guard below -- the ones
+# that mean a source examined the FILE itself. This is
 # deliberately NOT every signal report.static can produce -- "packed" is a
 # real signal (see W_PACKED above, and _packed_signal), and still adds its
 # points to the score whenever something else has already escaped UNKNOWN,
@@ -195,7 +254,16 @@ SIGNALS = (
 #
 # Adding a fourth static signal means adding its maker to SIGNALS, and --
 # only if it is independent evidence of malice on its own -- its name here.
-STATIC_SIGNAL_NAMES = frozenset({"suspicious_imports", "yara_local"})
+# "bazaar" joins them for the same reason and no other: MalwareBazaar
+# holding this exact sample is a source having examined the FILE, not an
+# opinion about an indicator the file happened to touch. Without it, a run
+# with no VT key -- the keyless case this phase exists to serve -- would
+# report UNKNOWN even when abuse.ch names the family, discarding the only
+# real finding of the run. threatfox and kev are deliberately NOT here:
+# ThreatFox describes an indicator and KEV describes a CVE on a contacted
+# host, which is evidence ABOUT something the file touched, exactly the
+# category OTX pulses were folded back into this guard for.
+SAMPLE_EVIDENCE_NAMES = frozenset({"suspicious_imports", "yara_local", "bazaar"})
 
 
 def score(report: Report) -> Verdict:
@@ -209,9 +277,9 @@ def score(report: Report) -> Verdict:
     signals.sort(key=lambda s: -s.points)
     total = sum(s.points for s in signals)
 
-    has_static_findings = any(s.name in STATIC_SIGNAL_NAMES for s in signals)
+    has_sample_evidence = any(s.name in SAMPLE_EVIDENCE_NAMES for s in signals)
 
-    if not report.vt.found and not has_static_findings:
+    if not report.vt.found and not has_sample_evidence:
         # VT having no record of the file is what "nobody analyzed this"
         # means -- but Phase 3 gives the tool its own eyes on a file VT has
         # never seen. A packed sample, a PE importing CreateRemoteThread, or

@@ -52,7 +52,7 @@ def test_yara_rules_flag_is_accepted():
 
 # --- run_cli coverage -------------------------------------------------------
 #
-# data_puller, who_is, check_env, and resolve_hash are monkeypatched as they
+# data_puller, check_env, and resolve_hash are monkeypatched as they
 # are bound into hash_searcher.cli, not at their source modules -- the same
 # pattern tests/test_data_puller.py uses for the fetch coroutines.
 
@@ -68,19 +68,36 @@ def _stub_entry(monkeypatch):
     )
 
 
+EMPTY_RAW = {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": [],
+             "domains": [], "rdap": [], "crtsh": [], "shodan": {},
+             "greynoise": {}, "kev": {},
+             "bazaar": None, "threatfox": None}
+
+
 def _stub_data_puller(monkeypatch, raw):
+    """Every slot the caller did not name defaults to empty.
+
+    data_puller's return dict grows with every source this phase adds; a
+    test about VT's 404 path should not have to enumerate the other slots
+    to stay green.
+    """
+    payload = {**EMPTY_RAW, **raw}
+
     async def _fake(file_hash, cache, extra_ips=None):
-        return raw
+        return payload
     monkeypatch.setattr("hash_searcher.cli.data_puller", _fake)
 
 
-def _stub_who_is(monkeypatch):
-    async def _fake(domains):
-        return [
-            {"domain": d, "created": "2020-01-01", "expires": "2027-01-01", "registrar": "R"}
-            for d in domains
-        ]
-    monkeypatch.setattr("hash_searcher.cli.who_is", _fake)
+def _rdap(*domains) -> list[dict]:
+    """RDAP payloads for the WHOIS section, as data_puller now returns them."""
+    return [
+        {"domain": d,
+         "events": [{"eventAction": "registration", "eventDate": "2020-01-01T00:00:00Z"},
+                    {"eventAction": "expiration", "eventDate": "2027-01-01T00:00:00Z"}],
+         "entities": [{"roles": ["registrar"],
+                       "vcardArray": ["vcard", [["fn", {}, "text", "R"]]]}]}
+        for d in domains
+    ]
 
 
 async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, fixture_json, capsys):
@@ -97,9 +114,9 @@ async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, f
         "censys": fixture_json("censys_host"),
         "ips": ["198.51.100.10", "203.0.113.20"],
         "hash": "deadbeef",
+        "rdap": _rdap("bad.example"),
     }
     _stub_data_puller(monkeypatch, raw)
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
@@ -124,7 +141,6 @@ async def test_vt_404_with_no_otx_pulses_reports_invalid_hash(monkeypatch, capsy
         "hash": "deadbeef",
     }
     _stub_data_puller(monkeypatch, raw)
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
@@ -146,7 +162,6 @@ async def test_vt_network_error_with_no_otx_pulses_does_not_bail(monkeypatch, ca
         "hash": "deadbeef",
     }
     _stub_data_puller(monkeypatch, raw)
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
@@ -173,7 +188,6 @@ async def test_no_vt_key_and_no_otx_key_does_not_bail(monkeypatch, capsys):
         "hash": "deadbeef",
     }
     _stub_data_puller(monkeypatch, raw)
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
@@ -284,7 +298,6 @@ async def test_a_full_run_on_a_malicious_file_exits_two(monkeypatch, fixture_jso
         "censys": [],
         "ips": [],
     })
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
@@ -314,7 +327,7 @@ async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatc
 
     async def fake_puller(file_hash, cache, extra_ips=None):
         order.append("network")
-        return {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []}
+        return dict(EMPTY_RAW)
 
     monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
 
@@ -330,7 +343,7 @@ async def test_no_static_skips_the_pass(tmp_path, monkeypatch):
     monkeypatch.setattr("hash_searcher.cli.analyze",
                         lambda path, yara_rules=None: called.append(1))
     _stub_entry(monkeypatch)
-    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+    _stub_data_puller(monkeypatch, {})
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -345,7 +358,7 @@ async def test_a_bare_hash_argument_skips_static_analysis(monkeypatch):
     monkeypatch.setattr("hash_searcher.cli.analyze",
                         lambda path, yara_rules=None: called.append(1))
     _stub_entry(monkeypatch)
-    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+    _stub_data_puller(monkeypatch, {})
 
     await run_cli(["a" * 64, "--no-cache"])
     assert called == []
@@ -358,7 +371,7 @@ async def test_a_static_report_is_attached_to_the_report_and_rendered(
     from hash_searcher.models import EntropyReport, StaticReport
 
     _stub_entry(monkeypatch)
-    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+    _stub_data_puller(monkeypatch, {})
 
     fake = StaticReport(path="x", size=4, sha256="a" * 64,
                         entropy=EntropyReport(overall=7.9, packed=True, note="packed"))
@@ -377,7 +390,7 @@ async def test_yara_rules_flag_is_forwarded_to_analyze(tmp_path, monkeypatch):
     from hash_searcher.models import StaticReport
 
     _stub_entry(monkeypatch)
-    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+    _stub_data_puller(monkeypatch, {})
 
     seen = {}
 
@@ -400,7 +413,7 @@ async def test_a_static_analysis_failure_does_not_block_the_network_pass(
     it -- static analysis exists to ADD information, not to become a new way
     the whole run can fail."""
     _stub_entry(monkeypatch)
-    _stub_data_puller(monkeypatch, {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []})
+    _stub_data_puller(monkeypatch, {})
 
     def boom(path, yara_rules=None):
         raise RuntimeError("kaboom")
@@ -448,7 +461,7 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
 
     async def fake_puller(*a, **k):
         called.append(1)
-        return {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": []}
+        return dict(EMPTY_RAW)
 
     monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
 
@@ -498,7 +511,6 @@ async def test_vt_404_with_a_static_report_renders_it_instead_of_bailing(
         "hash": "deadbeef",
     }
     _stub_data_puller(monkeypatch, raw)
-    _stub_who_is(monkeypatch)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -522,7 +534,6 @@ async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, caps
         "censys": [],
         "ips": [],
     })
-    _stub_who_is(monkeypatch)
 
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 

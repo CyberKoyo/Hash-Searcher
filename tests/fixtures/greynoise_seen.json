@@ -1,0 +1,10 @@
+{
+  "ip": "198.51.100.10",
+  "noise": true,
+  "riot": false,
+  "classification": "malicious",
+  "name": "Mirai",
+  "link": "https://viz.greynoise.io/ip/198.51.100.10",
+  "last_seen": "2026-08-20",
+  "message": "Success"
+}

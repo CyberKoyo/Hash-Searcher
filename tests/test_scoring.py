@@ -325,3 +325,71 @@ def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
     # ESCAPE is denied to it, not its weight.
     assert any(s.name == "packed" and s.points == 10 for s in verdict.signals)
     assert verdict.score == 10
+
+
+def test_a_malwarebazaar_family_match_is_a_signal():
+    from hash_searcher.models import BazaarReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.bazaar = BazaarReport(found=True, family="Emotet")
+    assert any(s.name == "bazaar" for s in score(report).signals)
+
+
+def test_a_known_exploited_cve_is_a_strong_signal():
+    """KEV means confirmed exploitation in the wild -- the strongest single
+    statement any source in this phase makes."""
+    from hash_searcher.models import KEVEntry
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+    assert next(s for s in score(report).signals if s.name == "kev").points >= 20
+
+
+def test_greynoise_internet_noise_subtracts_rather_than_adds():
+    """An IP scanning the entire internet is not evidence that THIS sample
+    was aimed at you. Scoring it as a positive inflates every verdict that
+    touches a contacted IP, which is most of them."""
+    from hash_searcher.models import GreyNoiseReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.greynoise = {
+        "198.51.100.10": GreyNoiseReport(seen=True, classification="benign")
+    }
+    assert any(s.name == "internet_noise" and s.points < 0 for s in score(report).signals)
+
+
+def test_certificate_siblings_are_informational_and_score_nothing():
+    """Sibling domains are a pivot, not a verdict. Scoring them would make
+    every large hosting provider look malicious."""
+    from hash_searcher.models import CertReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.certs = CertReport(siblings=["a.example", "b.example"], count=2)
+    assert not any(s.name == "certs" for s in score(report).signals)
+
+
+def test_a_threatfox_family_match_is_a_signal():
+    from hash_searcher.models import ThreatFoxReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.threatfox = ThreatFoxReport(found=True, malware="Emotet", confidence=90)
+    assert any(s.name == "threatfox" for s in score(report).signals)
+
+
+def test_a_bazaar_family_match_escapes_unknown_without_a_vt_record():
+    """The phase's headline case: no VT key at all, and abuse.ch holds this
+    exact sample and names its family. That is a source having examined the
+    FILE, not merely having an opinion about an indicator it touched --
+    reporting UNKNOWN there would discard the only real finding of the run.
+    """
+    from hash_searcher.models import BazaarReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.bazaar = BazaarReport(found=True, family="Emotet")
+    assert score(report).level != "UNKNOWN"

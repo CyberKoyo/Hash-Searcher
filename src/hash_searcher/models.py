@@ -163,6 +163,81 @@ class WhoisRecord:
     error: str | None = None
 
 
+@dataclass
+class BazaarReport:
+    """MalwareBazaar's answer for one hash.
+
+    found=False with error=None is a real answer -- the repository has
+    never seen this sample. found=False with an error set means the
+    lookup failed and nothing is known either way.
+    """
+    found: bool = False
+    family: str | None = None
+    tags: list[str] = field(default_factory=list)
+    file_type: str | None = None
+    first_seen: str | None = None
+    yara: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
+class ShodanReport:
+    """Shodan InternetDB's answer for one IP.
+
+    An all-empty report with error=None means Shodan has never scanned the
+    address -- a real answer, not a failure.
+    """
+    ports: list[int] = field(default_factory=list)
+    cpes: list[str] = field(default_factory=list)
+    vulns: list[str] = field(default_factory=list)
+    hostnames: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
+class GreyNoiseReport:
+    """Whether an IP is internet background noise or was aimed at you."""
+    seen: bool = False
+    classification: str | None = None
+    name: str | None = None
+    last_seen: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class CertReport:
+    """Sibling domains from certificate transparency.
+
+    `siblings` is capped at analysis.crtsh.SIBLING_LIMIT for readability;
+    `count` is the untruncated total, so a capped list never reads as the
+    whole answer.
+    """
+    siblings: list[str] = field(default_factory=list)
+    count: int = 0
+    error: str | None = None
+
+
+@dataclass
+class ThreatFoxReport:
+    """ThreatFox's family attribution for one indicator."""
+    found: bool = False
+    malware: str | None = None
+    confidence: int = 0
+    tags: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class KEVEntry:
+    """One CVE CISA has confirmed is exploited in the wild."""
+    cve: str
+    vendor: str | None = None
+    product: str | None = None
+    name: str | None = None
+    date_added: str | None = None
+    ransomware: bool = False
+
+
 @dataclass(frozen=True)
 class Signal:
     name: str
@@ -283,3 +358,27 @@ class Report:
     #: argument with no file, or an analyzer-fan-out failure) -- never a
     #: half-built StaticReport standing in for "we didn't run it".
     static: StaticReport | None = None
+    #: Phase 4 sources. Each is None (or empty) when that source never ran
+    #: -- the same rule the rest of this file follows, so a consumer can
+    #: tell "the source had nothing" from "this tool never asked it".
+    bazaar: BazaarReport | None = None
+    threatfox: ThreatFoxReport | None = None
+    certs: CertReport | None = None
+    #: Keyed by IP, the same way `ips` is: these fan out over the contacted
+    #: IPs rather than describing the sample itself.
+    shodan: dict[str, ShodanReport] = field(default_factory=dict)
+    greynoise: dict[str, GreyNoiseReport] = field(default_factory=dict)
+    #: CVEs on contacted IPs that CISA has confirmed are exploited in the
+    #: wild. Empty when nothing matched and when there was nothing to match
+    #: -- the catalog is only fetched when Shodan reported CVEs.
+    kev: list[KEVEntry] = field(default_factory=list)
+    #: Set only when there WERE CVEs to check and the catalog could not be
+    #: fetched. Without it that third case is indistinguishable from the
+    #: first two, and the signal it suppresses is the strongest one this
+    #: phase produces -- the same "no record" versus "could not ask"
+    #: distinction every extractor here is built around.
+    kev_error: str | None = None
+    #: How many CVEs were on the table when the catalog was unreachable, so
+    #: the renderer can say what went unchecked rather than just that
+    #: something did.
+    kev_unchecked: int = 0

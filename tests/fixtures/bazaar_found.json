@@ -1,0 +1,16 @@
+{
+  "query_status": "ok",
+  "data": [
+    {
+      "sha256_hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+      "file_type": "exe",
+      "signature": "Emotet",
+      "first_seen": "2019-04-02 11:20:41",
+      "tags": ["exe", "Emotet", "banker"],
+      "yara_rules": [
+        {"rule_name": "Emotet_Loader", "author": "Some Researcher"},
+        {"rule_name": "win_emotet_auto", "author": "Another Researcher"}
+      ]
+    }
+  ]
+}

@@ -111,3 +111,49 @@ def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
     texts = _texts(build_story(sample_report, None))
     assert "Censys 403: forbidden" in texts
     assert "None" not in texts
+
+
+def test_the_phase_4_sources_reach_the_pdf(sample_report):
+    from hash_searcher.models import BazaarReport, KEVEntry
+    from hash_searcher.render.pdf import build_story
+
+    sample_report.bazaar = BazaarReport(found=True, family="Emotet")
+    sample_report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+
+    def _text(flowable) -> str:
+        """Flatten a flowable: KEV and IP intel render as tables, whose cell
+        Paragraphs are not reachable through the top-level .text."""
+        rows = getattr(flowable, "_cellvalues", None)
+        if rows:
+            return " ".join(_text(cell) for row in rows for cell in row)
+        return getattr(flowable, "text", "") or ""
+
+    text = " ".join(_text(f) for f in build_story(sample_report))
+    assert "MalwareBazaar" in text
+    assert "Emotet" in text
+    assert "CVE-2021-41617" in text
+
+
+def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
+    """build_story assertions cannot catch a layout failure -- only doc.build
+    can. A reportlab table row does not split across pages, so an unbounded
+    CVE cell raised LayoutError and took down an otherwise successful run at
+    the very last step. Real Shodan answers carry 120-137 CVEs for one host.
+    """
+    from hash_searcher.models import CertReport, KEVEntry, ShodanReport
+    from hash_searcher.render.pdf import write_pdf
+
+    sample_report.shodan = {
+        "198.51.100.10": ShodanReport(
+            ports=list(range(1, 40)),
+            vulns=[f"CVE-2021-{n:05d}" for n in range(150)]),
+    }
+    sample_report.kev = [KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
+                                  product="HTTP Server", name="Some Vulnerability",
+                                  date_added="2022-03-03") for n in range(60)]
+    sample_report.certs = CertReport(
+        siblings=[f"host{n}.evil.example" for n in range(100)], count=5000)
+
+    out = tmp_path / "report.pdf"
+    write_pdf(sample_report, str(out))
+    assert out.stat().st_size > 0

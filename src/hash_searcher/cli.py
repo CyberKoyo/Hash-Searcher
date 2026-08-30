@@ -4,14 +4,19 @@ import datetime
 import os
 import sys
 
+from .analysis.bazaar import extract_bazaar
 from .analysis.censys import extract_hosts
+from .analysis.crtsh import merge_crtsh
+from .analysis.greynoise import extract_greynoise
 from .analysis.ipdb import extract_ips
+from .analysis.kev import known_exploited
+from .analysis.shodan import extract_shodan, observed_cves
+from .analysis.threatfox import extract_threatfox
 from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
-from .api.base_call import error_status, make_error
-from .api.who_is import who_is
+from .api.base_call import error_message, error_status, is_error, make_error
 from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report, Verdict
@@ -44,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hash-searcher",
         description="Check a file or hash against VirusTotal, AbuseIPDB, "
-                    "Censys, OTX, and WHOIS.",
+                    "Censys, OTX, RDAP, and several keyless sources.",
     )
     parser.add_argument("indicator", help="a file path, or an MD5/SHA-1/SHA-256 digest")
     parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
@@ -153,7 +158,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
             write_report(report, args.output, verdict)
         return exit_code(verdict)
 
-    print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
+    print("Pulling data from VirusTotal, IPDB, OTX, Censys, and RDAP...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
         raw = await data_puller(file_hash, cache, extra_ips=extra_ips)
@@ -177,8 +182,24 @@ async def run_cli(argv: list[str] | None = None) -> int:
               "no pulses -- continuing with local static analysis results.")
 
     ips = extract_ips(raw["ipdb"])
-    domains, hosts = extract_hosts(raw["censys"], ips)
-    whois = extract_whois(await who_is(domains)) if domains else []
+    _domains, hosts = extract_hosts(raw["censys"], ips)
+    # RDAP is a registered provider now, so its fan-out happens inside
+    # data_puller alongside every other source -- cli only extracts.
+    whois = extract_whois(raw["rdap"])
+
+    shodan = {ip: extract_shodan(payload) for ip, payload in raw["shodan"].items()}
+    greynoise = {ip: extract_greynoise(payload)
+                 for ip, payload in raw["greynoise"].items()}
+    # Purely local: data_puller downloaded the catalog at most once, and
+    # only if there was a CVE to intersect it against.
+    cves = observed_cves(shodan.values())
+    kev_catalog, kev_error = raw["kev"], None
+    if is_error(kev_catalog):
+        # There WERE CVEs to check and CISA could not be reached. Reporting
+        # an empty kev list here would say "nothing is known-exploited",
+        # which is a claim nobody made.
+        kev_catalog, kev_error = {}, error_message(raw["kev"])
+    kev = known_exploited(cves, kev_catalog)
 
     report = Report(
         indicator=file_hash,
@@ -186,6 +207,18 @@ async def run_cli(argv: list[str] | None = None) -> int:
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
         static=static_report,
+        # None all the way through when the source never ran: a section
+        # printed for a source nobody asked is indistinguishable from one
+        # that ran and found nothing.
+        bazaar=extract_bazaar(raw["bazaar"]) if raw["bazaar"] is not None else None,
+        threatfox=(extract_threatfox(raw["threatfox"])
+                   if raw["threatfox"] is not None else None),
+        certs=merge_crtsh(raw["crtsh"]) if raw["crtsh"] else None,
+        shodan=shodan,
+        greynoise=greynoise,
+        kev=kev,
+        kev_error=kev_error,
+        kev_unchecked=len(cves) if kev_error else 0,
     )
 
     verdict = score(report)

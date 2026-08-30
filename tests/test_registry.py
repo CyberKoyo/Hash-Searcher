@@ -37,9 +37,15 @@ def test_serial_delay_defaults_to_zero():
                     indicator_types=("hash",), fetch=None).serial_delay == 0.0
 
 
-def test_real_registry_covers_the_four_current_sources():
+def test_real_registry_covers_every_current_source():
+    """Pinned by name: a source added to PROVIDERS without a decision about
+    its indicator types, TTL, and rate limit is exactly what Constraints 5-7
+    forbid, and this list is where that decision becomes visible."""
     from hash_searcher.api.registry import PROVIDERS
-    assert {p.name for p in PROVIDERS} == {"virustotal", "otx", "abuseipdb", "censys"}
+    assert {p.name for p in PROVIDERS} == {
+        "virustotal", "otx", "abuseipdb", "censys", "malwarebazaar",
+        "rdap", "shodan", "greynoise", "crtsh", "threatfox",
+    }
 
 
 def test_by_name_finds_a_provider():
@@ -75,6 +81,35 @@ def test_available_sees_a_key_set_after_import(monkeypatch):
     assert "TOTAL_KEY" not in missing_keys()
 
 
+INDICATOR_NAMES = {"indicator", "ip", "domain", "file_hash", "hash"}
+
+
+def test_a_new_provider_needs_only_a_registry_entry():
+    """The registry's documented promise, executed rather than asserted in
+    prose. The parameter NAME varies meaningfully per source -- pinning one
+    word would be pedantry -- but the POSITION is the actual contract."""
+    import inspect
+
+    from hash_searcher.api.registry import PROVIDERS
+
+    for provider in PROVIDERS:
+        assert provider.fetch is not None, f"{provider.name} has no fetch"
+        params = list(inspect.signature(provider.fetch).parameters.values())
+        required = [
+            p for p in params
+            if p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_KEYWORD,
+                               inspect.Parameter.VAR_POSITIONAL)
+        ]
+        assert len(required) == 2, \
+            f"{provider.name} takes {len(required)} required args, not 2"
+        assert required[0].name == "client", f"{provider.name}'s first arg is not client"
+        assert required[1].name in INDICATOR_NAMES, \
+            f"{provider.name}'s second arg is {required[1].name!r}"
+        assert provider.indicator_types, f"{provider.name} declares no indicator types"
+        assert provider.cache_ttl > 0, f"{provider.name} has no cache TTL"
+
+
 def test_every_provider_fetch_takes_client_and_indicator():
     """Obs. B: the registry's promise -- append a Provider, add a source --
     only holds if every fetch agrees on its call shape."""
@@ -87,9 +122,52 @@ def test_every_provider_fetch_takes_client_and_indicator():
         if provider.fetch is None:
             continue
         params = list(inspect.signature(provider.fetch).parameters.values())
-        required = [p for p in params if p.default is inspect.Parameter.empty]
+        # *args/**kwargs are not required parameters -- a provider taking
+        # **kwargs to forward max_attempts into api_get/api_post is still
+        # callable as fetch(client, indicator), which is the contract.
+        required = [
+            p for p in params
+            if p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_KEYWORD,
+                               inspect.Parameter.VAR_POSITIONAL)
+        ]
         assert len(required) == 2, f"{provider.name} takes {len(required)} required args"
         # Counting arity alone would pass fetch(indicator, client), which
         # breaks the exact promise this test exists to guard.
         assert required[0].name == "client", \
             f"{provider.name} takes {required[0].name!r} first, not 'client'"
+
+
+def test_for_indicator_selects_only_providers_that_handle_the_type(monkeypatch):
+    from hash_searcher.api.registry import for_indicator
+
+    monkeypatch.setenv("TOTAL_KEY", "set")
+    monkeypatch.setenv("CENSYS_KEY", "set")
+    assert [p.name for p in for_indicator("hash", _providers())] == ["vt"]
+    assert [p.name for p in for_indicator("ip", _providers())] == ["censys"]
+    assert [p.name for p in for_indicator("domain", _providers())] == ["crtsh"]
+
+
+def test_for_indicator_still_respects_key_availability(monkeypatch):
+    """A provider whose key is unset must not be selected just because it
+    declares the right indicator type."""
+    from hash_searcher.api.registry import for_indicator
+
+    monkeypatch.delenv("TOTAL_KEY", raising=False)
+    assert [p.name for p in for_indicator("hash", _providers())] == []
+
+
+def test_every_registered_provider_declares_at_least_one_indicator_type():
+    """Constraint 5: an empty tuple makes a provider unreachable through
+    for_indicator, so it would silently never run."""
+    from hash_searcher.api.registry import PROVIDERS
+
+    for provider in PROVIDERS:
+        assert provider.indicator_types, f"{provider.name} declares no indicator types"
+
+
+def test_a_key_shared_by_two_providers_is_named_once(monkeypatch):
+    """ABUSECH_KEY covers both MalwareBazaar and ThreatFox; check_env's
+    warning line listed it twice before missing_keys de-duplicated."""
+    monkeypatch.delenv("ABUSECH_KEY", raising=False)
+    assert missing_keys().count("ABUSECH_KEY") == 1

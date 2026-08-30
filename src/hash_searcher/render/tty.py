@@ -232,6 +232,137 @@ def render_domains(report: Report) -> None:
         print(domain)
 
 
+def render_bazaar(report: Report) -> None:
+    """MalwareBazaar's answer. Absent only when the source never ran.
+
+    found=False with no error prints a line rather than nothing: "abuse.ch
+    has never seen this sample" is an answer, and a different one from "we
+    could not ask abuse.ch".
+    """
+    bazaar = report.bazaar
+    if bazaar is None:
+        return
+    _header("MALWAREBAZAAR")
+    if bazaar.error:
+        print(f"MalwareBazaar: {bazaar.error}")
+        return
+    if not bazaar.found:
+        print("MalwareBazaar has no record of this sample.")
+        return
+    print(f"Family:     {bazaar.family or 'unnamed'}")
+    if bazaar.file_type:
+        print(f"File type:  {bazaar.file_type}")
+    if bazaar.first_seen:
+        print(f"First seen: {bazaar.first_seen}")
+    if bazaar.tags:
+        print(f"Tags:       {', '.join(bazaar.tags)}")
+    if bazaar.yara:
+        print(f"YARA:       {', '.join(bazaar.yara)}")
+
+
+def render_threatfox(report: Report) -> None:
+    threatfox = report.threatfox
+    if threatfox is None:
+        return
+    _header("THREATFOX")
+    if threatfox.error:
+        print(f"ThreatFox: {threatfox.error}")
+        return
+    if not threatfox.found:
+        print("ThreatFox has no record of this indicator.")
+        return
+    print(f"Malware:    {threatfox.malware or 'unnamed'} "
+          f"({threatfox.confidence}% confidence)")
+    if threatfox.tags:
+        print(f"Tags:       {', '.join(threatfox.tags)}")
+
+
+#: A real Shodan answer for a busy web server carries well over a hundred
+#: CVEs. Printed whole they are one unreadable line that buries every
+#: section under it -- so the list is capped and the total printed beside
+#: it, the same bargain render_certs makes with sibling domains. The full
+#: list is still in the JSON report.
+CVE_DISPLAY_LIMIT = 12
+
+
+def render_ip_intel(report: Report) -> None:
+    """Shodan exposure and GreyNoise noise-vs-targeted, per contacted IP."""
+    if not report.shodan and not report.greynoise:
+        return
+    _header("IP INTELLIGENCE")
+    for ip in dict.fromkeys((*report.shodan, *report.greynoise)):
+        print(f"\nIP:      {ip}")
+        shodan = report.shodan.get(ip)
+        if shodan and shodan.error:
+            print(f"Shodan:  {shodan.error}")
+        elif shodan:
+            print(f"Ports:   {', '.join(str(p) for p in shodan.ports) or 'none known'}")
+            if shodan.vulns:
+                shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
+                more = (f" (showing {CVE_DISPLAY_LIMIT})"
+                        if len(shodan.vulns) > CVE_DISPLAY_LIMIT else "")
+                print(f"CVEs:    {len(shodan.vulns)} CVEs{more}: "
+                      f"{', '.join(shown)}")
+            if shodan.hostnames:
+                print(f"Names:   {', '.join(shodan.hostnames)}")
+        noise = report.greynoise.get(ip)
+        if noise and noise.error:
+            print(f"GreyNoise: {noise.error}")
+        elif noise and noise.seen:
+            actor = f" -- {noise.name}" if noise.name else ""
+            print(f"GreyNoise: {noise.classification or 'seen'}{actor}, "
+                  f"last seen {noise.last_seen or 'N/A'}")
+        elif noise:
+            # The more interesting answer of the two: an address GreyNoise
+            # has never seen scanning is not internet background noise.
+            print("GreyNoise: not observed scanning the internet")
+
+
+def render_kev(report: Report) -> None:
+    """Silent only when there was nothing to check.
+
+    An unreachable CISA is not the same answer as "none of these CVEs are
+    known-exploited", and it suppresses the strongest signal the tool has,
+    so it gets a line of its own rather than an absent section.
+    """
+    if report.kev_error:
+        _header("KNOWN EXPLOITED VULNERABILITIES")
+        print(f"CISA KEV was unreachable ({report.kev_error}) -- "
+              f"{report.kev_unchecked} CVEs on contacted hosts went unchecked.")
+        return
+    if not report.kev:
+        return
+    _header("KNOWN EXPLOITED VULNERABILITIES")
+    for entry in report.kev:
+        product = " ".join(x for x in (entry.vendor, entry.product) if x)
+        ransomware = "  [ransomware campaign]" if entry.ransomware else ""
+        print(f"{entry.cve}  {product or 'unknown product'} -- "
+              f"{entry.name or 'no title'} (added {entry.date_added or 'N/A'})"
+              f"{ransomware}")
+
+
+def render_certs(report: Report) -> None:
+    """Certificate-transparency siblings. Informational, and scored at zero
+    on purpose -- see scoring.py. The count is printed alongside a capped
+    list because a truncated list that reads as complete is worse than none.
+    """
+    certs = report.certs
+    if certs is None:
+        return
+    _header("CERTIFICATE TRANSPARENCY")
+    if certs.error:
+        print(f"crt.sh: {certs.error}")
+        return
+    if not certs.siblings:
+        print("No certificates found for the contacted domains.")
+        return
+    shown = len(certs.siblings)
+    tail = f" (showing {shown})" if shown < certs.count else ""
+    print(f"{certs.count} sibling domains on shared certificates{tail}:")
+    for domain in certs.siblings:
+        print(f"  {domain}")
+
+
 def render(report: Report, verdict: Verdict | None = None) -> None:
     if verdict is not None:
         render_verdict(verdict)
@@ -243,9 +374,14 @@ def render(report: Report, verdict: Verdict | None = None) -> None:
     # AbuseIPDB happened to yield usable data -- see main.py history. This
     # keeps the TTY and JSON/PDF outputs in agreement regardless of which
     # of AbuseIPDB/Censys/WHOIS succeeded.
+    render_bazaar(report)
+    render_threatfox(report)
     if report.vt.contacted_ips:
         render_ips(report)
         render_hosts(report)
         render_whois(report)
+    render_ip_intel(report)
+    render_kev(report)
     render_domains(report)
+    render_certs(report)
     render_otx(report)

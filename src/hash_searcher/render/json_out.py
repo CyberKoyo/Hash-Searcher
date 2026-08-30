@@ -107,6 +107,29 @@ def _static_dict(static: StaticReport) -> dict:
     }
 
 
+def _phase4_dict(report: Report) -> dict:
+    """The Phase 4 sources, each present-but-null when it never ran.
+
+    Same rule as _vt_dict and _static_dict above: a consumer can then tell
+    "the source had nothing" from "this tool never asked it". certs carries
+    the untruncated `count` alongside the capped `siblings` list, so a JSON
+    consumer is not misled by the cap either.
+    """
+    return {
+        "bazaar": asdict(report.bazaar) if report.bazaar else None,
+        "threatfox": asdict(report.threatfox) if report.threatfox else None,
+        "certs": asdict(report.certs) if report.certs else None,
+        "shodan": {ip: asdict(r) for ip, r in report.shodan.items()},
+        "greynoise": {ip: asdict(r) for ip, r in report.greynoise.items()},
+        "kev": [asdict(entry) for entry in report.kev],
+        # Present-but-null unless the catalog could not be fetched, so a
+        # consumer never reads an empty "kev" as "nothing is exploited"
+        # when the truth is that nobody could ask.
+        "kev_error": report.kev_error,
+        "kev_unchecked": report.kev_unchecked,
+    }
+
+
 def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
         "hash": report.indicator,
@@ -123,6 +146,7 @@ def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
             for level in ("high", "medium", "low")
         },
         "vt": _vt_dict(report.vt),
+        **_phase4_dict(report),
     }
     if verdict is not None:
         body["verdict"] = _verdict_dict(verdict)

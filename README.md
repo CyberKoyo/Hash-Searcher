@@ -1,11 +1,11 @@
 
 ## Hash-Searcher 🔍
 
-A fast, asynchronous Python tool to check file hashes across VirusTotal, AbuseIPDB, Censys, WHOIS, and AlienVault OTX. Supports password-protected ZIP files and modern AES-256 encryption.
+A fast, asynchronous Python tool to check file hashes across eleven intelligence sources. Five need no account at all, two more need only a free one, and four are commercial-tier keys. Supports password-protected ZIP files and modern AES-256 encryption.
 
 🚀 Features
 
-Multi-engine search: Fetches data from VT, OTX, AbuseIPDB, Censys, and WHOIS simultaneously.
+Multi-engine search: Fetches from every source that can answer for the indicator at hand, concurrently. See 🔌 Sources below for which need a key.
 
 ZIP Intelligence: Detects ZIP files, prompts for a password, and hashes every member — but only the first is analyzed. The remaining hashes are listed as `not analyzed` and are never sent to the providers. Nested archives are not unpacked.
 
@@ -15,7 +15,7 @@ OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relatio
 
 Report Production: Automatically formatted output to either .json or PDF.
 
-Cache System: VirusTotal, OTX, AbuseIPDB, and Censys responses are cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`), each for 24 hours. WHOIS is not cached. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
+Cache System: Every provider response is cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). The TTL is chosen per source rather than shared — ThreatFox turns over hourly, RDAP registration data on the order of years — and the exact numbers are in the 🔌 Sources table. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
 Local Static Analysis: Before any network call, a supplied file (not a bare hash) is inspected locally -- entropy, a file-type-versus-extension check, and printable-string/IOC extraction always run; PE parsing and YARA scanning run when their optional libraries are installed. See 🔬 Static Analysis below.
 
@@ -23,8 +23,10 @@ Local Static Analysis: Before any network call, a supplied file (not a bare hash
 
 1. Clone the repo: `git clone https://github.com/yourusername/hash-searcher.git`
 2. Install: `pip install -e .`  (add `[dev]` for the test suite, `[static]` for local static analysis -- see 🔬 Static Analysis below)
-3. Copy `.env.example.txt` to `.env` and fill in your VirusTotal, AlienVault OTX,
-   AbuseIPDB, and Censys keys.
+3. Copy `.env.example.txt` to `.env` and fill in whichever keys you have.
+   No key is mandatory — the tool runs and reports with an empty `.env` — but
+   how much you get back depends on which you set. See 🔌 Sources, and read
+   "What an empty .env actually gets you" there before assuming it is enough.
 
 🧪 Tests
 
@@ -160,9 +162,85 @@ The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
 | packed    | +10 | Local entropy analysis flags the file as packed (see 🔬 Static Analysis) |
 | suspicious_imports | +15 | A locally-parsed PE imports 3 or more APIs associated with process injection or evasion |
 | yara_local | +20 | A local YARA rule (from `--yara-rules` or the default rules directory) matched |
+| bazaar    | +15 | MalwareBazaar holds this exact sample, usually with a family name |
+| threatfox | +15 | ThreatFox attributes this indicator to a malware family |
+| kev       | +25 | A contacted host exposes a CVE CISA lists as known-exploited |
+| internet_noise | −10 | GreyNoise calls a contacted IP benign internet background noise — scanning everyone is not evidence about *this* sample |
+
+Certificate-transparency siblings score **nothing** on purpose. They are a
+pivot, not a verdict; scoring them would make every large hosting provider
+look malicious.
 
 These weights are a coarse triage aid, not a classifier. They are constants at
 the top of one file precisely so you can argue with them and change them.
+
+🔌 Sources
+
+| Source | Key | Indicators | Cache TTL | What it contributes |
+|---|---|---|---|---|
+| VirusTotal | `TOTAL_KEY` | hash | 24h | Detection ratio, Sigma rules, sandbox verdicts, contacted IPs and domains |
+| AlienVault OTX | `OTX_KEY` | hash, ip, domain | 24h | Threat pulses and ATT&CK techniques |
+| AbuseIPDB | `IPDB_KEY` | ip | 24h | Abuse confidence and report counts for contacted IPs |
+| Censys | `CENSYS_KEY` | ip | 24h | ASN, org, country, open ports, reverse DNS |
+| MalwareBazaar | free `ABUSECH_KEY` | hash | 24h | Malware family, tags, file type, YARA rules — names families VT may only call `trojan.generic` |
+| ThreatFox | free `ABUSECH_KEY` | hash, ip, domain | 1h | IOC → family attribution with a confidence level |
+| Shodan InternetDB | none | ip | 24h | Open ports, CPEs, and known CVEs per contacted IP |
+| GreyNoise Community | optional `GREYNOISE_KEY` | ip | 24h | Whether an IP scans the whole internet or was aimed at you |
+| crt.sh | none | domain | 24h | Sibling domains from certificate transparency (at most the first 10 contacted domains — it is serial and slow) |
+| RDAP | none | domain | 7d | Domain registration dates and registrar |
+| CISA KEV | none | (catalog) | 7d | Which CVEs on contacted hosts are confirmed exploited in the wild |
+
+`GREYNOISE_KEY` is **optional**: GreyNoise Community answers without a key and
+the key only raises the rate limit, so leaving it unset costs no coverage.
+
+If the CISA KEV catalog cannot be fetched when there were CVEs to check, the
+report says so and names how many went unchecked — an empty
+KNOWN EXPLOITED VULNERABILITIES section always means "none matched", never
+"nobody could ask".
+
+RDAP has gaps the old `whois` library did not: `.de`, `.jp`, and `.io` run no
+public RDAP server, and those report "No RDAP server for this TLD" rather than
+being confused with a domain that is simply unregistered.
+
+`ABUSECH_KEY` is free (one account at <https://auth.abuse.ch/> covers both
+MalwareBazaar and ThreatFox). Both APIs were open when this tool first added
+them and now answer `401 {"error": "Unauthorized"}` without a key, so they are
+skipped when it is unset rather than failing on every run.
+
+**What an empty `.env` actually gets you.** Five sources still run — Shodan
+InternetDB, GreyNoise Community, crt.sh, RDAP, and CISA KEV — but every one of
+them answers for an **IP or a domain**, not for a hash. So:
+
+- `hash-searcher <a bare hash>` with no keys returns an empty report. Nothing
+  in the keyless set can say anything about a hash it was handed on its own.
+- `hash-searcher <a file>` with no keys still works, because local static
+  analysis extracts IPs and domains from the file's strings and those feed the
+  keyless IP and domain sources — that is how the Shodan → CVE → CISA KEV chain
+  fires with nothing configured.
+- Setting the free `ABUSECH_KEY` is what restores hash-level answers without a
+  commercial key: MalwareBazaar and ThreatFox both take a hash.
+
+VirusTotal remains the only source that turns a hash into contacted IPs and
+domains, so a `TOTAL_KEY` still multiplies what every other source can reach.
+
+CISA KEV is not a per-indicator lookup — it is a ~1MB catalog, downloaded at
+most once per run and only when Shodan actually reported CVEs to intersect it
+against, then matched locally. That is why it is the one source that is not a
+registry `Provider`: the registry's contract is `fetch(client, indicator)`, and
+a catalog takes no indicator.
+
+Censys, crt.sh, and GreyNoise rate limit hard enough that their lookups run
+serially with a gap between requests. Every request identifies the tool by
+User-Agent, which several of these services ask for and crt.sh throttles
+harder without.
+
+WHOIS used to come from the `whois` PyPI package, which raised parse errors,
+socket errors, and `UnicodeDecodeError` indiscriminately and had to be wrapped
+in a bare `except Exception`. It is gone: registration data now comes from RDAP
+over the same HTTP path as every other source, with the same retries, backoff,
+and error handling. One caveat that came with the swap — a TLD with no public
+RDAP server (`.de`, for instance) now reports an explicit error rather than a
+silent row of `N/A`.
 
 🚦 Exit codes
 
@@ -183,6 +261,14 @@ YARA matches, PE metadata, submission history, and resolved MITRE ATT&CK
 techniques), contacted domains, and — when VT reports contacted IPs — the
 AbuseIPDB table, Censys enrichment, and WHOIS records for those IPs. Sections
 with nothing to say stay silent rather than printing an empty frame.
+
+The Phase 4 sources add their own sections: MALWAREBAZAAR and THREATFOX for
+family attribution, IP INTELLIGENCE (Shodan ports/CVEs and the GreyNoise
+noise-versus-targeted call) per contacted IP, KNOWN EXPLOITED VULNERABILITIES
+for any CVE in the CISA KEV catalog, and CERTIFICATE TRANSPARENCY for sibling
+domains. The sibling list is capped at 100 names but always prints the
+untruncated total, because a truncated list that reads as complete is worse
+than none.
 
 When a file (not a bare hash) is analyzed and `--no-static` was not passed, a
 STATIC ANALYSIS section prints the local findings — entropy, file-type

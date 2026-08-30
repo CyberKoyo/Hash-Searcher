@@ -1,0 +1,8 @@
+{
+  "cpes": ["cpe:/a:openbsd:openssh:7.4"],
+  "hostnames": ["host.example"],
+  "ip": "198.51.100.10",
+  "ports": [22, 80, 443],
+  "tags": ["cloud"],
+  "vulns": ["CVE-2018-15473", "CVE-2021-41617"]
+}
