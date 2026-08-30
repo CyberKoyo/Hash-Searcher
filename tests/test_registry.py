@@ -92,7 +92,15 @@ def test_every_provider_fetch_takes_client_and_indicator():
         if provider.fetch is None:
             continue
         params = list(inspect.signature(provider.fetch).parameters.values())
-        required = [p for p in params if p.default is inspect.Parameter.empty]
+        # *args/**kwargs are not required parameters -- a provider taking
+        # **kwargs to forward max_attempts into api_get/api_post is still
+        # callable as fetch(client, indicator), which is the contract.
+        required = [
+            p for p in params
+            if p.default is inspect.Parameter.empty
+            and p.kind not in (inspect.Parameter.VAR_KEYWORD,
+                               inspect.Parameter.VAR_POSITIONAL)
+        ]
         assert len(required) == 2, f"{provider.name} takes {len(required)} required args"
         # Counting arity alone would pass fetch(indicator, client), which
         # breaks the exact promise this test exists to guard.
