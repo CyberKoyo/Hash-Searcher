@@ -14,7 +14,8 @@ def test_schema_keys_are_preserved(sample_report):
                                    # Phase 4, always present, null when the
                                    # source never ran.
                                    "bazaar", "threatfox", "certs", "shodan",
-                                   "greynoise", "kev"}
+                                   "greynoise", "kev", "kev_error",
+                                   "kev_unchecked"}
 
 
 def test_censys_entry_has_no_hostnames_key(sample_report):

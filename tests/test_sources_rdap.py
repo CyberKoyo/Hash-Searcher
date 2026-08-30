@@ -101,3 +101,50 @@ def test_the_whois_library_is_gone():
     root = pathlib.Path(__file__).resolve().parent.parent
     assert not (root / "src/hash_searcher/api/who_is.py").exists()
     assert "whois" not in (root / "requirements.txt").read_text().lower()
+
+
+@respx.mock
+async def test_a_tld_with_no_rdap_server_is_not_reported_as_an_unregistered_domain(no_backoff):
+    """rdap.org answers 404 with this title for .de, .jp, and .io, which run
+    no RDAP server at all. Reporting that as "no RDAP record" tells an
+    analyst a registered domain does not exist -- a different, wrong fact."""
+    from hash_searcher.analysis.whois import extract_whois
+    from hash_searcher.api.rdap import get_rdap
+
+    respx.get(url__regex=RDAP_RE).mock(return_value=httpx.Response(404, json={
+        "errorCode": 404,
+        "title": "No RDAP service is available for this resource",
+    }))
+    async with httpx.AsyncClient() as client:
+        [record] = extract_whois([await get_rdap(client, "example.de")])
+
+    assert "No RDAP server for this TLD" in record.error
+    assert record.domain == "example.de"
+
+
+@respx.mock
+async def test_an_authoritative_404_still_means_the_domain_is_not_registered(no_backoff):
+    from hash_searcher.analysis.whois import extract_whois
+    from hash_searcher.api.rdap import get_rdap
+
+    respx.get(url__regex=RDAP_RE).mock(return_value=httpx.Response(404, text="nope"))
+    async with httpx.AsyncClient() as client:
+        [record] = extract_whois([await get_rdap(client, "nx.example")])
+
+    assert record.error == "No RDAP record for nx.example"
+
+
+@respx.mock
+async def test_a_domain_cannot_escape_the_rdap_url_path(no_backoff):
+    """`domain` is third-party data -- a VT relationship id or a Censys
+    reverse-DNS name -- landing in a URL path that is followed through
+    redirects. httpx normalizes ../ segments, so quoting is what keeps the
+    request on the endpoint it names."""
+    from hash_searcher.api.rdap import get_rdap
+
+    route = respx.get(url__regex=r"https://rdap\.org/.*").mock(
+        return_value=httpx.Response(200, json={"ldhName": "x"}))
+    async with httpx.AsyncClient() as client:
+        await get_rdap(client, "../../evil.example")
+
+    assert str(route.calls[0].request.url).startswith("https://rdap.org/domain/")

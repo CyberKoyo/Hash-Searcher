@@ -9,6 +9,8 @@ unavailable. The header is simply omitted, and the key is read at call
 time rather than frozen at import (Obs. C).
 """
 
+from urllib.parse import quote
+
 import httpx
 
 from . import config
@@ -24,7 +26,7 @@ async def get_greynoise(client: httpx.AsyncClient, ip, **kwargs) -> dict:
         headers["key"] = key
     return await api_get(
         client,
-        f"{COMMUNITY_URL}/{ip}",
+        f"{COMMUNITY_URL}/{quote(str(ip), safe='')}",
         headers,
         source="GreyNoise",
         not_found=f"GreyNoise has not observed {ip}",

@@ -6,6 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..models import Report, Verdict
+from .tty import CVE_DISPLAY_LIMIT
 
 TABLE_STYLE = TableStyle([
     ('BACKGROUND',      (0, 0), (-1, 0), colors.grey),
@@ -42,6 +43,27 @@ def _ip_rows(report: Report):
     """Every IP either Shodan or GreyNoise had something to say about."""
     return [(ip, report.shodan.get(ip))
             for ip in dict.fromkeys((*report.shodan, *report.greynoise))]
+
+
+def _cve_cell(shodan) -> str:
+    """Bounded CVE text for a table cell.
+
+    A reportlab table row cannot split across pages, so an unbounded list
+    here is not a formatting wart -- it raises LayoutError and takes the
+    whole `-o report.pdf` run down after every provider succeeded. Real
+    Shodan answers reach 120-137 CVEs for one host, well past the ~50 that
+    overflows the frame. Same cap and same honesty as render_ip_intel: the
+    total is stated, so a truncated cell never reads as the whole answer.
+    """
+    if shodan is None:
+        return ""
+    if not shodan.vulns:
+        return ""
+    shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
+    if len(shodan.vulns) <= CVE_DISPLAY_LIMIT:
+        return ", ".join(shown)
+    return (f"{len(shodan.vulns)} CVEs (showing {CVE_DISPLAY_LIMIT}): "
+            + ", ".join(shown))
 
 
 def _greynoise_cell(noise) -> str:
@@ -178,7 +200,7 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             [["IP", "Ports", "CVEs", "GreyNoise"]]
             + [[Paragraph(_x(ip)),
                 Paragraph(_x(", ".join(str(p) for p in s.ports) if s else "")),
-                Paragraph(_x(", ".join(s.vulns) if s else "")),
+                Paragraph(_x(_cve_cell(s))),
                 Paragraph(_x(_greynoise_cell(report.greynoise.get(ip))))]
                for ip, s in _ip_rows(report)],
             widths=[90, 80, 160, 120],

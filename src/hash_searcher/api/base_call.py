@@ -136,10 +136,16 @@ def _finish(
             return response.json()
         except ValueError:
             return make_error(f"{source} returned malformed JSON", status)
-    if status == 404:
-        return make_error(not_found or f"Not found in {source}", status)
+    # extra_status is consulted before the generic 404 text because it is the
+    # only hook that can read the response body. RDAP needs exactly that: a
+    # 404 from rdap.org means "this TLD has no RDAP server" while a 404 from
+    # an authoritative server means "no such domain", and telling an analyst
+    # the second when the first is true is worse than saying nothing. No
+    # other provider registers 404, so this reorder changes nothing for them.
     if extra_status and status in extra_status:
         return make_error(extra_status[status](response), status)
+    if status == 404:
+        return make_error(not_found or f"Not found in {source}", status)
     return make_error(f"{source} API Error {status}", status)
 
 
@@ -184,6 +190,7 @@ async def api_post(
     not_found: str | None = None,
     extra_status: dict[int, Callable[[httpx.Response], str]] | None = None,
     max_attempts: int = MAX_ATTEMPTS,
+    follow_redirects: bool = False,
 ) -> Any:
     """POST with api_get's exact contract: parsed JSON or an error dict.
 
@@ -195,7 +202,7 @@ async def api_post(
 
     response, last_network_error = await _request(
         client, "POST", url, headers, data=data, json=json,
-        max_attempts=max_attempts,
+        max_attempts=max_attempts, follow_redirects=follow_redirects,
     )
     return _finish(response, last_network_error, source=source,
                    not_found=not_found, extra_status=extra_status)

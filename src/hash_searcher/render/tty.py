@@ -319,6 +319,17 @@ def render_ip_intel(report: Report) -> None:
 
 
 def render_kev(report: Report) -> None:
+    """Silent only when there was nothing to check.
+
+    An unreachable CISA is not the same answer as "none of these CVEs are
+    known-exploited", and it suppresses the strongest signal the tool has,
+    so it gets a line of its own rather than an absent section.
+    """
+    if report.kev_error:
+        _header("KNOWN EXPLOITED VULNERABILITIES")
+        print(f"CISA KEV was unreachable ({report.kev_error}) -- "
+              f"{report.kev_unchecked} CVEs on contacted hosts went unchecked.")
+        return
     if not report.kev:
         return
     _header("KNOWN EXPLOITED VULNERABILITIES")

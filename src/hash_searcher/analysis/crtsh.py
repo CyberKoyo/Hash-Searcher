@@ -27,7 +27,10 @@ def extract_crtsh(raw) -> CertReport:
             continue
         for name in str(row.get("name_value") or "").split("\n"):
             name = name.strip().lower().removeprefix("*.")
-            if not name or name in seen:
+            # name_value carries rfc822Name SANs as well as DNS names --
+            # example.com's own certificate log has one. An email address
+            # is not a domain to pivot on.
+            if not name or "@" in name or name in seen:
                 continue
             seen.add(name)
             siblings.append(name)

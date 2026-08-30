@@ -16,6 +16,13 @@ from .base_call import api_get
 
 CRTSH_URL = "https://crt.sh/"
 
+#: How many contacted domains are worth asking about. Far below IOC_LIMIT
+#: on purpose: crt.sh is serial with a 2s gap, individual queries run to
+#: several seconds, and every answer is merged into one CertReport capped
+#: at SIBLING_LIMIT names -- so the domains past these add minutes of
+#: runtime for output the report will not show.
+CRTSH_DOMAIN_LIMIT = 10
+
 
 async def get_crtsh(client: httpx.AsyncClient, domain, **kwargs):
     return await api_get(

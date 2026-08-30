@@ -1,7 +1,7 @@
 
 ## Hash-Searcher 🔍
 
-A fast, asynchronous Python tool to check file hashes across eleven intelligence sources — four of which need no account at all and two more of which need only a free one, so the tool produces a useful report with nothing configured. Supports password-protected ZIP files and modern AES-256 encryption.
+A fast, asynchronous Python tool to check file hashes across eleven intelligence sources. Five need no account at all, two more need only a free one, and four are commercial-tier keys. Supports password-protected ZIP files and modern AES-256 encryption.
 
 🚀 Features
 
@@ -24,8 +24,9 @@ Local Static Analysis: Before any network call, a supplied file (not a bare hash
 1. Clone the repo: `git clone https://github.com/yourusername/hash-searcher.git`
 2. Install: `pip install -e .`  (add `[dev]` for the test suite, `[static]` for local static analysis -- see 🔬 Static Analysis below)
 3. Copy `.env.example.txt` to `.env` and fill in whichever keys you have.
-   None are required: with an empty `.env` the six keyless sources still run
-   and the tool still produces a report. See 🔌 Sources.
+   No key is mandatory — the tool runs and reports with an empty `.env` — but
+   how much you get back depends on which you set. See 🔌 Sources, and read
+   "What an empty .env actually gets you" there before assuming it is enough.
 
 🧪 Tests
 
@@ -185,20 +186,42 @@ the top of one file precisely so you can argue with them and change them.
 | ThreatFox | free `ABUSECH_KEY` | hash, ip, domain | 1h | IOC → family attribution with a confidence level |
 | Shodan InternetDB | none | ip | 24h | Open ports, CPEs, and known CVEs per contacted IP |
 | GreyNoise Community | optional `GREYNOISE_KEY` | ip | 24h | Whether an IP scans the whole internet or was aimed at you |
-| crt.sh | none | domain | 24h | Sibling domains from certificate transparency |
+| crt.sh | none | domain | 24h | Sibling domains from certificate transparency (at most the first 10 contacted domains — it is serial and slow) |
 | RDAP | none | domain | 7d | Domain registration dates and registrar |
 | CISA KEV | none | (catalog) | 7d | Which CVEs on contacted hosts are confirmed exploited in the wild |
 
 `GREYNOISE_KEY` is **optional**: GreyNoise Community answers without a key and
 the key only raises the rate limit, so leaving it unset costs no coverage.
 
+If the CISA KEV catalog cannot be fetched when there were CVEs to check, the
+report says so and names how many went unchecked — an empty
+KNOWN EXPLOITED VULNERABILITIES section always means "none matched", never
+"nobody could ask".
+
+RDAP has gaps the old `whois` library did not: `.de`, `.jp`, and `.io` run no
+public RDAP server, and those report "No RDAP server for this TLD" rather than
+being confused with a domain that is simply unregistered.
+
 `ABUSECH_KEY` is free (one account at <https://auth.abuse.ch/> covers both
 MalwareBazaar and ThreatFox). Both APIs were open when this tool first added
 them and now answer `401 {"error": "Unauthorized"}` without a key, so they are
 skipped when it is unset rather than failing on every run.
 
-With nothing at all in `.env`, Shodan InternetDB, crt.sh, RDAP, and CISA KEV
-still run.
+**What an empty `.env` actually gets you.** Five sources still run — Shodan
+InternetDB, GreyNoise Community, crt.sh, RDAP, and CISA KEV — but every one of
+them answers for an **IP or a domain**, not for a hash. So:
+
+- `hash-searcher <a bare hash>` with no keys returns an empty report. Nothing
+  in the keyless set can say anything about a hash it was handed on its own.
+- `hash-searcher <a file>` with no keys still works, because local static
+  analysis extracts IPs and domains from the file's strings and those feed the
+  keyless IP and domain sources — that is how the Shodan → CVE → CISA KEV chain
+  fires with nothing configured.
+- Setting the free `ABUSECH_KEY` is what restores hash-level answers without a
+  commercial key: MalwareBazaar and ThreatFox both take a hash.
+
+VirusTotal remains the only source that turns a hash into contacted IPs and
+domains, so a `TOTAL_KEY` still multiplies what every other source can reach.
 
 CISA KEV is not a per-indicator lookup — it is a ~1MB catalog, downloaded at
 most once per run and only when Shodan actually reported CVEs to intersect it
@@ -239,7 +262,7 @@ techniques), contacted domains, and — when VT reports contacted IPs — the
 AbuseIPDB table, Censys enrichment, and WHOIS records for those IPs. Sections
 with nothing to say stay silent rather than printing an empty frame.
 
-The keyless sources add their own sections: MALWAREBAZAAR and THREATFOX for
+The Phase 4 sources add their own sections: MALWAREBAZAAR and THREATFOX for
 family attribution, IP INTELLIGENCE (Shodan ports/CVEs and the GreyNoise
 noise-versus-targeted call) per contacted IP, KNOWN EXPLOITED VULNERABILITIES
 for any CVE in the CISA KEV catalog, and CERTIFICATE TRANSPARENCY for sibling

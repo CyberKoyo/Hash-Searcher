@@ -24,7 +24,7 @@ def extract_threatfox(raw) -> ThreatFoxReport:
         return ThreatFoxReport(found=False,
                                error=f"ThreatFox query_status: {status}")
 
-    entries = raw.get("data") or []
+    entries = [e for e in (raw.get("data") or []) if isinstance(e, dict)]
     if not entries:
         return ThreatFoxReport(found=False)
     entry = entries[0]

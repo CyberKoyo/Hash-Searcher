@@ -6,14 +6,15 @@ import httpx
 
 from ..analysis.censys import extract_hosts
 from ..analysis.ipdb import extract_ips
+from ..analysis.shodan import extract_shodan, observed_cves
 from ..hashing import get_zip_hash
-from .rdap import get_rdap
+from .rdap import RDAP_CONCURRENCY, get_rdap
 from .virustotal import contacted_domains, contacted_ips, get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .cisa_kev import KEV_CACHE_TTL, get_kev
-from .crtsh import get_crtsh
+from .crtsh import CRTSH_DOMAIN_LIMIT, get_crtsh
 from .greynoise import get_greynoise
 from .malwarebazaar import get_bazaar
 from .shodan_internetdb import get_shodan
@@ -54,6 +55,22 @@ def resolve_hash(user_input: str, password: str | None = None) -> list[str] | No
         print("Could not hash that file. Nothing to look up.")
         return None
     return hashes
+
+
+async def _bounded_gather(limit: int, *coroutines):
+    """gather(), but at most `limit` in flight.
+
+    A bare gather over the contacted domains opens one connection per
+    domain -- up to IOC_LIMIT of them -- at a free bootstrap service.
+    Constraint 7 applies to keyless sources too.
+    """
+    semaphore = asyncio.Semaphore(limit)
+
+    async def bounded(coroutine):
+        async with semaphore:
+            return await coroutine
+
+    return list(await asyncio.gather(*(bounded(c) for c in coroutines)))
 
 
 async def _cached(cache, name: str, key: str, fetch, ttl: int | None = None):
@@ -148,22 +165,6 @@ def _domains(vt_data, ipdb_data: list, censys_results: list) -> list[str]:
     return _merge_indicators(contacted_domains(vt_data), censys_domains)
 
 
-def _observed_cves(shodan_results: list) -> list[str]:
-    """Every CVE Shodan reported across the contacted IPs, de-duplicated.
-
-    Empty means the KEV catalog is never downloaded: there would be nothing
-    to intersect it against.
-    """
-    cves = []
-    for raw in shodan_results:
-        if is_error(raw) or not isinstance(raw, dict):
-            continue
-        for cve in raw.get("vulns") or []:
-            if cve not in cves:
-                cves.append(cve)
-    return cves
-
-
 async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None):
     # Selection is by indicator type, not by a hand-written branch per name:
     # indicator_types has been declared since Phase 1 and read by nothing,
@@ -192,10 +193,13 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
             )
             if "malwarebazaar" in hash_sources else None
         )
-        # ThreatFox is queried on the hash only, though it accepts IPs and
-        # domains too: report.threatfox describes the sample, and a per-IP
-        # fan-out would multiply requests for data Shodan and GreyNoise
-        # already cover for those addresses.
+        # ThreatFox is queried on the hash only for now, though it accepts
+        # IPs and domains too and the plan's Task 8 asked for a per-IP pass.
+        # The blocker is structural, not editorial: report.threatfox is a
+        # single field, and per-IP results need a dict[str, ThreatFoxReport]
+        # the way shodan and greynoise have. Deferred, not covered elsewhere
+        # -- Shodan gives exposure and GreyNoise gives noise-vs-targeted;
+        # neither names the C2 family, which is ThreatFox's whole value.
         threatfox_task = (
             asyncio.create_task(
                 _cached(cache, "threatfox", file_hash,
@@ -258,15 +262,20 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
 
         domains = _domains(vt_data, list(ipdb_data), censys_results)
         rdap_results = (
-            await asyncio.gather(*(
+            await _bounded_gather(RDAP_CONCURRENCY, *(
                 _cached(cache, "rdap", domain,
                         lambda d=domain: get_rdap(client, d))
                 for domain in domains
             ))
             if domains and "rdap" in domain_sources else []
         )
+        # Capped well below IOC_LIMIT: crt.sh is serial with a 2s gap and
+        # answers slowly, and every result is merged into one 100-name
+        # CertReport, so domains past the first few add minutes of runtime
+        # for names the report will not print.
         crtsh_results = (
-            await fetch_serial(client, "crtsh", get_crtsh, domains, cache,
+            await fetch_serial(client, "crtsh", get_crtsh,
+                               domains[:CRTSH_DOMAIN_LIMIT], cache,
                                label="crt.sh")
             if domains and "crtsh" in domain_sources else []
         )
@@ -277,12 +286,13 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # fetched at most once per run, only when Shodan actually reported
         # CVEs to intersect it against, and cached for a week.
         kev_catalog = {}
-        if _observed_cves(shodan_results):
+        if observed_cves([extract_shodan(raw) for raw in shodan_results]):
+            # Left as an error dict when the fetch fails: cli turns that
+            # into report.kev_error so an unreachable CISA is reported
+            # rather than read as "nothing is known-exploited".
             kev_catalog = await _cached(cache, "cisa_kev", "catalog",
                                         lambda: get_kev(client),
                                         ttl=KEV_CACHE_TTL)
-            if is_error(kev_catalog):
-                kev_catalog = {}
 
     return {
         'vt': vt_data, 'otx': otx_data, 'ipdb': list(ipdb_data),

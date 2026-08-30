@@ -369,6 +369,16 @@ class Report:
     shodan: dict[str, ShodanReport] = field(default_factory=dict)
     greynoise: dict[str, GreyNoiseReport] = field(default_factory=dict)
     #: CVEs on contacted IPs that CISA has confirmed are exploited in the
-    #: wild. Empty both when nothing matched and when there was nothing to
-    #: match -- the catalog is only fetched when Shodan reported CVEs.
+    #: wild. Empty when nothing matched and when there was nothing to match
+    #: -- the catalog is only fetched when Shodan reported CVEs.
     kev: list[KEVEntry] = field(default_factory=list)
+    #: Set only when there WERE CVEs to check and the catalog could not be
+    #: fetched. Without it that third case is indistinguishable from the
+    #: first two, and the signal it suppresses is the strongest one this
+    #: phase produces -- the same "no record" versus "could not ask"
+    #: distinction every extractor here is built around.
+    kev_error: str | None = None
+    #: How many CVEs were on the table when the catalog was unreachable, so
+    #: the renderer can say what went unchecked rather than just that
+    #: something did.
+    kev_unchecked: int = 0

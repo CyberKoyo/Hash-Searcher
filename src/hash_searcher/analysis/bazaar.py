@@ -31,7 +31,7 @@ def extract_bazaar(raw) -> BazaarReport:
         return BazaarReport(found=False,
                             error=f"MalwareBazaar query_status: {status}")
 
-    entries = raw.get("data") or []
+    entries = [e for e in (raw.get("data") or []) if isinstance(e, dict)]
     if not entries:
         return BazaarReport(found=False)
     entry = entries[0]
@@ -43,5 +43,5 @@ def extract_bazaar(raw) -> BazaarReport:
         file_type=entry.get("file_type"),
         first_seen=_first_seen(entry.get("first_seen")),
         yara=[r.get("rule_name") for r in (entry.get("yara_rules") or [])
-              if r.get("rule_name")],
+              if isinstance(r, dict) and r.get("rule_name")],
     )

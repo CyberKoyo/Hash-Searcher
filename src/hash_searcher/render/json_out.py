@@ -122,6 +122,11 @@ def _phase4_dict(report: Report) -> dict:
         "shodan": {ip: asdict(r) for ip, r in report.shodan.items()},
         "greynoise": {ip: asdict(r) for ip, r in report.greynoise.items()},
         "kev": [asdict(entry) for entry in report.kev],
+        # Present-but-null unless the catalog could not be fetched, so a
+        # consumer never reads an empty "kev" as "nothing is exploited"
+        # when the truth is that nobody could ask.
+        "kev_error": report.kev_error,
+        "kev_unchecked": report.kev_unchecked,
     }
 
 

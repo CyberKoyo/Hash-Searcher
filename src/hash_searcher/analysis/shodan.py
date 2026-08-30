@@ -24,3 +24,19 @@ def extract_shodan(raw) -> ShodanReport:
         vulns=list(raw.get("vulns") or []),
         hostnames=list(raw.get("hostnames") or []),
     )
+
+
+def observed_cves(reports) -> list[str]:
+    """Every CVE Shodan reported across the contacted IPs, de-duplicated.
+
+    One implementation, two callers: data_puller checks it to decide
+    whether the KEV catalog is worth downloading at all, and cli passes it
+    to known_exploited(). They were the same list computed twice, in two
+    layers, from two shapes.
+    """
+    cves = []
+    for report in reports:
+        for cve in report.vulns:
+            if cve not in cves:
+                cves.append(cve)
+    return cves
