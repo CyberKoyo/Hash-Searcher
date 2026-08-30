@@ -12,7 +12,9 @@ from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .malwarebazaar import get_bazaar
 from .otx import get_otx
+from .greynoise import get_greynoise
 from .rdap import get_rdap
+from .shodan_internetdb import get_shodan
 from .virustotal import get_vt
 
 
@@ -44,6 +46,12 @@ PROVIDERS: list[Provider] = [
     # rdap.org bootstraps through a redirect, so each lookup is two
     # requests rather than one.
     Provider("rdap", None, ("domain",), get_rdap, cache_ttl=604800),
+    Provider("shodan", None, ("ip",), get_shodan, cache_ttl=86400),
+    # Community works keyless at a lower rate limit; GREYNOISE_KEY raises it.
+    # key_env stays None so an unset key does not mark the source unavailable
+    # -- the header is simply omitted. The key is read at call time, per Obs. C.
+    Provider("greynoise", None, ("ip",), get_greynoise,
+             serial_delay=1.0, cache_ttl=86400),
 ]
 
 

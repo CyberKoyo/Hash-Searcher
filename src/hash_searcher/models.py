@@ -180,6 +180,30 @@ class BazaarReport:
     error: str | None = None
 
 
+@dataclass
+class ShodanReport:
+    """Shodan InternetDB's answer for one IP.
+
+    An all-empty report with error=None means Shodan has never scanned the
+    address -- a real answer, not a failure.
+    """
+    ports: list[int] = field(default_factory=list)
+    cpes: list[str] = field(default_factory=list)
+    vulns: list[str] = field(default_factory=list)
+    hostnames: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
+class GreyNoiseReport:
+    """Whether an IP is internet background noise or was aimed at you."""
+    seen: bool = False
+    classification: str | None = None
+    name: str | None = None
+    last_seen: str | None = None
+    error: str | None = None
+
+
 @dataclass(frozen=True)
 class Signal:
     name: str
