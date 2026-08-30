@@ -217,6 +217,27 @@ class CertReport:
     error: str | None = None
 
 
+@dataclass
+class ThreatFoxReport:
+    """ThreatFox's family attribution for one indicator."""
+    found: bool = False
+    malware: str | None = None
+    confidence: int = 0
+    tags: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class KEVEntry:
+    """One CVE CISA has confirmed is exploited in the wild."""
+    cve: str
+    vendor: str | None = None
+    product: str | None = None
+    name: str | None = None
+    date_added: str | None = None
+    ransomware: bool = False
+
+
 @dataclass(frozen=True)
 class Signal:
     name: str

@@ -16,6 +16,7 @@ from .otx import get_otx
 from .greynoise import get_greynoise
 from .rdap import get_rdap
 from .shodan_internetdb import get_shodan
+from .threatfox import get_threatfox
 from .virustotal import get_vt
 
 
@@ -52,6 +53,10 @@ PROVIDERS: list[Provider] = [
     # with a gap between them -- the same treatment Censys gets.
     Provider("crtsh", None, ("domain",), get_crtsh,
              serial_delay=2.0, cache_ttl=86400),
+    # An hour, not a day: ThreatFox's C2 data turns over hourly, and a
+    # stale family attribution is worse than none (Constraint 6).
+    Provider("threatfox", None, ("hash", "ip", "domain"), get_threatfox,
+             cache_ttl=3600),
     # Community works keyless at a lower rate limit; GREYNOISE_KEY raises it.
     # key_env stays None so an unset key does not mark the source unavailable
     # -- the header is simply omitted. The key is read at call time, per Obs. C.
