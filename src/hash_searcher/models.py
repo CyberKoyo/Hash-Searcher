@@ -163,6 +163,23 @@ class WhoisRecord:
     error: str | None = None
 
 
+@dataclass
+class BazaarReport:
+    """MalwareBazaar's answer for one hash.
+
+    found=False with error=None is a real answer -- the repository has
+    never seen this sample. found=False with an error set means the
+    lookup failed and nothing is known either way.
+    """
+    found: bool = False
+    family: str | None = None
+    tags: list[str] = field(default_factory=list)
+    file_type: str | None = None
+    first_seen: str | None = None
+    yara: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
 @dataclass(frozen=True)
 class Signal:
     name: str

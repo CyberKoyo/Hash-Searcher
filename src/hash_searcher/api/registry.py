@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from . import config
 from .abuseipdb import get_ipdb
 from .censys import get_censys
+from .malwarebazaar import get_bazaar
 from .otx import get_otx
 from .virustotal import get_vt
 
@@ -35,6 +36,9 @@ PROVIDERS: list[Provider] = [
     Provider("abuseipdb", "IPDB_KEY", ("ip",), get_ipdb),
     # Censys rate limits hard, so its calls stay serial with a gap between them.
     Provider("censys", "CENSYS_KEY", ("ip",), get_censys, serial_delay=2.0),
+    # Keyless: key_env=None, so it is always available. A day's TTL --
+    # a sample's family and tags do not change once abuse.ch has it.
+    Provider("malwarebazaar", None, ("hash",), get_bazaar, cache_ttl=86400),
 ]
 
 

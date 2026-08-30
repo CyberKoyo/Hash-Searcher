@@ -37,9 +37,14 @@ def test_serial_delay_defaults_to_zero():
                     indicator_types=("hash",), fetch=None).serial_delay == 0.0
 
 
-def test_real_registry_covers_the_four_current_sources():
+def test_real_registry_covers_every_current_source():
+    """Pinned by name: a source added to PROVIDERS without a decision about
+    its indicator types, TTL, and rate limit is exactly what Constraints 5-7
+    forbid, and this list is where that decision becomes visible."""
     from hash_searcher.api.registry import PROVIDERS
-    assert {p.name for p in PROVIDERS} == {"virustotal", "otx", "abuseipdb", "censys"}
+    assert {p.name for p in PROVIDERS} == {
+        "virustotal", "otx", "abuseipdb", "censys", "malwarebazaar",
+    }
 
 
 def test_by_name_finds_a_provider():
