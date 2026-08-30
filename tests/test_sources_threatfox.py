@@ -14,11 +14,11 @@ async def test_threatfox_maps_an_ioc_to_a_family(no_backoff):
         ]})
     )
     async with httpx.AsyncClient() as client:
-        report = extract_threatfox(await get_threatfox(client, "198.51.100.10"))
+        result = extract_threatfox(await get_threatfox(client, "198.51.100.10"))
 
-    assert report.found is True
-    assert report.malware == "Emotet"
-    assert report.confidence == 90
+    assert result.value.found is True
+    assert result.value.malware == "Emotet"
+    assert result.value.confidence == 90
 
 
 @respx.mock
@@ -30,6 +30,6 @@ async def test_threatfox_no_result_is_not_an_error(no_backoff):
         return_value=httpx.Response(200, json={"query_status": "no_result", "data": []})
     )
     async with httpx.AsyncClient() as client:
-        report = extract_threatfox(await get_threatfox(client, "198.51.100.10"))
+        result = extract_threatfox(await get_threatfox(client, "198.51.100.10"))
 
-    assert report.found is False and report.error is None
+    assert result.value.found is False and result.error is None

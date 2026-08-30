@@ -17,13 +17,13 @@ async def test_bazaar_returns_the_family_and_tags(no_backoff):
     respx.post(BAZAAR).mock(return_value=httpx.Response(200, json=payload))
 
     async with httpx.AsyncClient() as client:
-        report = extract_bazaar(await get_bazaar(client, "a" * 64))
+        result = extract_bazaar(await get_bazaar(client, "a" * 64))
 
-    assert report.found is True
-    assert report.family == "Emotet"
-    assert report.tags == ["exe", "Emotet", "banker"]
-    assert report.yara == ["Emotet_Loader", "win_emotet_auto"]
-    assert report.first_seen == "2019-04-02"
+    assert result.value.found is True
+    assert result.value.family == "Emotet"
+    assert result.value.tags == ["exe", "Emotet", "banker"]
+    assert result.value.yara == ["Emotet_Loader", "win_emotet_auto"]
+    assert result.value.first_seen == "2019-04-02"
 
 
 @respx.mock
@@ -38,11 +38,11 @@ async def test_a_hash_bazaar_has_never_seen_is_not_an_error(no_backoff):
     respx.post(BAZAAR).mock(return_value=httpx.Response(200, json=payload))
 
     async with httpx.AsyncClient() as client:
-        report = extract_bazaar(await get_bazaar(client, "a" * 64))
+        result = extract_bazaar(await get_bazaar(client, "a" * 64))
 
-    assert report.found is False
-    assert report.error is None
-    assert report.family is None
+    assert result.value.found is False
+    assert result.error is None
+    assert result.value.family is None
 
 
 @respx.mock
@@ -54,10 +54,10 @@ async def test_a_transport_failure_is_an_error_not_a_not_found(no_backoff):
 
     respx.post(BAZAAR).mock(return_value=httpx.Response(500))
     async with httpx.AsyncClient() as client:
-        report = extract_bazaar(await get_bazaar(client, "a" * 64, max_attempts=1))
+        result = extract_bazaar(await get_bazaar(client, "a" * 64, max_attempts=1))
 
-    assert report.found is False
-    assert report.error is not None
+    assert result.value is None
+    assert result.error is not None
 
 
 @respx.mock
@@ -96,6 +96,6 @@ async def test_a_401_names_the_variable_to_set(no_backoff):
     respx.post(BAZAAR).mock(
         return_value=httpx.Response(401, json={"error": "Unauthorized"}))
     async with httpx.AsyncClient() as client:
-        report = extract_bazaar(await get_bazaar(client, "a" * 64, max_attempts=1))
+        result = extract_bazaar(await get_bazaar(client, "a" * 64, max_attempts=1))
 
-    assert "ABUSECH_KEY" in report.error
+    assert "ABUSECH_KEY" in result.error

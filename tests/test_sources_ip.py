@@ -17,10 +17,10 @@ async def test_shodan_internetdb_returns_ports_and_cves(no_backoff):
         return_value=httpx.Response(200, json=payload)
     )
     async with httpx.AsyncClient() as client:
-        report = extract_shodan(await get_shodan(client, "198.51.100.10"))
+        result = extract_shodan(await get_shodan(client, "198.51.100.10"))
 
-    assert report.ports == [22, 80, 443]
-    assert report.vulns == ["CVE-2018-15473", "CVE-2021-41617"]
+    assert result.value.ports == [22, 80, 443]
+    assert result.value.vulns == ["CVE-2018-15473", "CVE-2021-41617"]
 
 
 @respx.mock
@@ -34,10 +34,10 @@ async def test_shodan_404_means_nothing_known_not_a_failure(no_backoff):
         return_value=httpx.Response(404)
     )
     async with httpx.AsyncClient() as client:
-        report = extract_shodan(await get_shodan(client, "198.51.100.10"))
+        result = extract_shodan(await get_shodan(client, "198.51.100.10"))
 
-    assert report.ports == []
-    assert report.error is None
+    assert result.value.ports == []
+    assert result.error is None
 
 
 @respx.mock
@@ -50,11 +50,11 @@ async def test_greynoise_distinguishes_internet_noise_from_a_targeted_host(no_ba
         return_value=httpx.Response(200, json=payload)
     )
     async with httpx.AsyncClient() as client:
-        report = extract_greynoise(await get_greynoise(client, "198.51.100.10"))
+        result = extract_greynoise(await get_greynoise(client, "198.51.100.10"))
 
-    assert report.seen is True
-    assert report.classification == "malicious"
-    assert report.name == "Mirai"
+    assert result.value.seen is True
+    assert result.value.classification == "malicious"
+    assert result.value.name == "Mirai"
 
 
 @respx.mock
@@ -66,10 +66,10 @@ async def test_greynoise_404_means_not_observed(no_backoff):
         return_value=httpx.Response(404, json={"message": "IP not observed"})
     )
     async with httpx.AsyncClient() as client:
-        report = extract_greynoise(await get_greynoise(client, "198.51.100.10"))
+        result = extract_greynoise(await get_greynoise(client, "198.51.100.10"))
 
-    assert report.seen is False
-    assert report.error is None
+    assert result.value.seen is False
+    assert result.error is None
 
 
 @respx.mock

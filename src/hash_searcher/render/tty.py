@@ -240,41 +240,41 @@ def render_bazaar(report: Report) -> None:
     could not ask abuse.ch".
     """
     bazaar = report.bazaar
-    if bazaar is None:
+    if not bazaar.queried:
         return
     _header("MALWAREBAZAAR")
     if bazaar.error:
         print(f"MalwareBazaar: {bazaar.error}")
         return
-    if not bazaar.found:
+    if not bazaar.value.found:
         print("MalwareBazaar has no record of this sample.")
         return
-    print(f"Family:     {bazaar.family or 'unnamed'}")
-    if bazaar.file_type:
-        print(f"File type:  {bazaar.file_type}")
-    if bazaar.first_seen:
-        print(f"First seen: {bazaar.first_seen}")
-    if bazaar.tags:
-        print(f"Tags:       {', '.join(bazaar.tags)}")
-    if bazaar.yara:
-        print(f"YARA:       {', '.join(bazaar.yara)}")
+    print(f"Family:     {bazaar.value.family or 'unnamed'}")
+    if bazaar.value.file_type:
+        print(f"File type:  {bazaar.value.file_type}")
+    if bazaar.value.first_seen:
+        print(f"First seen: {bazaar.value.first_seen}")
+    if bazaar.value.tags:
+        print(f"Tags:       {', '.join(bazaar.value.tags)}")
+    if bazaar.value.yara:
+        print(f"YARA:       {', '.join(bazaar.value.yara)}")
 
 
 def render_threatfox(report: Report) -> None:
     threatfox = report.threatfox
-    if threatfox is None:
+    if not threatfox.queried:
         return
     _header("THREATFOX")
     if threatfox.error:
         print(f"ThreatFox: {threatfox.error}")
         return
-    if not threatfox.found:
+    if not threatfox.value.found:
         print("ThreatFox has no record of this indicator.")
         return
-    print(f"Malware:    {threatfox.malware or 'unnamed'} "
-          f"({threatfox.confidence}% confidence)")
-    if threatfox.tags:
-        print(f"Tags:       {', '.join(threatfox.tags)}")
+    print(f"Malware:    {threatfox.value.malware or 'unnamed'} "
+          f"({threatfox.value.confidence}% confidence)")
+    if threatfox.value.tags:
+        print(f"Tags:       {', '.join(threatfox.value.tags)}")
 
 
 #: A real Shodan answer for a busy web server carries well over a hundred
@@ -296,22 +296,24 @@ def render_ip_intel(report: Report) -> None:
         if shodan and shodan.error:
             print(f"Shodan:  {shodan.error}")
         elif shodan:
-            print(f"Ports:   {', '.join(str(p) for p in shodan.ports) or 'none known'}")
-            if shodan.vulns:
-                shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
+            ports, vulns, hostnames = (shodan.value.ports, shodan.value.vulns,
+                                        shodan.value.hostnames)
+            print(f"Ports:   {', '.join(str(p) for p in ports) or 'none known'}")
+            if vulns:
+                shown = vulns[:CVE_DISPLAY_LIMIT]
                 more = (f" (showing {CVE_DISPLAY_LIMIT})"
-                        if len(shodan.vulns) > CVE_DISPLAY_LIMIT else "")
-                print(f"CVEs:    {len(shodan.vulns)} CVEs{more}: "
+                        if len(vulns) > CVE_DISPLAY_LIMIT else "")
+                print(f"CVEs:    {len(vulns)} CVEs{more}: "
                       f"{', '.join(shown)}")
-            if shodan.hostnames:
-                print(f"Names:   {', '.join(shodan.hostnames)}")
+            if hostnames:
+                print(f"Names:   {', '.join(hostnames)}")
         noise = report.greynoise.get(ip)
         if noise and noise.error:
             print(f"GreyNoise: {noise.error}")
-        elif noise and noise.seen:
-            actor = f" -- {noise.name}" if noise.name else ""
-            print(f"GreyNoise: {noise.classification or 'seen'}{actor}, "
-                  f"last seen {noise.last_seen or 'N/A'}")
+        elif noise and noise.value.seen:
+            actor = f" -- {noise.value.name}" if noise.value.name else ""
+            print(f"GreyNoise: {noise.value.classification or 'seen'}{actor}, "
+                  f"last seen {noise.value.last_seen or 'N/A'}")
         elif noise:
             # The more interesting answer of the two: an address GreyNoise
             # has never seen scanning is not internet background noise.
@@ -325,15 +327,18 @@ def render_kev(report: Report) -> None:
     known-exploited", and it suppresses the strongest signal the tool has,
     so it gets a line of its own rather than an absent section.
     """
-    if report.kev_error:
-        _header("KNOWN EXPLOITED VULNERABILITIES")
-        print(f"CISA KEV was unreachable ({report.kev_error}) -- "
-              f"{report.kev_unchecked} CVEs on contacted hosts went unchecked.")
+    kev = report.kev
+    if not kev.queried:
         return
-    if not report.kev:
+    if kev.error:
+        _header("KNOWN EXPLOITED VULNERABILITIES")
+        print(f"CISA KEV was unreachable ({kev.error}) -- "
+              f"{kev.value.unchecked} CVEs on contacted hosts went unchecked.")
+        return
+    if not kev.value.entries:
         return
     _header("KNOWN EXPLOITED VULNERABILITIES")
-    for entry in report.kev:
+    for entry in kev.value.entries:
         product = " ".join(x for x in (entry.vendor, entry.product) if x)
         ransomware = "  [ransomware campaign]" if entry.ransomware else ""
         print(f"{entry.cve}  {product or 'unknown product'} -- "
@@ -347,19 +352,19 @@ def render_certs(report: Report) -> None:
     list because a truncated list that reads as complete is worse than none.
     """
     certs = report.certs
-    if certs is None:
+    if not certs.queried:
         return
     _header("CERTIFICATE TRANSPARENCY")
     if certs.error:
         print(f"crt.sh: {certs.error}")
         return
-    if not certs.siblings:
+    if not certs.value.siblings:
         print("No certificates found for the contacted domains.")
         return
-    shown = len(certs.siblings)
-    tail = f" (showing {shown})" if shown < certs.count else ""
-    print(f"{certs.count} sibling domains on shared certificates{tail}:")
-    for domain in certs.siblings:
+    shown = len(certs.value.siblings)
+    tail = f" (showing {shown})" if shown < certs.value.count else ""
+    print(f"{certs.value.count} sibling domains on shared certificates{tail}:")
+    for domain in certs.value.siblings:
         print(f"  {domain}")
 
 

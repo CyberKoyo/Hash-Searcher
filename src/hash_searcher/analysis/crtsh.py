@@ -6,7 +6,7 @@ SAN on that certificate into one newline-joined string.
 """
 
 from ..api.base_call import error_message, is_error
-from ..models import CertReport
+from ..models import CertReport, SourceResult
 
 #: A wildcard-heavy domain returns thousands of rows. The rendered list is
 #: capped here; CertReport.count keeps the untruncated total, so the report
@@ -14,11 +14,14 @@ from ..models import CertReport
 SIBLING_LIMIT = 100
 
 
-def extract_crtsh(raw) -> CertReport:
+def extract_crtsh(raw) -> SourceResult[CertReport]:
+    if raw is None:
+        return SourceResult()                       # nobody asked
     if is_error(raw):
-        return CertReport(error=error_message(raw))
+        return SourceResult(error=error_message(raw), queried=True)
     if not isinstance(raw, list):
-        return CertReport(error="crt.sh returned an unexpected shape")
+        return SourceResult(error="crt.sh returned an unexpected shape",
+                            queried=True)
 
     siblings: list[str] = []
     seen: set[str] = set()
@@ -35,10 +38,13 @@ def extract_crtsh(raw) -> CertReport:
             seen.add(name)
             siblings.append(name)
 
-    return CertReport(siblings=siblings[:SIBLING_LIMIT], count=len(siblings))
+    return SourceResult(
+        value=CertReport(siblings=siblings[:SIBLING_LIMIT], count=len(siblings)),
+        queried=True,
+    )
 
 
-def merge_crtsh(raw_list) -> CertReport:
+def merge_crtsh(raw_list) -> SourceResult[CertReport]:
     """One CertReport across every domain that was queried.
 
     The report carries a single certificate section, but crt.sh is asked
@@ -46,8 +52,13 @@ def merge_crtsh(raw_list) -> CertReport:
     -- siblings shared between two contacted domains are the interesting
     case, and reporting them twice would overstate the count. An error is
     surfaced only when every query failed: one dead lookup among five must
-    not blank out the four that worked.
+    not blank out the four that worked. An empty raw_list means no domains
+    were queried at all -- crt.sh was never asked -- so cli.py can call this
+    unconditionally instead of guarding on `if raw["crtsh"]` first.
     """
+    if not raw_list:
+        return SourceResult()                       # no domains to query
+
     rows = []
     errors = []
     for raw in raw_list:
@@ -60,4 +71,4 @@ def merge_crtsh(raw_list) -> CertReport:
 
     if rows or not errors:
         return extract_crtsh(rows)
-    return CertReport(error="; ".join(dict.fromkeys(errors)))
+    return SourceResult(error="; ".join(dict.fromkeys(errors)), queried=True)

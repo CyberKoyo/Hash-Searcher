@@ -242,20 +242,25 @@ def test_the_phase_4_sources_reach_the_json(tmp_path, sample_report):
     """A field that renders in the terminal and vanishes from -o report.json
     is the drift this test exists to catch."""
     from hash_searcher.models import (
-        BazaarReport, CertReport, GreyNoiseReport, KEVEntry, ShodanReport,
-        ThreatFoxReport,
+        BazaarReport, CertReport, GreyNoiseReport, KEVEntry, KEVReport,
+        ShodanReport, SourceResult, ThreatFoxReport,
     )
     from hash_searcher.render.json_out import to_dict
 
-    sample_report.bazaar = BazaarReport(found=True, family="Emotet", tags=["exe"])
-    sample_report.threatfox = ThreatFoxReport(found=True, malware="Emotet",
-                                              confidence=90)
-    sample_report.certs = CertReport(siblings=["a.example"], count=42)
-    sample_report.shodan = {"198.51.100.10": ShodanReport(ports=[22],
-                                                          vulns=["CVE-2021-41617"])}
-    sample_report.greynoise = {"198.51.100.10": GreyNoiseReport(
-        seen=True, classification="malicious")}
-    sample_report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+    sample_report.bazaar = SourceResult(
+        value=BazaarReport(found=True, family="Emotet", tags=["exe"]), queried=True)
+    sample_report.threatfox = SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True)
+    sample_report.certs = SourceResult(
+        value=CertReport(siblings=["a.example"], count=42), queried=True)
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        value=ShodanReport(ports=[22], vulns=["CVE-2021-41617"]), queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(seen=True, classification="malicious"), queried=True)}
+    sample_report.kev = SourceResult(
+        value=KEVReport(entries=[KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]),
+        queried=True)
 
     body = to_dict(sample_report)["report"]
     assert body["bazaar"]["family"] == "Emotet"

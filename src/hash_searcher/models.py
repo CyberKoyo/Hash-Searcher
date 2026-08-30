@@ -5,6 +5,45 @@ formatting -- that is the whole point of the split.
 """
 
 from dataclasses import dataclass, field
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class SourceResult(Generic[T]):
+    """One shape for every source that can fail: never asked, asked and
+    failed, or answered.
+
+    Two states used to share one representation -- `error=None` was true
+    both when a source found nothing and when nobody had called it, which is
+    why cli.py threaded `raw["bazaar"] is not None` checks by hand and why
+    CISA KEV needed two bolted-on `Report` fields (`kev_error`,
+    `kev_unchecked`) instead of one honest type. `ok` is the single gate a
+    consumer needs: true only when the source ran and came back clean, so a
+    signal or a renderer can trust `.value` without checking `.queried` and
+    `.error` separately.
+    """
+    value: T | None = None
+    error: str | None = None
+    queried: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.queried and self.error is None
+
+
+@dataclass
+class KEVReport:
+    """CISA KEV's answer for the CVEs observed on contacted hosts.
+
+    `unchecked` is set even when the catalog fetch failed -- it is the one
+    field on this branch's `SourceResult` that survives an error, because
+    the count of CVEs that went unchecked is itself the fact the CLI and the
+    renderers need to report; see analysis/kev.py.
+    """
+    entries: list["KEVEntry"] = field(default_factory=list)
+    unchecked: int = 0
 
 
 @dataclass(frozen=True)
@@ -167,9 +206,12 @@ class WhoisRecord:
 class BazaarReport:
     """MalwareBazaar's answer for one hash.
 
-    found=False with error=None is a real answer -- the repository has
-    never seen this sample. found=False with an error set means the
-    lookup failed and nothing is known either way.
+    found=False is a real answer -- the repository has never seen this
+    sample. Whether the lookup itself failed lives on the SourceResult that
+    wraps this report (see extract_bazaar), not on this dataclass -- a
+    result nobody asked for and a clean "not found" used to share the same
+    error=None representation, which is the distinction SourceResult exists
+    to restore.
     """
     found: bool = False
     family: str | None = None
@@ -177,21 +219,20 @@ class BazaarReport:
     file_type: str | None = None
     first_seen: str | None = None
     yara: list[str] = field(default_factory=list)
-    error: str | None = None
 
 
 @dataclass
 class ShodanReport:
     """Shodan InternetDB's answer for one IP.
 
-    An all-empty report with error=None means Shodan has never scanned the
-    address -- a real answer, not a failure.
+    An all-empty report means Shodan has never scanned the address -- a
+    real answer, not a failure. See BazaarReport's docstring: whether the
+    lookup itself failed is carried by the wrapping SourceResult.
     """
     ports: list[int] = field(default_factory=list)
     cpes: list[str] = field(default_factory=list)
     vulns: list[str] = field(default_factory=list)
     hostnames: list[str] = field(default_factory=list)
-    error: str | None = None
 
 
 @dataclass
@@ -201,7 +242,6 @@ class GreyNoiseReport:
     classification: str | None = None
     name: str | None = None
     last_seen: str | None = None
-    error: str | None = None
 
 
 @dataclass
@@ -214,7 +254,6 @@ class CertReport:
     """
     siblings: list[str] = field(default_factory=list)
     count: int = 0
-    error: str | None = None
 
 
 @dataclass
@@ -224,7 +263,6 @@ class ThreatFoxReport:
     malware: str | None = None
     confidence: int = 0
     tags: list[str] = field(default_factory=list)
-    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -358,27 +396,21 @@ class Report:
     #: argument with no file, or an analyzer-fan-out failure) -- never a
     #: half-built StaticReport standing in for "we didn't run it".
     static: StaticReport | None = None
-    #: Phase 4 sources. Each is None (or empty) when that source never ran
-    #: -- the same rule the rest of this file follows, so a consumer can
-    #: tell "the source had nothing" from "this tool never asked it".
-    bazaar: BazaarReport | None = None
-    threatfox: ThreatFoxReport | None = None
-    certs: CertReport | None = None
+    #: Phase 4 sources, each wrapped in a SourceResult: `.queried is False`
+    #: when that source never ran, the same rule the rest of this file
+    #: follows, so a consumer can tell "the source had nothing" from "this
+    #: tool never asked it" without a second field to carry that distinction.
+    bazaar: SourceResult[BazaarReport] = field(default_factory=SourceResult)
+    threatfox: SourceResult[ThreatFoxReport] = field(default_factory=SourceResult)
+    certs: SourceResult[CertReport] = field(default_factory=SourceResult)
     #: Keyed by IP, the same way `ips` is: these fan out over the contacted
     #: IPs rather than describing the sample itself.
-    shodan: dict[str, ShodanReport] = field(default_factory=dict)
-    greynoise: dict[str, GreyNoiseReport] = field(default_factory=dict)
+    shodan: dict[str, SourceResult[ShodanReport]] = field(default_factory=dict)
+    greynoise: dict[str, SourceResult[GreyNoiseReport]] = field(default_factory=dict)
     #: CVEs on contacted IPs that CISA has confirmed are exploited in the
-    #: wild. Empty when nothing matched and when there was nothing to match
-    #: -- the catalog is only fetched when Shodan reported CVEs.
-    kev: list[KEVEntry] = field(default_factory=list)
-    #: Set only when there WERE CVEs to check and the catalog could not be
-    #: fetched. Without it that third case is indistinguishable from the
-    #: first two, and the signal it suppresses is the strongest one this
-    #: phase produces -- the same "no record" versus "could not ask"
-    #: distinction every extractor here is built around.
-    kev_error: str | None = None
-    #: How many CVEs were on the table when the catalog was unreachable, so
-    #: the renderer can say what went unchecked rather than just that
-    #: something did.
-    kev_unchecked: int = 0
+    #: wild. `.queried is False` when there was nothing to check -- the
+    #: catalog is only fetched when Shodan reported CVEs. On a fetch failure
+    #: `.value.unchecked` still carries how many CVEs went unchecked, so the
+    #: strongest signal this phase produces is never silently read as
+    #: "nothing is known-exploited"; see analysis/kev.py.
+    kev: SourceResult[KEVReport] = field(default_factory=SourceResult)

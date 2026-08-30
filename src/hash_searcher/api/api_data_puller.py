@@ -286,10 +286,17 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # fetched at most once per run, only when Shodan actually reported
         # CVEs to intersect it against, and cached for a week.
         kev_catalog = {}
-        if observed_cves([extract_shodan(raw) for raw in shodan_results]):
-            # Left as an error dict when the fetch fails: cli turns that
-            # into report.kev_error so an unreachable CISA is reported
-            # rather than read as "nothing is known-exploited".
+        # extract_shodan now returns a SourceResult; only a successfully
+        # queried IP has vulns worth intersecting against the catalog, and
+        # an errored or never-asked entry has nothing to contribute either
+        # way -- the same outcome the old ShodanReport.error default (empty
+        # vulns) produced, made explicit here instead of implicit there.
+        shodan_reports = (extract_shodan(raw) for raw in shodan_results)
+        if observed_cves(r.value for r in shodan_reports if r.ok):
+            # Left as an error dict when the fetch fails: known_exploited()
+            # (analysis/kev.py) turns that into a SourceResult with .error
+            # set, so an unreachable CISA is reported rather than read as
+            # "nothing is known-exploited".
             kev_catalog = await _cached(cache, "cisa_kev", "catalog",
                                         lambda: get_kev(client),
                                         ttl=KEV_CACHE_TTL)

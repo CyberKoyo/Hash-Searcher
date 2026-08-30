@@ -55,14 +55,15 @@ def _cve_cell(shodan) -> str:
     overflows the frame. Same cap and same honesty as render_ip_intel: the
     total is stated, so a truncated cell never reads as the whole answer.
     """
-    if shodan is None:
+    if shodan is None or not shodan.ok:
         return ""
-    if not shodan.vulns:
+    vulns = shodan.value.vulns
+    if not vulns:
         return ""
-    shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
-    if len(shodan.vulns) <= CVE_DISPLAY_LIMIT:
+    shown = vulns[:CVE_DISPLAY_LIMIT]
+    if len(vulns) <= CVE_DISPLAY_LIMIT:
         return ", ".join(shown)
-    return (f"{len(shodan.vulns)} CVEs (showing {CVE_DISPLAY_LIMIT}): "
+    return (f"{len(vulns)} CVEs (showing {CVE_DISPLAY_LIMIT}): "
             + ", ".join(shown))
 
 
@@ -71,9 +72,10 @@ def _greynoise_cell(noise) -> str:
         return ""
     if noise.error:
         return noise.error
-    if not noise.seen:
+    if not noise.ok or not noise.value.seen:
         return "not observed"
-    return " -- ".join(x for x in (noise.classification or "seen", noise.name) if x)
+    return " -- ".join(
+        x for x in (noise.value.classification or "seen", noise.value.name) if x)
 
 
 def build_story(report: Report, verdict: Verdict | None = None) -> list:
@@ -178,20 +180,20 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
                 f"ATT&amp;CK: {_x(technique.id)} {_x(technique.name)}{tactic}", styles['Normal']))
         story.append(Spacer(1, 12))
 
-    if report.bazaar and report.bazaar.found:
+    if report.bazaar.ok and report.bazaar.value.found:
         story.append(Paragraph("MalwareBazaar", styles['Heading1']))
         story.append(Paragraph(
-            f"Family: {_x(report.bazaar.family or 'unnamed')}", styles['Normal']))
-        if report.bazaar.tags:
+            f"Family: {_x(report.bazaar.value.family or 'unnamed')}", styles['Normal']))
+        if report.bazaar.value.tags:
             story.append(Paragraph(
-                f"Tags: {_x(', '.join(report.bazaar.tags))}", styles['Normal']))
+                f"Tags: {_x(', '.join(report.bazaar.value.tags))}", styles['Normal']))
         story.append(Spacer(1, 12))
 
-    if report.threatfox and report.threatfox.found:
+    if report.threatfox.ok and report.threatfox.value.found:
         story.append(Paragraph("ThreatFox", styles['Heading1']))
         story.append(Paragraph(
-            f"Malware: {_x(report.threatfox.malware or 'unnamed')} "
-            f"({report.threatfox.confidence}% confidence)", styles['Normal']))
+            f"Malware: {_x(report.threatfox.value.malware or 'unnamed')} "
+            f"({report.threatfox.value.confidence}% confidence)", styles['Normal']))
         story.append(Spacer(1, 12))
 
     if report.shodan or report.greynoise:
@@ -199,7 +201,8 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         story.append(_table(
             [["IP", "Ports", "CVEs", "GreyNoise"]]
             + [[Paragraph(_x(ip)),
-                Paragraph(_x(", ".join(str(p) for p in s.ports) if s else "")),
+                Paragraph(_x(", ".join(str(p) for p in s.value.ports)
+                            if s and s.ok else "")),
                 Paragraph(_x(_cve_cell(s))),
                 Paragraph(_x(_greynoise_cell(report.greynoise.get(ip))))]
                for ip, s in _ip_rows(report)],
@@ -207,24 +210,24 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         ))
         story.append(Spacer(1, 12))
 
-    if report.kev:
+    if report.kev.ok and report.kev.value.entries:
         story.append(Paragraph("Known Exploited Vulnerabilities", styles['Heading1']))
         story.append(_table(
             [["CVE", "Product", "Added"]]
             + [[Paragraph(_x(e.cve)),
                 Paragraph(_x(" ".join(x for x in (e.vendor, e.product) if x))),
                 Paragraph(_x(e.date_added or "N/A"))]
-               for e in report.kev],
+               for e in report.kev.value.entries],
             widths=[130, 200, 90],
         ))
         story.append(Spacer(1, 12))
 
-    if report.certs and report.certs.siblings:
+    if report.certs.ok and report.certs.value.siblings:
         story.append(Paragraph("Certificate Transparency", styles['Heading1']))
         story.append(Paragraph(
-            f"{report.certs.count} sibling domains on shared certificates "
-            f"(showing {len(report.certs.siblings)}): "
-            f"{_x(', '.join(report.certs.siblings))}", styles['Normal']))
+            f"{report.certs.value.count} sibling domains on shared certificates "
+            f"(showing {len(report.certs.value.siblings)}): "
+            f"{_x(', '.join(report.certs.value.siblings))}", styles['Normal']))
         story.append(Spacer(1, 12))
 
     story.append(Paragraph("VirusTotal Sigma Rules", styles['Heading1']))

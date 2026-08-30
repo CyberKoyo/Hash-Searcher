@@ -182,32 +182,37 @@ def _yara_local_signal(report: Report) -> Signal | None:
 
 def _bazaar_signal(report: Report) -> Signal | None:
     bazaar = report.bazaar
-    if not bazaar or not bazaar.found:
+    # .ok gates BOTH cases a bare `if not bazaar` used to collapse: a source
+    # that was never asked and one that was asked and failed. Touching
+    # .value before checking .ok would raise on either -- .value is None
+    # unless the query actually succeeded.
+    if not bazaar.ok or not bazaar.value.found:
         return None
     return Signal(name="bazaar", points=W_BAZAAR,
                   detail=f"MalwareBazaar holds this sample"
-                         f"{f' as {bazaar.family}' if bazaar.family else ''}")
+                         f"{f' as {bazaar.value.family}' if bazaar.value.family else ''}")
 
 
 def _threatfox_signal(report: Report) -> Signal | None:
     threatfox = report.threatfox
-    if not threatfox or not threatfox.found:
+    if not threatfox.ok or not threatfox.value.found:
         return None
     return Signal(name="threatfox", points=W_THREATFOX,
                   detail=f"ThreatFox names this indicator "
-                         f"{threatfox.malware or 'a known IOC'} "
-                         f"({threatfox.confidence}% confidence)")
+                         f"{threatfox.value.malware or 'a known IOC'} "
+                         f"({threatfox.value.confidence}% confidence)")
 
 
 def _kev_signal(report: Report) -> Signal | None:
     """Confirmed exploitation in the wild -- the strongest single statement
     any Phase 4 source makes, which is why it outweighs the rest of them."""
-    if not report.kev:
+    kev = report.kev
+    if not kev.ok or not kev.value.entries:
         return None
     return Signal(name="kev", points=W_KEV,
                   detail="a contacted host exposes CVEs CISA lists as "
                          "known-exploited: "
-                         + ", ".join(entry.cve for entry in report.kev))
+                         + ", ".join(entry.cve for entry in kev.value.entries))
 
 
 def _internet_noise_signal(report: Report) -> Signal | None:
@@ -219,7 +224,7 @@ def _internet_noise_signal(report: Report) -> Signal | None:
     them -- so only the benign classification fires, and it fires downward.
     """
     noisy = [ip for ip, r in report.greynoise.items()
-             if r.seen and r.classification == "benign"]
+             if r.ok and r.value.seen and r.value.classification == "benign"]
     if not noisy:
         return None
     return Signal(name="internet_noise", points=W_INTERNET_NOISE,

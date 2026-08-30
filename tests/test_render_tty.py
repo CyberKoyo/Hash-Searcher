@@ -751,12 +751,12 @@ def _phase4_report(**kwargs) -> Report:
 
 
 def test_render_bazaar_exact_formatting(capsys):
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.render.tty import render_bazaar
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(
+    render_bazaar(_phase4_report(bazaar=SourceResult(value=BazaarReport(
         found=True, family="Emotet", tags=["exe", "banker"], file_type="exe",
-        first_seen="2019-04-02", yara=["Emotet_Loader"])))
+        first_seen="2019-04-02", yara=["Emotet_Loader"]), queried=True)))
     assert capsys.readouterr().out == (
         "\n==================================================\n"
         "MALWAREBAZAAR\n"
@@ -772,26 +772,27 @@ def test_render_bazaar_exact_formatting(capsys):
 def test_a_sample_bazaar_has_never_seen_says_so_rather_than_going_silent(capsys):
     """A missing section reads as a bug. 'abuse.ch has never seen this' is
     an answer, and a different one from 'we could not ask abuse.ch'."""
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.render.tty import render_bazaar
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False)))
+    render_bazaar(_phase4_report(
+        bazaar=SourceResult(value=BazaarReport(found=False), queried=True)))
     out = capsys.readouterr().out
     assert "MalwareBazaar has no record of this sample." in out
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False, error="500")))
+    render_bazaar(_phase4_report(bazaar=SourceResult(error="500", queried=True)))
     assert "MalwareBazaar: 500" in capsys.readouterr().out
 
 
 def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
-    from hash_searcher.models import GreyNoiseReport, ShodanReport
+    from hash_searcher.models import GreyNoiseReport, ShodanReport, SourceResult
     from hash_searcher.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
-        shodan={"198.51.100.10": ShodanReport(ports=[22, 443],
-                                              vulns=["CVE-2021-41617"])},
-        greynoise={"198.51.100.10": GreyNoiseReport(
-            seen=True, classification="malicious", name="Mirai")},
+        shodan={"198.51.100.10": SourceResult(value=ShodanReport(
+            ports=[22, 443], vulns=["CVE-2021-41617"]), queried=True)},
+        greynoise={"198.51.100.10": SourceResult(value=GreyNoiseReport(
+            seen=True, classification="malicious", name="Mirai"), queried=True)},
     ))
     out = capsys.readouterr().out
     assert "198.51.100.10" in out
@@ -801,12 +802,12 @@ def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
 
 
 def test_kev_entries_are_rendered_with_the_product(capsys):
-    from hash_searcher.models import KEVEntry
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
     from hash_searcher.render.tty import render_kev
 
-    render_kev(_phase4_report(kev=[KEVEntry(
+    render_kev(_phase4_report(kev=SourceResult(value=KEVReport(entries=[KEVEntry(
         cve="CVE-2021-41617", vendor="OpenBSD", product="OpenSSH",
-        name="Privilege Escalation", date_added="2022-03-03")]))
+        name="Privilege Escalation", date_added="2022-03-03")]), queried=True)))
     out = capsys.readouterr().out
     assert "KNOWN EXPLOITED VULNERABILITIES" in out
     assert "CVE-2021-41617" in out and "OpenSSH" in out
@@ -815,11 +816,12 @@ def test_kev_entries_are_rendered_with_the_product(capsys):
 def test_a_capped_sibling_list_says_how_many_there_were(capsys):
     """The count is the whole point of capping honestly: a truncated list
     that reads as complete is worse than no list."""
-    from hash_searcher.models import CertReport
+    from hash_searcher.models import CertReport, SourceResult
     from hash_searcher.render.tty import render_certs
 
-    render_certs(_phase4_report(certs=CertReport(
-        siblings=[f"h{n}.evil.example" for n in range(100)], count=5000)))
+    render_certs(_phase4_report(certs=SourceResult(value=CertReport(
+        siblings=[f"h{n}.evil.example" for n in range(100)], count=5000),
+        queried=True)))
     out = capsys.readouterr().out
     assert "5000" in out
     assert "showing 100" in out
@@ -841,12 +843,13 @@ def test_a_long_cve_list_is_capped_with_the_total_kept(capsys):
     """A real Shodan answer for a busy web server carries over a hundred
     CVEs. Printed whole they are one unreadable line that buries the KEV
     section underneath -- capped, the count still says how many there were."""
-    from hash_searcher.models import ShodanReport
+    from hash_searcher.models import ShodanReport, SourceResult
     from hash_searcher.render.tty import CVE_DISPLAY_LIMIT, render_ip_intel
 
     cves = [f"CVE-2021-{n:05d}" for n in range(128)]
     render_ip_intel(_phase4_report(
-        shodan={"198.51.100.10": ShodanReport(ports=[80], vulns=cves)}))
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[80], vulns=cves), queried=True)}))
     out = capsys.readouterr().out
     assert cves[CVE_DISPLAY_LIMIT] not in out
     assert f"128 CVEs" in out

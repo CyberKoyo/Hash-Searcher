@@ -328,22 +328,35 @@ def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
 
 
 def test_a_malwarebazaar_family_match_is_a_signal():
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.scoring import score
 
     report = _report()
-    report.bazaar = BazaarReport(found=True, family="Emotet")
+    report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
+                                 queried=True)
     assert any(s.name == "bazaar" for s in score(report).signals)
+
+
+def test_a_source_nobody_asked_never_fires_its_signal():
+    """The crash this wrapper exists to prevent: a signal function touching
+    .value on a SourceResult nobody queried must not raise AttributeError on
+    a bare `Report()`'s default -- it must simply not fire."""
+    from hash_searcher.scoring import score
+
+    report = _report()
+    assert not any(s.name == "bazaar" for s in score(report).signals)
 
 
 def test_a_known_exploited_cve_is_a_strong_signal():
     """KEV means confirmed exploitation in the wild -- the strongest single
     statement any source in this phase makes."""
-    from hash_searcher.models import KEVEntry
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
     from hash_searcher.scoring import score
 
     report = _report()
-    report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+    report.kev = SourceResult(
+        value=KEVReport(entries=[KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]),
+        queried=True)
     assert next(s for s in score(report).signals if s.name == "kev").points >= 20
 
 
@@ -351,12 +364,13 @@ def test_greynoise_internet_noise_subtracts_rather_than_adds():
     """An IP scanning the entire internet is not evidence that THIS sample
     was aimed at you. Scoring it as a positive inflates every verdict that
     touches a contacted IP, which is most of them."""
-    from hash_searcher.models import GreyNoiseReport
+    from hash_searcher.models import GreyNoiseReport, SourceResult
     from hash_searcher.scoring import score
 
     report = _report()
     report.greynoise = {
-        "198.51.100.10": GreyNoiseReport(seen=True, classification="benign")
+        "198.51.100.10": SourceResult(
+            value=GreyNoiseReport(seen=True, classification="benign"), queried=True)
     }
     assert any(s.name == "internet_noise" and s.points < 0 for s in score(report).signals)
 
@@ -364,20 +378,23 @@ def test_greynoise_internet_noise_subtracts_rather_than_adds():
 def test_certificate_siblings_are_informational_and_score_nothing():
     """Sibling domains are a pivot, not a verdict. Scoring them would make
     every large hosting provider look malicious."""
-    from hash_searcher.models import CertReport
+    from hash_searcher.models import CertReport, SourceResult
     from hash_searcher.scoring import score
 
     report = _report()
-    report.certs = CertReport(siblings=["a.example", "b.example"], count=2)
+    report.certs = SourceResult(
+        value=CertReport(siblings=["a.example", "b.example"], count=2), queried=True)
     assert not any(s.name == "certs" for s in score(report).signals)
 
 
 def test_a_threatfox_family_match_is_a_signal():
-    from hash_searcher.models import ThreatFoxReport
+    from hash_searcher.models import SourceResult, ThreatFoxReport
     from hash_searcher.scoring import score
 
     report = _report()
-    report.threatfox = ThreatFoxReport(found=True, malware="Emotet", confidence=90)
+    report.threatfox = SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True)
     assert any(s.name == "threatfox" for s in score(report).signals)
 
 
@@ -387,9 +404,10 @@ def test_a_bazaar_family_match_escapes_unknown_without_a_vt_record():
     FILE, not merely having an opinion about an indicator it touched --
     reporting UNKNOWN there would discard the only real finding of the run.
     """
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.scoring import score
 
     report = _report()
-    report.bazaar = BazaarReport(found=True, family="Emotet")
+    report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
+                                 queried=True)
     assert score(report).level != "UNKNOWN"

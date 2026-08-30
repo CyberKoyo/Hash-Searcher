@@ -16,7 +16,7 @@ from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
-from .api.base_call import error_message, error_status, is_error, make_error
+from .api.base_call import error_status, make_error
 from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report, Verdict
@@ -189,15 +189,11 @@ async def run_cli(argv: list[str] | None = None) -> int:
     greynoise = {ip: extract_greynoise(payload)
                  for ip, payload in raw["greynoise"].items()}
     # Purely local: data_puller downloaded the catalog at most once, and
-    # only if there was a CVE to intersect it against.
-    cves = observed_cves(shodan.values())
-    kev_catalog, kev_error = raw["kev"], None
-    if is_error(kev_catalog):
-        # There WERE CVEs to check and CISA could not be reached. Reporting
-        # an empty kev list here would say "nothing is known-exploited",
-        # which is a claim nobody made.
-        kev_catalog, kev_error = {}, error_message(raw["kev"])
-    kev = known_exploited(cves, kev_catalog)
+    # only if there was a CVE to intersect it against. Every entry in
+    # `shodan` was queried by construction (raw["shodan"] only holds IPs
+    # data_puller actually fetched), but .ok is checked anyway rather than
+    # assumed.
+    cves = observed_cves(r.value for r in shodan.values() if r.ok)
 
     report = Report(
         indicator=file_hash,
@@ -205,18 +201,15 @@ async def run_cli(argv: list[str] | None = None) -> int:
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
         static=static_report,
-        # None all the way through when the source never ran: a section
-        # printed for a source nobody asked is indistinguishable from one
-        # that ran and found nothing.
-        bazaar=extract_bazaar(raw["bazaar"]) if raw["bazaar"] is not None else None,
-        threatfox=(extract_threatfox(raw["threatfox"])
-                   if raw["threatfox"] is not None else None),
-        certs=merge_crtsh(raw["crtsh"]) if raw["crtsh"] else None,
+        # Each extractor now decides "never asked" for itself -- raw["bazaar"]
+        # is None or raw["crtsh"] is [] means exactly that, and the extractor
+        # returns a SourceResult saying so instead of cli.py checking first.
+        bazaar=extract_bazaar(raw["bazaar"]),
+        threatfox=extract_threatfox(raw["threatfox"]),
+        certs=merge_crtsh(raw["crtsh"]),
         shodan=shodan,
         greynoise=greynoise,
-        kev=kev,
-        kev_error=kev_error,
-        kev_unchecked=len(cves) if kev_error else 0,
+        kev=known_exploited(cves, raw["kev"]),
     )
 
     verdict = score(report)

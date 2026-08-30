@@ -1,7 +1,10 @@
 import json
 from dataclasses import asdict
 
-from ..models import CensysHost, Report, StaticReport, Verdict, VTReport, WhoisRecord
+from ..models import (
+    BazaarReport, CensysHost, CertReport, GreyNoiseReport, Report, ShodanReport,
+    SourceResult, StaticReport, ThreatFoxReport, Verdict, VTReport, WhoisRecord,
+)
 
 
 def _censys_dict(host: CensysHost) -> dict:
@@ -36,6 +39,22 @@ def _whois_dict(record: WhoisRecord) -> dict:
         "expires": record.expires,
         "registrar": record.registrar,
     }
+
+
+def _source_dict(result: SourceResult, default) -> dict | None:
+    """Flatten a SourceResult to the shape its wrapped report used to have.
+
+    Present-but-null when the source never ran, same rule the rest of this
+    module follows. When it ran and failed, `.value` is None (the extractor
+    template never sets it on an error) -- `default` (a bare, zero-valued
+    instance of the wrapped report type) stands in so the JSON shape stays
+    exactly what it was before this report grew an `error` field of its own:
+    every field present, `error` set, everything else at its zero value.
+    """
+    if not result.queried:
+        return None
+    return {**asdict(result.value if result.value is not None else default),
+            "error": result.error}
 
 
 def _verdict_dict(verdict: Verdict) -> dict:
@@ -113,20 +132,26 @@ def _phase4_dict(report: Report) -> dict:
     Same rule as _vt_dict and _static_dict above: a consumer can then tell
     "the source had nothing" from "this tool never asked it". certs carries
     the untruncated `count` alongside the capped `siblings` list, so a JSON
-    consumer is not misled by the cap either.
+    consumer is not misled by the cap either. kev_error/kev_unchecked stay
+    their own top-level keys -- both already shipped on main, and Global
+    Constraint 7 says an existing JSON key never moves -- populated from the
+    SourceResult[KEVReport] that replaced the two bolted-on Report fields.
     """
+    kev = report.kev
     return {
-        "bazaar": asdict(report.bazaar) if report.bazaar else None,
-        "threatfox": asdict(report.threatfox) if report.threatfox else None,
-        "certs": asdict(report.certs) if report.certs else None,
-        "shodan": {ip: asdict(r) for ip, r in report.shodan.items()},
-        "greynoise": {ip: asdict(r) for ip, r in report.greynoise.items()},
-        "kev": [asdict(entry) for entry in report.kev],
+        "bazaar": _source_dict(report.bazaar, BazaarReport()),
+        "threatfox": _source_dict(report.threatfox, ThreatFoxReport()),
+        "certs": _source_dict(report.certs, CertReport()),
+        "shodan": {ip: _source_dict(r, ShodanReport())
+                   for ip, r in report.shodan.items()},
+        "greynoise": {ip: _source_dict(r, GreyNoiseReport())
+                      for ip, r in report.greynoise.items()},
+        "kev": [asdict(entry) for entry in kev.value.entries] if kev.value else [],
         # Present-but-null unless the catalog could not be fetched, so a
         # consumer never reads an empty "kev" as "nothing is exploited"
         # when the truth is that nobody could ask.
-        "kev_error": report.kev_error,
-        "kev_unchecked": report.kev_unchecked,
+        "kev_error": kev.error,
+        "kev_unchecked": kev.value.unchecked if kev.value else 0,
     }
 
 

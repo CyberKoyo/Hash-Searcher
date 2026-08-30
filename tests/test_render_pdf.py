@@ -114,11 +114,14 @@ def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
 
 
 def test_the_phase_4_sources_reach_the_pdf(sample_report):
-    from hash_searcher.models import BazaarReport, KEVEntry
+    from hash_searcher.models import BazaarReport, KEVEntry, KEVReport, SourceResult
     from hash_searcher.render.pdf import build_story
 
-    sample_report.bazaar = BazaarReport(found=True, family="Emotet")
-    sample_report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+    sample_report.bazaar = SourceResult(
+        value=BazaarReport(found=True, family="Emotet"), queried=True)
+    sample_report.kev = SourceResult(
+        value=KEVReport(entries=[KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]),
+        queried=True)
 
     def _text(flowable) -> str:
         """Flatten a flowable: KEV and IP intel render as tables, whose cell
@@ -140,19 +143,21 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     CVE cell raised LayoutError and took down an otherwise successful run at
     the very last step. Real Shodan answers carry 120-137 CVEs for one host.
     """
-    from hash_searcher.models import CertReport, KEVEntry, ShodanReport
+    from hash_searcher.models import CertReport, KEVEntry, KEVReport, ShodanReport, SourceResult
     from hash_searcher.render.pdf import write_pdf
 
     sample_report.shodan = {
-        "198.51.100.10": ShodanReport(
+        "198.51.100.10": SourceResult(value=ShodanReport(
             ports=list(range(1, 40)),
-            vulns=[f"CVE-2021-{n:05d}" for n in range(150)]),
+            vulns=[f"CVE-2021-{n:05d}" for n in range(150)]), queried=True),
     }
-    sample_report.kev = [KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
-                                  product="HTTP Server", name="Some Vulnerability",
-                                  date_added="2022-03-03") for n in range(60)]
-    sample_report.certs = CertReport(
-        siblings=[f"host{n}.evil.example" for n in range(100)], count=5000)
+    sample_report.kev = SourceResult(value=KEVReport(entries=[
+        KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
+                product="HTTP Server", name="Some Vulnerability",
+                date_added="2022-03-03") for n in range(60)]), queried=True)
+    sample_report.certs = SourceResult(value=CertReport(
+        siblings=[f"host{n}.evil.example" for n in range(100)], count=5000),
+        queried=True)
 
     out = tmp_path / "report.pdf"
     write_pdf(sample_report, str(out))
