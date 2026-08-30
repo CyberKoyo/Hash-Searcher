@@ -49,3 +49,12 @@ def contacted_ips(payload: dict) -> list[str]:
     better behavior and it lives in the layer that owns pure extraction.
     """
     return relationship_ids(payload, 'contacted_ips')
+
+
+def contacted_domains(payload: dict) -> list[str]:
+    """Domains the sample contacted, per VT. [] on any error payload.
+
+    Same delegation as contacted_ips above, for the same reason. These are
+    what the domain-typed providers (RDAP, crt.sh) are run over.
+    """
+    return relationship_ids(payload, 'contacted_domains')

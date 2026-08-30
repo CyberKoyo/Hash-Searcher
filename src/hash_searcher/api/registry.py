@@ -12,6 +12,7 @@ from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .malwarebazaar import get_bazaar
 from .otx import get_otx
+from .rdap import get_rdap
 from .virustotal import get_vt
 
 
@@ -39,6 +40,10 @@ PROVIDERS: list[Provider] = [
     # Keyless: key_env=None, so it is always available. A day's TTL --
     # a sample's family and tags do not change once abuse.ch has it.
     Provider("malwarebazaar", None, ("hash",), get_bazaar, cache_ttl=86400),
+    # A week: registration data changes on the order of years, and
+    # rdap.org bootstraps through a redirect, so each lookup is two
+    # requests rather than one.
+    Provider("rdap", None, ("domain",), get_rdap, cache_ttl=604800),
 ]
 
 

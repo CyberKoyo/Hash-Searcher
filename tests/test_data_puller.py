@@ -81,6 +81,11 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         "ipdb": [],
         "censys": [],
         "ips": ["198.51.100.10"],
+        # VT reported no contacted_domains, so the domain-typed sources have
+        # nothing to run over -- and rdap is keyless, so this proves the
+        # fan-out is gated on there being a domain at all, not on a key.
+        "domains": [],
+        "rdap": [],
     }
 
 
@@ -114,6 +119,8 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "ipdb": [],
         "censys": [],
         "ips": [],
+        "domains": [],
+        "rdap": [],
     }
 
 

@@ -11,7 +11,6 @@ from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
 from .api.api_data_puller import data_puller, resolve_hash
 from .api.base_call import error_status, make_error
-from .api.who_is import who_is
 from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report, Verdict
@@ -44,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hash-searcher",
         description="Check a file or hash against VirusTotal, AbuseIPDB, "
-                    "Censys, OTX, and WHOIS.",
+                    "Censys, OTX, RDAP, and several keyless sources.",
     )
     parser.add_argument("indicator", help="a file path, or an MD5/SHA-1/SHA-256 digest")
     parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
@@ -153,7 +152,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
             write_report(report, args.output, verdict)
         return exit_code(verdict)
 
-    print("Pulling data from VirusTotal, IPDB, OTX, Censys, and WHOIS...")
+    print("Pulling data from VirusTotal, IPDB, OTX, Censys, and RDAP...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
         raw = await data_puller(file_hash, cache, extra_ips=extra_ips)
@@ -177,8 +176,10 @@ async def run_cli(argv: list[str] | None = None) -> int:
               "no pulses -- continuing with local static analysis results.")
 
     ips = extract_ips(raw["ipdb"])
-    domains, hosts = extract_hosts(raw["censys"], ips)
-    whois = extract_whois(await who_is(domains)) if domains else []
+    _domains, hosts = extract_hosts(raw["censys"], ips)
+    # RDAP is a registered provider now, so its fan-out happens inside
+    # data_puller alongside every other source -- cli only extracts.
+    whois = extract_whois(raw["rdap"])
 
     report = Report(
         indicator=file_hash,

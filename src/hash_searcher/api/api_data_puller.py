@@ -4,8 +4,11 @@ import string
 
 import httpx
 
+from ..analysis.censys import extract_hosts
+from ..analysis.ipdb import extract_ips
 from ..hashing import get_zip_hash
-from .virustotal import contacted_ips, get_vt
+from .rdap import get_rdap
+from .virustotal import contacted_domains, contacted_ips, get_vt
 from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
@@ -90,22 +93,37 @@ async def fetch_censys(client, ips, cache):
     return results
 
 
-def _merge_ips(vt_ips: list[str], extra_ips: list[str] | None) -> list[str]:
-    """Order-preserving de-duplicated union, VT's own IPs first.
+def _merge_indicators(primary: list[str], extra: list[str] | None) -> list[str]:
+    """Order-preserving de-duplicated union, VT's own indicators first.
 
     Capped at IOC_LIMIT -- the same per-category cap Task 6 put on the
     strings harvester -- so this merge cannot turn into an unbounded list
-    of AbuseIPDB lookups. extra_ips already arrives at or under IOC_LIMIT,
-    but vt_ips is not itself capped upstream, so the cap is enforced here,
-    on the merged result, rather than trusted from either input.
+    of per-indicator lookups. `extra` already arrives at or under
+    IOC_LIMIT, but `primary` is not itself capped upstream, so the cap is
+    enforced here, on the merged result, rather than trusted from either
+    input. Used for both the IP and the domain fan-out.
     """
     result = []
-    for ip in (*vt_ips, *(extra_ips or ())):
-        if ip not in result:
-            result.append(ip)
+    for indicator in (*primary, *(extra or ())):
+        if indicator not in result:
+            result.append(indicator)
         if len(result) == IOC_LIMIT:
             break
     return result
+
+
+def _domains(vt_data, ipdb_data: list, censys_results: list) -> list[str]:
+    """Every domain worth a domain-typed lookup, VT's own first.
+
+    Two sources, because the tool already had two: VT's contacted_domains
+    relationship, fetched since Phase 0, and the hostnames AbuseIPDB and
+    Censys surfaced -- which is where the WHOIS section's domains came from
+    before RDAP existed. Dropping the second set to keep this simple would
+    silently shrink that section. extract_ips/extract_hosts are pure, so
+    calling them here and again in cli.py costs nothing but a walk.
+    """
+    censys_domains, _ = extract_hosts(censys_results, extract_ips(ipdb_data))
+    return _merge_indicators(contacted_domains(vt_data), censys_domains)
 
 
 async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None):
@@ -117,6 +135,7 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
     pool = available()
     hash_sources = {p.name for p in for_indicator("hash", pool)}
     ip_sources = {p.name for p in for_indicator("ip", pool)}
+    domain_sources = {p.name for p in for_indicator("domain", pool)}
 
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
@@ -135,7 +154,7 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         else:
             vt_data, vt_ips = make_error("VirusTotal key not set"), []
 
-        ips = _merge_ips(vt_ips, extra_ips)
+        ips = _merge_indicators(vt_ips, extra_ips)
 
         ipdb_task = (
             asyncio.gather(*(
@@ -155,7 +174,18 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         ipdb_data = await ipdb_task if ipdb_task else []
         censys_results = await censys_task if censys_task else []
 
+        domains = _domains(vt_data, list(ipdb_data), censys_results)
+        rdap_results = (
+            await asyncio.gather(*(
+                _cached(cache, "rdap", domain,
+                        lambda d=domain: get_rdap(client, d))
+                for domain in domains
+            ))
+            if domains and "rdap" in domain_sources else []
+        )
+
     return {
         'vt': vt_data, 'otx': otx_data, 'ipdb': list(ipdb_data),
         'censys': censys_results, 'ips': ips,
+        'domains': domains, 'rdap': list(rdap_results),
     }

@@ -1,0 +1,20 @@
+{
+  "objectClassName": "domain",
+  "ldhName": "evil.example",
+  "events": [
+    {"eventAction": "registration", "eventDate": "2019-04-02T11:20:41Z"},
+    {"eventAction": "expiration", "eventDate": "2027-04-02T11:20:41Z"},
+    {"eventAction": "last changed", "eventDate": "2025-01-15T09:00:00Z"}
+  ],
+  "entities": [
+    {
+      "roles": ["registrar"],
+      "vcardArray": ["vcard", [
+        ["version", {}, "text", "4.0"],
+        ["fn", {}, "text", "Example Registrar, Inc."]
+      ]]
+    },
+    {"roles": ["abuse"], "vcardArray": ["vcard", [["fn", {}, "text", "Abuse Desk"]]]}
+  ],
+  "status": ["client transfer prohibited"]
+}

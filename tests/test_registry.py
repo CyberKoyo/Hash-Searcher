@@ -44,6 +44,7 @@ def test_real_registry_covers_every_current_source():
     from hash_searcher.api.registry import PROVIDERS
     assert {p.name for p in PROVIDERS} == {
         "virustotal", "otx", "abuseipdb", "censys", "malwarebazaar",
+        "rdap",
     }
 
 
