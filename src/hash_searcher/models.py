@@ -204,6 +204,19 @@ class GreyNoiseReport:
     error: str | None = None
 
 
+@dataclass
+class CertReport:
+    """Sibling domains from certificate transparency.
+
+    `siblings` is capped at analysis.crtsh.SIBLING_LIMIT for readability;
+    `count` is the untruncated total, so a capped list never reads as the
+    whole answer.
+    """
+    siblings: list[str] = field(default_factory=list)
+    count: int = 0
+    error: str | None = None
+
+
 @dataclass(frozen=True)
 class Signal:
     name: str

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from . import config
 from .abuseipdb import get_ipdb
 from .censys import get_censys
+from .crtsh import get_crtsh
 from .malwarebazaar import get_bazaar
 from .otx import get_otx
 from .greynoise import get_greynoise
@@ -47,6 +48,10 @@ PROVIDERS: list[Provider] = [
     # requests rather than one.
     Provider("rdap", None, ("domain",), get_rdap, cache_ttl=604800),
     Provider("shodan", None, ("ip",), get_shodan, cache_ttl=86400),
+    # crt.sh throttles anonymous bulk queries, so its lookups stay serial
+    # with a gap between them -- the same treatment Censys gets.
+    Provider("crtsh", None, ("domain",), get_crtsh,
+             serial_delay=2.0, cache_ttl=86400),
     # Community works keyless at a lower rate limit; GREYNOISE_KEY raises it.
     # key_env stays None so an unset key does not mark the source unavailable
     # -- the header is simply omitted. The key is read at call time, per Obs. C.
