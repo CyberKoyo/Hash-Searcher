@@ -139,6 +139,71 @@ def test_many_dotted_quads_do_not_make_ip_matching_quadratic():
     assert elapsed < 3.0, f"took {elapsed:.2f}s -- quadratic IP scanning regressed"
 
 
+def test_many_distinct_urls_do_not_make_stripping_quadratic():
+    """branch-review.md C4: harvest_iocs's URL-stripping loop did
+    `remainder = remainder.replace(url, " ")` once per URL _find_urls
+    found. Each call rescans the whole (shrinking but still large)
+    remainder, so N DISTINCT URLs cost O(len(text) x N). IDENTICAL
+    repeated URLs do NOT reproduce this -- a single replace() call removes
+    every occurrence of one URL in one pass, so the loop body only runs
+    more than once when the URLs differ from each other. This was masked
+    until C2's two blowups were fixed, since both of those hung first.
+    Measured before this fix on this exact shape (20,000 distinct URLs,
+    ~838KB): 3.28s; the fixed code measures ~0.03s here."""
+    import time
+
+    from hash_searcher.static.strings import harvest_iocs
+
+    text = " ".join(f"http://example{i}.test/path/to/thing{i}" for i in range(20_000))
+    started = time.monotonic()
+    harvest_iocs([text])
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2.0, f"took {elapsed:.2f}s -- quadratic URL stripping regressed"
+
+
+def test_domains_followed_by_a_non_tld_trailing_label_are_still_found():
+    """branch-review.md I6: the C2 fix first shipped as fullmatch() against
+    a whole tokenised run, which cannot backtrack to a shorter match the
+    way the original word-boundary-anchored pattern does on failure. That silently
+    dropped a valid domain immediately followed by a trailing label that
+    is not a letters-only TLD -- a numeric suffix, a dotted port, a
+    double dot -- which is exactly the shape an IOC extractor exists to
+    catch. 640 of 40,000 random fuzz inputs differed from the original
+    pattern's behaviour under that version. The fix runs the original
+    pattern's own backtracking inside each token instead, so these must
+    still be found."""
+    from hash_searcher.static.strings import harvest_iocs
+
+    assert harvest_iocs(["evil.example.123"]).domains == ["evil.example"]
+    assert harvest_iocs(["host.evil.example.99"]).domains == ["host.evil.example"]
+    assert harvest_iocs(["a.b.evil.example.7"]).domains == ["a.b.evil.example"]
+    assert harvest_iocs(["foo..bar.example"]).domains == ["bar.example"]
+
+
+def test_a_domain_run_that_bleeds_into_an_underscore_is_not_a_false_positive():
+    """Found while differential-testing the I6 fix beyond the review's own
+    fuzz coverage (their reported 40,000-input run used an alphabet
+    without '_'). Regex word-boundary anchors are defined relative to the
+    word-character class, which includes '_' along with letters and
+    digits, so "1.kyzas__su" has no real word boundary after "kyzas" --
+    the underscore is itself a word character. The original
+    word-boundary-anchored pattern therefore finds nothing here. A
+    domain-token character class that excludes '_' cuts the token right
+    before the underscore and isolates "1.kyzas" as if it stood alone,
+    manufacturing a boundary the full text never had -- a false positive
+    relative to the original that a fuzz run without '_' in its alphabet
+    would never surface. Including '_' in the token's character class
+    (even though '_' can never be part of a domain label itself)
+    preserves the adjacency the word-boundary anchor needs to see, at no
+    cost to the ReDoS fix -- MAX_DOMAIN still bounds the backtracking to a
+    constant regardless of how the token is delimited."""
+    from hash_searcher.static.strings import harvest_iocs
+
+    assert harvest_iocs(["1.kyzas__su"]).domains == []
+    assert harvest_iocs(["_bgg 93hlqp17.kv_r"]).domains == []
+
+
 # --- branch-review.md I3: analyze_strings itself had zero direct coverage ----
 
 

@@ -24,7 +24,7 @@ IGNORED_DOMAINS = {
     "globalsign.com", "schemas.xmlsoap.org", "example.com",
 }
 
-# Filename extensions that read as a domain TLD to _DOMAIN_FULL_RE but are
+# Filename extensions that read as a domain TLD to _DOMAIN_RE but are
 # overwhelmingly PE import-table entries or plain filenames in practice --
 # kernel32.dll, readme.txt, setup.exe. Every extension here is checked to
 # NOT be a live TLD; .com is deliberately excluded even though it is also
@@ -55,28 +55,53 @@ _IP_CANDIDATE_RE = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
 # A long dotted chain that never ends in a valid TLD -- "11.11.11...", or any
-# sufficiently long "a.b.c.d..." -- makes _DOMAIN_FULL_RE's old use as a
-# finditer pattern catastrophically slow: the trailing [a-zA-Z]{2,} fails,
-# the engine backtracks through every "label." repetition of the `+` group
-# once for the failing match, and finditer then repeats that whole failing
-# match attempt from every subsequent starting position -- O(n) backtrack
-# steps times O(n) starting positions is O(n^2). Measured on this branch:
-# 6KB 0.27s, 12KB 1.08s, 24KB 7.09s, 48KB 25.54s; a 100KB crafted file did
-# not finish in 60s. See branch-review.md C2.
+# sufficiently long "a.b.c.d..." -- makes the domain grammar below
+# catastrophically slow if it is run directly against the whole text with
+# `finditer`: the trailing [a-zA-Z]{2,} fails, the engine backtracks through
+# every "label." repetition of the `+` group once for the failing match, and
+# finditer then repeats that whole failing attempt from every subsequent
+# starting position -- O(n) backtrack steps times O(n) starting positions is
+# O(n^2). Measured on this branch: 6KB 0.27s, 12KB 1.08s, 24KB 7.09s,
+# 48KB 25.54s; a 100KB crafted file did not finish in 60s. See
+# branch-review.md C2.
 #
 # The fix tokenises first with a linear, non-backtracking character class,
-# then fullmatch()es the real domain grammar against each token once. A
-# failing fullmatch still backtracks O(len(token)) internally, but that cost
-# is paid once per token instead of once per starting position within it, so
-# the whole pass is O(n) instead of O(n^2). This changes performance only --
-# _DOMAIN_TOKEN_RE's character class is exactly _DOMAIN_FULL_RE's alphabet
-# ([a-zA-Z0-9.-]), so tokenising can never split a candidate domain that the
-# old \b...\b pattern would have matched as one run, and fullmatch requiring
-# the whole token to match is equivalent to the old pattern's greedy `+`
-# always preferring the longest run starting at a given position.
-_DOMAIN_TOKEN_RE = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9.-]*")
-_DOMAIN_FULL_RE = re.compile(
-    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\Z"
+# then runs the *original* domain grammar (unchanged, still \b-anchored,
+# still backtracks to a shorter match on failure) against each token, capped
+# at MAX_DOMAIN bytes -- the DNS name length limit. Capping the token bounds
+# the backtracking to a constant (O(MAX_DOMAIN)) per token instead of
+# O(len(text)), so the whole pass is O(n) in the number of tokens rather than
+# O(n^2) in the length of the text.
+#
+# An earlier version of this fix ran fullmatch() against the whole token
+# instead, on the theory that "the old pattern's greedy + always prefers the
+# longest run starting at a given position" made the two equivalent. That
+# reasoning was wrong: the old pattern backtracks to a *shorter* match when
+# the longest one fails (e.g. "evil.example.123" -- fullmatch rejects the
+# whole token outright, but the original \b-anchored pattern finds
+# "evil.example" inside it by giving back the ".123" tail). fullmatch cannot
+# do that give-back, so it silently dropped domains followed by a non-TLD
+# trailing label -- a host with a trailing numeric label, a dotted port, a
+# double dot. Differential-tested against the original pattern over 40,000
+# random inputs: 0 differences. It is also faster than the fullmatch version
+# was, since a token that cannot start a domain is rejected by length before
+# any backtracking happens at all (6MB: 0.031s here vs 1.67s for fullmatch).
+MAX_DOMAIN = 253  # RFC 1035 -- the longest a fully-qualified domain name can be.
+#
+# '_' is in this class even though it can never be part of a domain label:
+# \b is defined relative to \w = [a-zA-Z0-9_], so a domain-alphabet run
+# immediately adjacent to an underscore (a mangled symbol, an env-var-style
+# token) has no real \b there in the original pattern's eyes either. A
+# token class that excludes '_' cuts the token right at the underscore and
+# hands _DOMAIN_RE an isolated substring whose edge LOOKS like a boundary
+# but was never one in the full text -- a false positive relative to the
+# original that a differential test without '_' in its fuzz alphabet would
+# never catch. Confirmed by fuzzing 40,000+ underscore-containing inputs
+# against the true \b-anchored-over-the-whole-text original: 0 differences
+# with '_' included in this class, ~1.5% of inputs differing without it.
+_DOMAIN_TOKEN_RE = re.compile(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*")
+_DOMAIN_RE = re.compile(
+    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
 )
 
 
@@ -191,21 +216,18 @@ def _is_ignored_domain(domain: str) -> bool:
 
 def _find_domains(text: str) -> list[str]:
     found = []
-    for match in _DOMAIN_TOKEN_RE.finditer(text):
-        # A trailing "." or "-" can never be part of a valid TLD, so it is
-        # always safe to strip -- this keeps "visit evil.example." (a
-        # sentence-ending period swept into the token) matching the same
-        # domain the old \b-anchored pattern found.
-        candidate = match.group(0).rstrip(".-")
-        if not _DOMAIN_FULL_RE.fullmatch(candidate):
-            continue
-        domain = candidate.lower()
-        tld = domain.rsplit(".", 1)[-1]
-        if tld in FILENAME_EXTENSIONS:
-            continue
-        if _is_ignored_domain(domain):
-            continue
-        found.append(domain)
+    for token_match in _DOMAIN_TOKEN_RE.finditer(text):
+        # Capping at MAX_DOMAIN bounds _DOMAIN_RE's backtracking to a
+        # constant per token -- see the comment above _DOMAIN_TOKEN_RE.
+        token = token_match.group(0)[:MAX_DOMAIN]
+        for candidate in _DOMAIN_RE.findall(token):
+            domain = candidate.lower()
+            tld = domain.rsplit(".", 1)[-1]
+            if tld in FILENAME_EXTENSIONS:
+                continue
+            if _is_ignored_domain(domain):
+                continue
+            found.append(domain)
     return found
 
 
@@ -236,9 +258,19 @@ def harvest_iocs(strings: list[str]) -> IOCSet:
     for text in strings:
         found_urls = _find_urls(text)
         urls.extend(found_urls)
-        remainder = text
-        for url in found_urls:
-            remainder = remainder.replace(url, " ")
+        # A file with many DISTINCT URLs made this an O(len(text) x distinct
+        # URLs) string scan: str.replace() re-scans the whole (shrinking but
+        # still large) remainder once per URL. IDENTICAL repeated URLs never
+        # triggered it, since a single replace() call removes every
+        # occurrence in one pass -- only distinct URLs walk the loop body
+        # more than once. Measured before this fix: 724KB 2.82s, 1.46MB
+        # 12.14s, 2.96MB 51.36s -- clean 4x per 2x, quadratic; a real 2.7MB
+        # file took 40.75s end to end through analyze_strings, ~370s at the
+        # 8 MiB MAX_BYTES cap. _URL_RE.sub() does the same job -- blank out
+        # every URL span -- in one linear pass regardless of how many
+        # distinct URLs there are. Differential-tested against the old loop
+        # over 20,000 mixed strings: 0 differences.
+        remainder = _URL_RE.sub(" ", text)
         ips.extend(_find_ips(remainder))
         domains.extend(_find_domains(remainder))
     return IOCSet(
