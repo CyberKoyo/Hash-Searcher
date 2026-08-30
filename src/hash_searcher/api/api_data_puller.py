@@ -10,7 +10,7 @@ from .otx import get_otx
 from .abuseipdb import get_ipdb
 from .censys import get_censys
 from .base_call import is_error, make_error, tag_indicator
-from .registry import available, by_name
+from .registry import available, by_name, for_indicator
 from ..static.strings import IOC_LIMIT
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
@@ -109,7 +109,14 @@ def _merge_ips(vt_ips: list[str], extra_ips: list[str] | None) -> list[str]:
 
 
 async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None):
-    enabled = {p.name for p in available()}
+    # Selection is by indicator type, not by a hand-written branch per name:
+    # indicator_types has been declared since Phase 1 and read by nothing,
+    # and with seven more sources across three types the branches stop
+    # scaling. available() stays the availability half -- a provider whose
+    # key is unset is never selected, whatever types it declares.
+    pool = available()
+    hash_sources = {p.name for p in for_indicator("hash", pool)}
+    ip_sources = {p.name for p in for_indicator("ip", pool)}
 
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT.
@@ -117,10 +124,10 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
             asyncio.create_task(
                 _cached(cache, "otx", file_hash, lambda: get_otx(client, file_hash))
             )
-            if "otx" in enabled else None
+            if "otx" in hash_sources else None
         )
 
-        if "virustotal" in enabled:
+        if "virustotal" in hash_sources:
             vt_data = await _cached(
                 cache, "virustotal", file_hash, lambda: get_vt(client, file_hash)
             )
@@ -135,13 +142,13 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
                 _cached(cache, "abuseipdb", ip, lambda ip=ip: get_ipdb(client, ip))
                 for ip in ips
             ))
-            if ips and "abuseipdb" in enabled else None
+            if ips and "abuseipdb" in ip_sources else None
         )
         # create_task, not a bare coroutine: awaited last, an unscheduled
         # coroutine would not overlap OTX and AbuseIPDB the way gather did.
         censys_task = (
             asyncio.create_task(fetch_censys(client, ips, cache))
-            if ips and "censys" in enabled else None
+            if ips and "censys" in ip_sources else None
         )
 
         otx_data = await otx_task if otx_task else make_error("OTX key not set")

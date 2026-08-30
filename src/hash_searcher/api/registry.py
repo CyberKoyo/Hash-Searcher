@@ -62,3 +62,14 @@ def by_name(name: str, providers: list[Provider] | None = None) -> Provider:
             return provider
     where = "PROVIDERS" if providers is None else "the supplied provider pool"
     raise LookupError(f"no provider named {name!r} in {where}")
+
+
+def for_indicator(indicator_type: str,
+                  providers: list[Provider] | None = None) -> list[Provider]:
+    """Available providers that handle this indicator type.
+
+    indicator_types has been declared since Phase 1 and read by nothing.
+    With seven more sources across three types, hand-written branches in
+    data_puller stop scaling -- this is what replaces them.
+    """
+    return [p for p in available(providers) if indicator_type in p.indicator_types]

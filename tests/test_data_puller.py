@@ -8,7 +8,7 @@ or the network, so the tests are deterministic regardless of which API keys
 
 from hash_searcher.api.api_data_puller import data_puller
 from hash_searcher.api.base_call import make_error
-from hash_searcher.api.registry import Provider
+from hash_searcher.api.registry import Provider, by_name
 from hash_searcher.cache import ResponseCache
 
 FAKE_VT_DATA = {
@@ -17,7 +17,17 @@ FAKE_VT_DATA = {
 
 
 def _provider(name: str) -> Provider:
-    return Provider(name=name, key_env=None, indicator_types=(), fetch=None)
+    """Keyless stand-in for a registered provider.
+
+    indicator_types comes from the real registry rather than an empty
+    tuple: data_puller selects by indicator type now, and a stub declaring
+    no types would be unreachable through for_indicator -- the exact
+    condition test_registry's
+    test_every_registered_provider_declares_at_least_one_indicator_type
+    forbids in the registry itself.
+    """
+    return Provider(name=name, key_env=None,
+                    indicator_types=by_name(name).indicator_types, fetch=None)
 
 
 class _Recorder:
@@ -123,7 +133,8 @@ async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_pa
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
     monkeypatch.setattr(
         "hash_searcher.api.api_data_puller.available",
-        lambda: [Provider(name="virustotal", key_env=None, indicator_types=(), fetch=None)],
+        lambda: [Provider(name="virustotal", key_env=None,
+                          indicator_types=("hash",), fetch=None)],
     )
 
     cache = ResponseCache(path=tmp_path / "c.db")

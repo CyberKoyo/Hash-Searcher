@@ -93,3 +93,31 @@ def test_every_provider_fetch_takes_client_and_indicator():
         # breaks the exact promise this test exists to guard.
         assert required[0].name == "client", \
             f"{provider.name} takes {required[0].name!r} first, not 'client'"
+
+
+def test_for_indicator_selects_only_providers_that_handle_the_type(monkeypatch):
+    from hash_searcher.api.registry import for_indicator
+
+    monkeypatch.setenv("TOTAL_KEY", "set")
+    monkeypatch.setenv("CENSYS_KEY", "set")
+    assert [p.name for p in for_indicator("hash", _providers())] == ["vt"]
+    assert [p.name for p in for_indicator("ip", _providers())] == ["censys"]
+    assert [p.name for p in for_indicator("domain", _providers())] == ["crtsh"]
+
+
+def test_for_indicator_still_respects_key_availability(monkeypatch):
+    """A provider whose key is unset must not be selected just because it
+    declares the right indicator type."""
+    from hash_searcher.api.registry import for_indicator
+
+    monkeypatch.delenv("TOTAL_KEY", raising=False)
+    assert [p.name for p in for_indicator("hash", _providers())] == []
+
+
+def test_every_registered_provider_declares_at_least_one_indicator_type():
+    """Constraint 5: an empty tuple makes a provider unreachable through
+    for_indicator, so it would silently never run."""
+    from hash_searcher.api.registry import PROVIDERS
+
+    for provider in PROVIDERS:
+        assert provider.indicator_types, f"{provider.name} declares no indicator types"
