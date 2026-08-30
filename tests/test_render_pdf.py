@@ -111,3 +111,24 @@ def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
     texts = _texts(build_story(sample_report, None))
     assert "Censys 403: forbidden" in texts
     assert "None" not in texts
+
+
+def test_the_phase_4_sources_reach_the_pdf(sample_report):
+    from hash_searcher.models import BazaarReport, KEVEntry
+    from hash_searcher.render.pdf import build_story
+
+    sample_report.bazaar = BazaarReport(found=True, family="Emotet")
+    sample_report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+
+    def _text(flowable) -> str:
+        """Flatten a flowable: KEV and IP intel render as tables, whose cell
+        Paragraphs are not reachable through the top-level .text."""
+        rows = getattr(flowable, "_cellvalues", None)
+        if rows:
+            return " ".join(_text(cell) for row in rows for cell in row)
+        return getattr(flowable, "text", "") or ""
+
+    text = " ".join(_text(f) for f in build_story(sample_report))
+    assert "MalwareBazaar" in text
+    assert "Emotet" in text
+    assert "CVE-2021-41617" in text

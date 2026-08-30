@@ -4,8 +4,14 @@ import datetime
 import os
 import sys
 
+from .analysis.bazaar import extract_bazaar
 from .analysis.censys import extract_hosts
+from .analysis.crtsh import merge_crtsh
+from .analysis.greynoise import extract_greynoise
 from .analysis.ipdb import extract_ips
+from .analysis.kev import known_exploited
+from .analysis.shodan import extract_shodan
+from .analysis.threatfox import extract_threatfox
 from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
@@ -181,12 +187,26 @@ async def run_cli(argv: list[str] | None = None) -> int:
     # data_puller alongside every other source -- cli only extracts.
     whois = extract_whois(raw["rdap"])
 
+    shodan = {ip: extract_shodan(payload) for ip, payload in raw["shodan"].items()}
+    greynoise = {ip: extract_greynoise(payload)
+                 for ip, payload in raw["greynoise"].items()}
+    # Purely local: data_puller downloaded the catalog at most once, and
+    # only if there was a CVE to intersect it against.
+    observed_cves = [cve for report in shodan.values() for cve in report.vulns]
+    kev = known_exploited(observed_cves, raw["kev"])
+
     report = Report(
         indicator=file_hash,
         generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,
         static=static_report,
+        bazaar=extract_bazaar(raw["bazaar"]),
+        threatfox=extract_threatfox(raw["threatfox"]),
+        certs=merge_crtsh(raw["crtsh"]),
+        shodan=shodan,
+        greynoise=greynoise,
+        kev=kev,
     )
 
     verdict = score(report)

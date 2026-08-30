@@ -358,3 +358,17 @@ class Report:
     #: argument with no file, or an analyzer-fan-out failure) -- never a
     #: half-built StaticReport standing in for "we didn't run it".
     static: StaticReport | None = None
+    #: Phase 4 sources. Each is None (or empty) when that source never ran
+    #: -- the same rule the rest of this file follows, so a consumer can
+    #: tell "the source had nothing" from "this tool never asked it".
+    bazaar: BazaarReport | None = None
+    threatfox: ThreatFoxReport | None = None
+    certs: CertReport | None = None
+    #: Keyed by IP, the same way `ips` is: these fan out over the contacted
+    #: IPs rather than describing the sample itself.
+    shodan: dict[str, ShodanReport] = field(default_factory=dict)
+    greynoise: dict[str, GreyNoiseReport] = field(default_factory=dict)
+    #: CVEs on contacted IPs that CISA has confirmed are exploited in the
+    #: wild. Empty both when nothing matched and when there was nothing to
+    #: match -- the catalog is only fetched when Shodan reported CVEs.
+    kev: list[KEVEntry] = field(default_factory=list)

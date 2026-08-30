@@ -86,6 +86,14 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         # fan-out is gated on there being a domain at all, not on a key.
         "domains": [],
         "rdap": [],
+        "crtsh": [],
+        # The keyless sources are absent from the patched pool here, so they
+        # degrade the same way a keyed provider does rather than firing.
+        "bazaar": make_error("MalwareBazaar was not queried"),
+        "threatfox": make_error("ThreatFox was not queried"),
+        "shodan": {},
+        "greynoise": {},
+        "kev": {},
     }
 
 
@@ -121,6 +129,12 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "ips": [],
         "domains": [],
         "rdap": [],
+        "crtsh": [],
+        "bazaar": make_error("MalwareBazaar was not queried"),
+        "threatfox": make_error("ThreatFox was not queried"),
+        "shodan": {},
+        "greynoise": {},
+        "kev": {},
     }
 
 
@@ -332,3 +346,98 @@ async def test_a_failed_virustotal_call_is_not_cached(monkeypatch, tmp_path):
     cache.close()
 
     assert len(calls) == 2
+
+
+async def test_only_providers_for_the_indicator_type_are_called(monkeypatch):
+    """Constraint 5: a domain-only source must never be handed a hash. The
+    bug this prevents is silent -- crt.sh would answer 200 with an empty
+    list for a hash query, so nothing would look wrong."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.api.registry import Provider
+    from hash_searcher.cache import ResponseCache
+
+    called = []
+
+    async def spy_crtsh(client, domain, **kwargs):
+        called.append(domain)
+        return []
+
+    async def fake_vt(client, file_hash, **kwargs):
+        # No relationships block: no contacted IPs, no contacted domains.
+        return {"data": {"attributes": {}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_crtsh", spy_crtsh)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+        Provider("virustotal", None, ("hash",), fake_vt),
+        Provider("crtsh", None, ("domain",), spy_crtsh),
+    ])
+
+    await data_puller("a" * 64, ResponseCache(enabled=False))
+    assert called == []
+
+
+async def test_the_kev_catalog_is_not_fetched_when_shodan_found_no_cves(monkeypatch):
+    """KEV is a 1MB download. Pulling it for a sample with nothing to
+    intersect it against is the waste the local-intersection design exists
+    to avoid."""
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.api.registry import Provider
+    from hash_searcher.cache import ResponseCache
+
+    fetched = []
+
+    async def spy_kev(client, **kwargs):
+        fetched.append(True)
+        return {"vulnerabilities": []}
+
+    async def fake_vt(client, file_hash, **kwargs):
+        return {"data": {"relationships": {
+            "contacted_ips": {"data": [{"id": "198.51.100.10"}]}}}}
+
+    async def fake_shodan(client, ip, **kwargs):
+        return {"ports": [80], "vulns": []}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_kev", spy_kev)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", fake_shodan)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+        Provider("virustotal", None, ("hash",), fake_vt),
+        Provider("shodan", None, ("ip",), fake_shodan),
+    ])
+
+    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    assert fetched == []
+    assert result["kev"] == {}
+
+
+async def test_the_kev_catalog_is_fetched_once_when_a_cve_turns_up(monkeypatch):
+    from hash_searcher.api.api_data_puller import data_puller
+    from hash_searcher.api.registry import Provider
+    from hash_searcher.cache import ResponseCache
+
+    fetched = []
+
+    async def spy_kev(client, **kwargs):
+        fetched.append(True)
+        return {"vulnerabilities": [{"cveID": "CVE-2021-41617"}]}
+
+    async def fake_vt(client, file_hash, **kwargs):
+        return {"data": {"relationships": {"contacted_ips": {
+            "data": [{"id": "198.51.100.10"}, {"id": "203.0.113.7"}]}}}}
+
+    async def fake_shodan(client, ip, **kwargs):
+        return {"ports": [22], "vulns": ["CVE-2021-41617"]}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_kev", spy_kev)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", fake_shodan)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+        Provider("virustotal", None, ("hash",), fake_vt),
+        Provider("shodan", None, ("ip",), fake_shodan),
+    ])
+
+    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    # Two IPs, both reporting the same CVE: still one catalog download.
+    assert len(fetched) == 1
+    assert result["kev"]["vulnerabilities"] == [{"cveID": "CVE-2021-41617"}]

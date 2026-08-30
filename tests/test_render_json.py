@@ -10,7 +10,11 @@ def test_schema_keys_are_preserved(sample_report):
     # Phase 2 adds "vt"; every Phase 1 key above it is unchanged, and
     # "verdict" appears only when one is passed -- see the two tests below.
     assert set(data["report"]) == {"hash", "otx", "censys", "whois", "vt_rules",
-                                   "ipdb", "vt"}
+                                   "ipdb", "vt",
+                                   # Phase 4, always present, null when the
+                                   # source never ran.
+                                   "bazaar", "threatfox", "certs", "shodan",
+                                   "greynoise", "kev"}
 
 
 def test_censys_entry_has_no_hostnames_key(sample_report):
@@ -231,3 +235,44 @@ def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
     assert "error" not in json.loads(path.read_text())["report"]["censys"][0]
+
+
+def test_the_phase_4_sources_reach_the_json(tmp_path, sample_report):
+    """A field that renders in the terminal and vanishes from -o report.json
+    is the drift this test exists to catch."""
+    from hash_searcher.models import (
+        BazaarReport, CertReport, GreyNoiseReport, KEVEntry, ShodanReport,
+        ThreatFoxReport,
+    )
+    from hash_searcher.render.json_out import to_dict
+
+    sample_report.bazaar = BazaarReport(found=True, family="Emotet", tags=["exe"])
+    sample_report.threatfox = ThreatFoxReport(found=True, malware="Emotet",
+                                              confidence=90)
+    sample_report.certs = CertReport(siblings=["a.example"], count=42)
+    sample_report.shodan = {"198.51.100.10": ShodanReport(ports=[22],
+                                                          vulns=["CVE-2021-41617"])}
+    sample_report.greynoise = {"198.51.100.10": GreyNoiseReport(
+        seen=True, classification="malicious")}
+    sample_report.kev = [KEVEntry(cve="CVE-2021-41617", product="OpenSSH")]
+
+    body = to_dict(sample_report)["report"]
+    assert body["bazaar"]["family"] == "Emotet"
+    assert body["threatfox"]["malware"] == "Emotet"
+    # The untruncated total travels with the capped list, same as the TTY.
+    assert body["certs"]["count"] == 42
+    assert body["shodan"]["198.51.100.10"]["vulns"] == ["CVE-2021-41617"]
+    assert body["greynoise"]["198.51.100.10"]["classification"] == "malicious"
+    assert [e["cve"] for e in body["kev"]] == ["CVE-2021-41617"]
+
+
+def test_a_source_that_never_ran_is_null_rather_than_missing(tmp_path, sample_report):
+    """Present-but-null is the rule the rest of this module follows: a
+    consumer can tell "the source had nothing" from "this tool never asked"."""
+    from hash_searcher.render.json_out import to_dict
+
+    body = to_dict(sample_report)["report"]
+    assert body["bazaar"] is None
+    assert body["threatfox"] is None
+    assert body["certs"] is None
+    assert body["shodan"] == {} and body["greynoise"] == {} and body["kev"] == []

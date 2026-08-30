@@ -736,3 +736,102 @@ def test_an_entry_dropped_for_a_missing_ip_leaves_no_blank_row(capsys):
         "198.51.100.10    90%          2         \n"
         "----------------------------------------\n"
     )
+
+
+def _phase4_report(**kwargs) -> Report:
+    base = dict(
+        indicator="a" * 64,
+        generated_at="2026-08-25 00:00:00",
+        vt=VTReport(found=False),
+        otx=OTXReport(recorded_instances="N/A"),
+        ips={}, hosts=[], whois=[],
+    )
+    base.update(kwargs)
+    return Report(**base)
+
+
+def test_render_bazaar_exact_formatting(capsys):
+    from hash_searcher.models import BazaarReport
+    from hash_searcher.render.tty import render_bazaar
+
+    render_bazaar(_phase4_report(bazaar=BazaarReport(
+        found=True, family="Emotet", tags=["exe", "banker"], file_type="exe",
+        first_seen="2019-04-02", yara=["Emotet_Loader"])))
+    assert capsys.readouterr().out == (
+        "\n==================================================\n"
+        "MALWAREBAZAAR\n"
+        "==================================================\n"
+        "Family:     Emotet\n"
+        "File type:  exe\n"
+        "First seen: 2019-04-02\n"
+        "Tags:       exe, banker\n"
+        "YARA:       Emotet_Loader\n"
+    )
+
+
+def test_a_sample_bazaar_has_never_seen_says_so_rather_than_going_silent(capsys):
+    """A missing section reads as a bug. 'abuse.ch has never seen this' is
+    an answer, and a different one from 'we could not ask abuse.ch'."""
+    from hash_searcher.models import BazaarReport
+    from hash_searcher.render.tty import render_bazaar
+
+    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False)))
+    out = capsys.readouterr().out
+    assert "MalwareBazaar has no record of this sample." in out
+
+    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False, error="500")))
+    assert "MalwareBazaar: 500" in capsys.readouterr().out
+
+
+def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
+    from hash_searcher.models import GreyNoiseReport, ShodanReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": ShodanReport(ports=[22, 443],
+                                              vulns=["CVE-2021-41617"])},
+        greynoise={"198.51.100.10": GreyNoiseReport(
+            seen=True, classification="malicious", name="Mirai")},
+    ))
+    out = capsys.readouterr().out
+    assert "198.51.100.10" in out
+    assert "22, 443" in out
+    assert "CVE-2021-41617" in out
+    assert "malicious" in out and "Mirai" in out
+
+
+def test_kev_entries_are_rendered_with_the_product(capsys):
+    from hash_searcher.models import KEVEntry
+    from hash_searcher.render.tty import render_kev
+
+    render_kev(_phase4_report(kev=[KEVEntry(
+        cve="CVE-2021-41617", vendor="OpenBSD", product="OpenSSH",
+        name="Privilege Escalation", date_added="2022-03-03")]))
+    out = capsys.readouterr().out
+    assert "KNOWN EXPLOITED VULNERABILITIES" in out
+    assert "CVE-2021-41617" in out and "OpenSSH" in out
+
+
+def test_a_capped_sibling_list_says_how_many_there_were(capsys):
+    """The count is the whole point of capping honestly: a truncated list
+    that reads as complete is worse than no list."""
+    from hash_searcher.models import CertReport
+    from hash_searcher.render.tty import render_certs
+
+    render_certs(_phase4_report(certs=CertReport(
+        siblings=[f"h{n}.evil.example" for n in range(100)], count=5000)))
+    out = capsys.readouterr().out
+    assert "5000" in out
+    assert "showing 100" in out
+
+
+def test_sections_for_sources_that_never_ran_are_absent(capsys):
+    """None means the source never ran, and a section printed for it would
+    be indistinguishable from one that ran and found nothing."""
+    from hash_searcher.render.tty import render_bazaar, render_certs, render_kev
+
+    empty = _phase4_report()
+    render_bazaar(empty)
+    render_certs(empty)
+    render_kev(empty)
+    assert capsys.readouterr().out == ""

@@ -33,3 +33,28 @@ def extract_crtsh(raw) -> CertReport:
             siblings.append(name)
 
     return CertReport(siblings=siblings[:SIBLING_LIMIT], count=len(siblings))
+
+
+def merge_crtsh(raw_list) -> CertReport:
+    """One CertReport across every domain that was queried.
+
+    The report carries a single certificate section, but crt.sh is asked
+    once per contacted domain. Rows are pooled and de-duplicated together
+    -- siblings shared between two contacted domains are the interesting
+    case, and reporting them twice would overstate the count. An error is
+    surfaced only when every query failed: one dead lookup among five must
+    not blank out the four that worked.
+    """
+    rows = []
+    errors = []
+    for raw in raw_list:
+        if is_error(raw):
+            errors.append(error_message(raw))
+        elif isinstance(raw, list):
+            rows.extend(raw)
+        else:
+            errors.append("crt.sh returned an unexpected shape")
+
+    if rows or not errors:
+        return extract_crtsh(rows)
+    return CertReport(error="; ".join(dict.fromkeys(errors)))

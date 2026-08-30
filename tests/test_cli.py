@@ -69,7 +69,10 @@ def _stub_entry(monkeypatch):
 
 
 EMPTY_RAW = {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": [],
-             "domains": [], "rdap": []}
+             "domains": [], "rdap": [], "crtsh": [], "shodan": {},
+             "greynoise": {}, "kev": {},
+             "bazaar": make_error("MalwareBazaar was not queried"),
+             "threatfox": make_error("ThreatFox was not queried")}
 
 
 def _stub_data_puller(monkeypatch, raw):
