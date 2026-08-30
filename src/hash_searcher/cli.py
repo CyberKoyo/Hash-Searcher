@@ -170,16 +170,14 @@ async def run_cli(argv: list[str] | None = None) -> int:
 
     vt = extract_vt(raw["vt"])
     otx = extract_otx(raw["otx"])
-    if error_status(raw["vt"]) == 404 and not otx.has_pulses:
-        if static_report is None:
-            print("Invalid hash. Please check filename or hash.")
-            return EXIT_NO_DATA
-        # VT has never seen this sample and OTX has no pulses on it -- but
-        # the static pass above still examined the file itself. Say the
-        # online sources came up empty and keep going to score()/render()
-        # rather than discarding a computed report.
-        print("VirusTotal has no record of this indicator and OTX reports "
-              "no pulses -- continuing with local static analysis results.")
+    if error_status(raw["vt"]) == 404:
+        # Not an error, and never a reason to stop: resolve_hash already
+        # proved this is a well-formed digest or a real file, and the
+        # keyless sources answer for hashes VT has never recorded. The old
+        # "Invalid hash" bail discarded a MalwareBazaar family match and a
+        # ThreatFox attribution that had already been fetched.
+        print("VirusTotal has no record of this indicator -- "
+              "continuing with the other sources.")
 
     ips = extract_ips(raw["ipdb"])
     _domains, hosts = extract_hosts(raw["censys"], ips)
