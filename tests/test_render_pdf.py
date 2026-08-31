@@ -205,20 +205,27 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     CVE cell raised LayoutError and took down an otherwise successful run at
     the very last step. Real Shodan answers carry 120-137 CVEs for one host.
     """
+    from hash_searcher.api.api_data_puller import IOC_LIMIT
     from hash_searcher.models import (
-        CertReport, KEVEntry, KEVReport, ShodanReport, SourceResult, ThreatFoxReport,
+        CertReport, GreyNoiseReport, KEVEntry, KEVReport, ShodanReport,
+        SourceResult, ThreatFoxReport,
     )
     from hash_searcher.render.pdf import write_pdf
+    from hash_searcher.scoring import score
 
     sample_report.shodan = {
         "198.51.100.10": SourceResult(value=ShodanReport(
             ports=list(range(1, 40)),
             vulns=[f"CVE-2021-{n:05d}" for n in range(150)]), queried=True),
     }
+    # 200, not 60: known_exploited() caps nothing, and the CVE list it
+    # intersects against the catalog is bounded only by Shodan's vulns
+    # across every contacted IP -- 150 for one host here, and IOC_LIMIT
+    # hosts are possible. 60 was an arbitrary number under the threshold.
     sample_report.kev = SourceResult(value=KEVReport(entries=[
         KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
                 product="HTTP Server", name="Some Vulnerability",
-                date_added="2022-03-03") for n in range(60)]), queried=True)
+                date_added="2022-03-03") for n in range(200)]), queried=True)
     sample_report.certs = SourceResult(value=CertReport(
         siblings=[f"host{n}.evil.example" for n in range(100)], count=5000),
         queried=True)
@@ -231,8 +238,40 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
             confidence=90, tags=[f"tag-{n}" for n in range(150)]), queried=True),
     }
 
+    # Every per-IP source at IOC_LIMIT, so the signals below are built from
+    # the worst input the puller can actually hand the scorer.
+    ips = [f"198.51.100.{n}" for n in range(IOC_LIMIT)]
+    sample_report.threatfox_ips = {
+        ip: SourceResult(value=ThreatFoxReport(
+            found=True, malware="RedLine Stealer", confidence=90,
+            tags=[f"tag-{n}" for n in range(150)]), queried=True)
+        for ip in ips
+    }
+    sample_report.greynoise = {
+        ip: SourceResult(value=GreyNoiseReport(
+            seen=True, classification="benign", name="Shodan Scanner"),
+            queried=True)
+        for ip in ips
+    }
+
+    # THE POINT OF THE VERDICT ARGUMENT: build_story only lays out the
+    # signals table when a verdict is passed, and that table is where three
+    # signals -- threatfox, kev, internet_noise -- deposit joined provider
+    # text into a row that cannot split across pages. Passing no verdict
+    # left the one flowable most at risk out of the story entirely, which is
+    # how an unbounded ThreatFox detail shipped green.
+    #
+    # score() rather than hand-built Signals: the caps that keep this
+    # buildable live in scoring.py, so a hand-built Signal would test the
+    # test's own arithmetic instead of the production path.
+    verdict = score(sample_report)
+    fired = {s.name: s for s in verdict.signals}
+    assert {"threatfox", "kev", "internet_noise"} <= set(fired), (
+        f"the three joined-detail signals must all fire here; got {set(fired)}"
+    )
+
     out = tmp_path / "report.pdf"
-    write_pdf(sample_report, str(out))
+    write_pdf(sample_report, str(out), verdict)
     assert out.stat().st_size > 0
 
 
@@ -303,3 +342,55 @@ def test_markup_in_a_threatfox_family_name_is_escaped_not_parsed(tmp_path, sampl
 
     path = write_pdf(sample_report, str(tmp_path / "threatfox.pdf"))
     assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path, sample_report):
+    """The backstop, not the per-signal cap.
+
+    The crash is a property of the CELL, not of any one signal: a reportlab
+    table row cannot split across pages, and five of the seven signal
+    details in scoring.py are `", ".join(...)` over a provider-supplied
+    list that nothing upstream caps -- kev (known_exploited caps nothing),
+    yara and sandbox (analysis/vt.py caps only `names`), yara_local, and
+    threatfox. Capping the one signal this task introduced would leave the
+    other four one large provider answer away from the same crash.
+
+    So the cell defends itself. The measured threshold for this column is
+    2445 characters; the budget is well under it, and the truncation says
+    what it did rather than dropping the tail silently.
+    """
+    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+
+    detail = "CVE-2021-99999, " * 400          # ~6400 characters
+    verdict = Verdict(level="MALICIOUS", score=25, signals=[
+        Signal(name="kev", points=25, detail=detail)])
+
+    texts = _texts(build_story(sample_report, verdict))
+    cell = next(t for t in texts if t.startswith("CVE-2021-99999"))
+    assert len(cell) < len(detail)
+    assert f"of {len(detail)} characters" in cell, (
+        "a truncated detail must say it was truncated and how much there was"
+    )
+    # A hardcoded ceiling rather than one derived from DETAIL_CHAR_LIMIT:
+    # widening the budget past the measured 2445-character crash threshold
+    # would otherwise recompute this test's own expectation and pass.
+    assert DETAIL_CHAR_LIMIT <= 2000
+
+    # And it must actually build -- the assertion above is on the string,
+    # and only doc.build() raises LayoutError.
+    path = write_pdf(sample_report, str(tmp_path / "long_detail.pdf"), verdict)
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_a_normal_signal_detail_is_left_exactly_alone(sample_report):
+    """The backstop must be invisible for every detail that renders today.
+    internet_noise at IOC_LIMIT reaches ~808 characters and kev at 60 CVEs
+    ~1019; neither may acquire a truncation marker."""
+    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+
+    detail = "GreyNoise calls these contacted IPs benign internet background noise: " \
+             + ", ".join(f"198.51.100.{n}" for n in range(50))
+    assert len(detail) < DETAIL_CHAR_LIMIT
+    verdict = Verdict(level="CLEAN", score=-10, signals=[
+        Signal(name="internet_noise", points=-10, detail=detail)])
+    assert detail in _texts(build_story(sample_report, verdict))

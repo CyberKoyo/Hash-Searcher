@@ -50,6 +50,22 @@ W_YARA_LOCAL = 20
 # corroboration reach SUSPICIOUS on their own but never MALICIOUS.
 SIGMA_CAP = 30
 
+#: Targets named in the threatfox signal's detail before the rest are
+#: counted instead. That string lands in a reportlab table cell whose row
+#: cannot split across pages, so an unbounded join here is not a long line
+#: -- it is a LayoutError that kills `-o report.pdf` after every provider
+#: has already succeeded (render/pdf.py's module docstring, rule 2). The
+#: measured threshold for that cell is 2445 characters and 42 Emotet hits
+#: crossed it, well inside the IOC_LIMIT of 50 addresses the puller can
+#: hand this. Same bargain as CVE_DISPLAY_LIMIT and tag_text: cap at an
+#: item boundary and state the untruncated total, so a shortened list never
+#: reads as the whole answer.
+#:
+#: This is the honest cap. render/pdf.py also enforces a blunt character
+#: bound on EVERY signal detail, because four other signals join provider
+#: lists that nothing upstream caps -- see DETAIL_CHAR_LIMIT.
+THREATFOX_TARGET_LIMIT = 5
+
 STRONG_DETECTION = 5
 SUSPICIOUS_ENGINES = 3    # below this, engine hedging is noise
 ABUSE_CONFIDENCE = 75
@@ -204,6 +220,10 @@ def _threatfox_signal(report: Report) -> Signal | None:
 
     .ok gates each result before .value is touched: a SourceResult has no
     __bool__, so a never-asked one is truthy and `.value` is None on it.
+
+    The named targets are capped at THREATFOX_TARGET_LIMIT with the
+    remainder counted -- see that constant: this detail is rendered into a
+    PDF table cell whose row cannot split across pages.
     """
     hits = []
     if report.threatfox.ok and report.threatfox.value.found:
@@ -211,13 +231,19 @@ def _threatfox_signal(report: Report) -> Signal | None:
     hits += [(f"the contacted IP {ip}", result.value)
              for ip, result in report.threatfox_ips.items()
              if result.ok and result.value.found]
+
     if not hits:
         return None
-    return Signal(name="threatfox", points=W_THREATFOX,
-                  detail="ThreatFox names " + "; ".join(
-                      f"{target} {value.malware or 'a known IOC'} "
-                      f"({value.confidence}% confidence)"
-                      for target, value in hits))
+    named = hits[:THREATFOX_TARGET_LIMIT]
+    detail = "ThreatFox names " + "; ".join(
+        f"{target} {value.malware or 'a known IOC'} "
+        f"({value.confidence}% confidence)"
+        for target, value in named)
+    if len(hits) > len(named):
+        # Always contacted IPs: the sample, when it matched at all, is
+        # hits[0] and therefore always inside the cap.
+        detail += f" -- and {len(hits) - len(named)} more contacted IPs"
+    return Signal(name="threatfox", points=W_THREATFOX, detail=detail)
 
 
 def _kev_signal(report: Report) -> Signal | None:

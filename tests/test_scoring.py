@@ -464,3 +464,76 @@ def test_the_sample_level_threatfox_detail_is_unchanged_by_the_per_ip_pass():
     assert signal.detail == (
         "ThreatFox names this indicator Emotet (90% confidence)"
     )
+
+
+def _threatfox_hits(*ips):
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    return {ip: SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True) for ip in ips}
+
+
+def test_many_threatfox_hits_stay_one_signal_at_a_flat_weight():
+    """The claim _threatfox_signal's docstring makes, and nothing pinned:
+    fifty contacted IPs in one botnet's C2 pool is ONE fact stated fifty
+    times. Letting the weight multiply would score +750 and out-vote the
+    engine consensus by itself; splitting it into fifty signals would bury
+    every other line of the verdict rationale.
+
+    Compared against W_THREATFOX rather than a literal on purpose -- the
+    mutation this kills changes the EXPRESSION (`* len(hits)`), not the
+    constant, so reading the constant here pins the arithmetic without
+    freezing a weight the module says to tune in one place.
+    """
+    from hash_searcher.scoring import W_THREATFOX, score
+
+    report = _report()
+    report.threatfox_ips = _threatfox_hits(*(f"198.51.100.{n}" for n in range(50)))
+
+    verdict = score(report)
+    fired = [s for s in verdict.signals if s.name == "threatfox"]
+    assert len(fired) == 1, "fifty hits, one signal"
+    assert fired[0].points == W_THREATFOX
+    assert verdict.score == W_THREATFOX, "it is the only signal firing here"
+
+
+def test_the_threatfox_detail_names_several_targets_not_just_the_first():
+    """The sample AND the contacted IPs -- the "or on both" case the
+    docstring claims and no test built. Every hit up to the cap is named:
+    an analyst who cannot see WHICH address was attributed cannot pivot."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.threatfox = SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True)
+    report.threatfox_ips = _threatfox_hits("198.51.100.10", "203.0.113.7")
+
+    detail = next(s for s in score(report).signals if s.name == "threatfox").detail
+    assert "this indicator" in detail
+    assert "198.51.100.10" in detail
+    assert "203.0.113.7" in detail
+    assert detail.count("; ") == 2, "three targets, joined"
+
+
+def test_a_long_threatfox_target_list_is_capped_with_the_total_kept():
+    """This detail lands in a reportlab table cell whose row cannot split
+    across pages, so an unbounded join here is a crash in the filed PDF --
+    rule 2 of render/pdf.py's module docstring. Capped at an item boundary
+    with the remainder counted, the way tag_text and _cve_cell already do.
+    """
+    from hash_searcher.scoring import THREATFOX_TARGET_LIMIT, score
+
+    ips = [f"198.51.100.{n}" for n in range(50)]
+    report = _report()
+    report.threatfox_ips = _threatfox_hits(*ips)
+
+    detail = next(s for s in score(report).signals if s.name == "threatfox").detail
+    assert ips[THREATFOX_TARGET_LIMIT - 1] in detail
+    assert ips[THREATFOX_TARGET_LIMIT] not in detail
+    assert f"and {50 - THREATFOX_TARGET_LIMIT} more contacted IPs" in detail
+    # A hardcoded ceiling, not one derived from the constant under test: the
+    # cap exists to keep this string out of LayoutError territory, and the
+    # measured crash threshold for that cell is 2445 characters.
+    assert len(detail) < 1000

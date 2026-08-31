@@ -46,6 +46,38 @@ def _x(value) -> str:
     return escape(str(value))
 
 
+#: Hard ceiling on any one signal's detail before it becomes a table cell.
+#:
+#: The per-signal caps in scoring.py are the honest fix -- they truncate at
+#: an item boundary and state the total. This is the backstop, and it exists
+#: because the crash is a property of the CELL, not of any one signal: five
+#: of the seven details in scoring.py are `", ".join(...)` over a
+#: provider-supplied list that nothing upstream caps. known_exploited()
+#: caps nothing and intersects a CVE list bounded only by Shodan's vulns
+#: across every contacted IP; analysis/vt.py caps `names` but not
+#: `sandbox_verdicts` or `crowdsourced_yara_results`; the local YARA hits
+#: are bounded only by the rules directory. Capping only the signal that
+#: happened to cross the threshold would leave the other four one large
+#: provider answer away from the same LayoutError.
+#:
+#: 1200 against a measured threshold of 2445 characters for this column, so
+#: the budget holds even if the column or the font changes. Both details
+#: that render at their realistic maxima today -- internet_noise at ~808
+#: characters, kev at 60 CVEs at ~1019 -- pass through untouched, and a
+#: truncated one says what it dropped rather than losing the tail silently.
+#: The full text is always in the JSON report.
+DETAIL_CHAR_LIMIT = 1200
+
+
+def _detail_cell(detail: str) -> str:
+    """A signal's rationale, bounded. See DETAIL_CHAR_LIMIT."""
+    if len(detail) <= DETAIL_CHAR_LIMIT:
+        return detail
+    return (detail[:DETAIL_CHAR_LIMIT].rstrip()
+            + f" ... (truncated at {DETAIL_CHAR_LIMIT} "
+              f"of {len(detail)} characters; the full text is in the JSON report)")
+
+
 def _table(rows, widths=None) -> Table:
     """One style, three tables. It was copy-pasted per table before."""
     table = Table(rows, colWidths=widths)
@@ -144,7 +176,8 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         if verdict.signals:
             story.append(_table(
                 [["Points", "Signal", "Why"]]
-                + [[f"{s.points:+d}", Paragraph(_x(s.name)), Paragraph(_x(s.detail))]
+                + [[f"{s.points:+d}", Paragraph(_x(s.name)),
+                    Paragraph(_x(_detail_cell(s.detail)))]
                    for s in verdict.signals],
                 widths=[50, 90, 250],
             ))
@@ -267,7 +300,7 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
                 Paragraph(_x(_greynoise_cell(report.greynoise.get(ip)))),
                 Paragraph(_x(_threatfox_cell(report.threatfox_ips.get(ip))))]
                for ip, s in ip_rows],
-            widths=[80, 60, 120, 95, 105],
+            widths=[80, 55, 120, 95, 100],
         ))
         story.append(Spacer(1, 12))
 
