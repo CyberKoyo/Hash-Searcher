@@ -33,3 +33,4 @@ async def test_threatfox_no_result_is_not_an_error(no_backoff):
         result = extract_threatfox(await get_threatfox(client, "198.51.100.10"))
 
     assert result.value.found is False and result.error is None
+    assert result.ok

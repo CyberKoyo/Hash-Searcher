@@ -1,7 +1,9 @@
-from hash_searcher.render.tty import RULE, render, render_hosts, render_ips, render_otx, render_vt, render_whois
+from hash_searcher.render.tty import (
+    RULE, render, render_hosts, render_ip_intel, render_ips, render_otx, render_vt, render_whois,
+)
 from hash_searcher.models import (
     AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
-    SigmaRule, Signature, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
+    SigmaRule, Signature, SourceResult, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
 )
 
 
@@ -32,6 +34,24 @@ def test_empty_rule_levels_say_so(capsys, sample_report):
 def test_new_indicators_are_flagged(capsys, sample_report):
     render(sample_report)
     assert "[!] New indicators not found in AbuseIPDB:" in capsys.readouterr().out
+
+
+def test_ip_intel_renders_silence_for_a_source_nobody_asked(capsys, sample_report):
+    """A never-asked SourceResult (queried=False) must render as silence,
+    not a crash. SourceResult has no __bool__, so every instance -- even a
+    bare, never-asked one -- is truthy; a bug routed that truthiness into
+    the success branch and dereferenced `.value` (None) instead of treating
+    `queried=False` as nothing to report."""
+    sample_report.shodan = {"198.51.100.10": SourceResult()}
+    sample_report.greynoise = {"198.51.100.10": SourceResult()}
+
+    render_ip_intel(sample_report)
+
+    out = capsys.readouterr().out
+    assert "Ports:" not in out
+    assert "CVEs:" not in out
+    assert "Names:" not in out
+    assert "GreyNoise:" not in out
 
 
 def test_render_ips_exact_formatting(capsys):

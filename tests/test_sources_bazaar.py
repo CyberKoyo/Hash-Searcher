@@ -43,6 +43,7 @@ async def test_a_hash_bazaar_has_never_seen_is_not_an_error(no_backoff):
     assert result.value.found is False
     assert result.error is None
     assert result.value.family is None
+    assert result.ok
 
 
 @respx.mock

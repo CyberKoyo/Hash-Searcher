@@ -295,7 +295,7 @@ def render_ip_intel(report: Report) -> None:
         shodan = report.shodan.get(ip)
         if shodan and shodan.error:
             print(f"Shodan:  {shodan.error}")
-        elif shodan:
+        elif shodan and shodan.ok:
             ports, vulns, hostnames = (shodan.value.ports, shodan.value.vulns,
                                         shodan.value.hostnames)
             print(f"Ports:   {', '.join(str(p) for p in ports) or 'none known'}")
@@ -310,11 +310,11 @@ def render_ip_intel(report: Report) -> None:
         noise = report.greynoise.get(ip)
         if noise and noise.error:
             print(f"GreyNoise: {noise.error}")
-        elif noise and noise.value.seen:
+        elif noise and noise.ok and noise.value.seen:
             actor = f" -- {noise.value.name}" if noise.value.name else ""
             print(f"GreyNoise: {noise.value.classification or 'seen'}{actor}, "
                   f"last seen {noise.value.last_seen or 'N/A'}")
-        elif noise:
+        elif noise and noise.ok:
             # The more interesting answer of the two: an address GreyNoise
             # has never seen scanning is not internet background noise.
             print("GreyNoise: not observed scanning the internet")

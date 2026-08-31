@@ -38,6 +38,7 @@ async def test_shodan_404_means_nothing_known_not_a_failure(no_backoff):
 
     assert result.value.ports == []
     assert result.error is None
+    assert result.ok
 
 
 @respx.mock
@@ -70,6 +71,7 @@ async def test_greynoise_404_means_not_observed(no_backoff):
 
     assert result.value.seen is False
     assert result.error is None
+    assert result.ok
 
 
 @respx.mock
