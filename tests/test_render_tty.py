@@ -398,6 +398,17 @@ def test_a_negative_signal_prints_its_sign(capsys, sample_report):
     assert "  -20  signed" in capsys.readouterr().out
 
 
+def test_an_unreachable_virustotal_says_so_rather_than_implying_nobody_has_seen_it(capsys):
+    """UNKNOWN means 'nothing has ever seen this'. A 503 supports no such
+    claim, and a script branching on exit 3 deserves to know which it got."""
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(vt=VTReport(found=False, unavailable=True,
+                                         error="GetTotal API Error 503"))
+    render(report, score(report))
+    assert "VirusTotal was unreachable" in capsys.readouterr().out
+
+
 def test_detection_section_prints_the_ratio(capsys, sample_report):
     from hash_searcher.models import Detection
     from hash_searcher.render.tty import render_detection

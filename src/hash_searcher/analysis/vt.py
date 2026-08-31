@@ -1,6 +1,6 @@
 import datetime
 
-from ..api.base_call import error_message, is_error
+from ..api.base_call import error_message, error_status, is_error
 from ..models import (
     Detection, PEInfo, SandboxVerdict, Signature, SigmaRule, Submission,
     ThreatClass, VTReport, YaraMatch,
@@ -137,7 +137,15 @@ def _pe(attributes: dict) -> PEInfo | None:
 
 def extract_vt(raw) -> VTReport:
     if is_error(raw):
-        return VTReport(found=False, error=error_message(raw))
+        # A 404 means "VirusTotal has no record" -- real information, not a
+        # failure. Any other status (a 5xx, a rate limit, malformed JSON)
+        # means the call failed without VT actually answering; unavailable
+        # is how the render layer tells the two apart.
+        return VTReport(
+            found=False,
+            error=error_message(raw),
+            unavailable=error_status(raw) not in (None, 404),
+        )
 
     attributes = raw.get("data", {}).get("attributes", {})
     rules = attributes.get("sigma_analysis_results", []) or []

@@ -23,6 +23,15 @@ def test_extract_vt_on_a_404():
     assert vt.error == "Hash not found in GetTotal"
 
 
+def test_a_failed_vt_call_is_not_the_same_as_vt_having_no_record():
+    """found=False alone conflates two opposite claims: 'VirusTotal has no
+    record of this sample' and 'the VirusTotal call failed'. unavailable is
+    True only for the second."""
+    assert extract_vt(make_error("GetTotal API Error 503", 503)).unavailable is True
+    assert extract_vt(make_error("Hash not found in GetTotal", 404)).unavailable is False
+    assert extract_vt({"data": {"attributes": {}}}).unavailable is False
+
+
 def test_extract_otx_deduplicates_techniques_in_first_seen_order(fixture_json):
     otx = extract_otx(fixture_json("otx_pulses"))
     assert otx.recorded_instances == 7

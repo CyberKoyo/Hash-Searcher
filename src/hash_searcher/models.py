@@ -143,6 +143,10 @@ class VTReport:
     yara: list[YaraMatch] = field(default_factory=list)
     pe: PEInfo | None = None
     techniques: list[AttackTechnique] = field(default_factory=list)
+    #: True when the VT call failed for any reason other than a 404.
+    #: found=False alone conflates "no record exists" with "we could not
+    #: get an answer" -- unavailable is how a caller tells them apart.
+    unavailable: bool = False
 
     def by_level(self, level: str) -> list[SigmaRule]:
         return [r for r in self.sigma if r.level == level]

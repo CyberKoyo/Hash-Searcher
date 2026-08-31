@@ -114,18 +114,28 @@ def render_otx(report: Report) -> None:
 SIGNAL_NAME_WIDTH = 11
 
 
-def render_verdict(verdict: Verdict) -> None:
+def render_verdict(verdict: Verdict, report: Report | None = None) -> None:
     """Score first, then every signal that produced it.
 
     The rationale lines are the point. A verdict an analyst cannot decompose
     is one they cannot disagree with, which makes it useless to them.
+
+    `report` is optional so every pre-existing call site that passes only a
+    verdict keeps working. When it is given and VT's call failed outright
+    (not merely a 404), an UNKNOWN here is not "nobody has ever seen this
+    sample" -- it is "we do not actually know", and the caveat says so.
     """
     _header(f"VERDICT: {verdict.level} (score {verdict.score})")
     if not verdict.signals:
         print("No signals fired.")
-        return
-    for signal in verdict.signals:
-        print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
+    else:
+        for signal in verdict.signals:
+            print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
+    if report is not None and verdict.level == "UNKNOWN" and report.vt.unavailable:
+        print(
+            "\nNote: VirusTotal was unreachable -- this UNKNOWN reflects a "
+            "failed lookup, not confirmation that nobody has seen this sample."
+        )
 
 
 def render_static(report: Report) -> None:
@@ -370,7 +380,7 @@ def render_certs(report: Report) -> None:
 
 def render(report: Report, verdict: Verdict | None = None) -> None:
     if verdict is not None:
-        render_verdict(verdict)
+        render_verdict(verdict, report)
     render_static(report)
     render_detection(report)
     render_vt(report)
