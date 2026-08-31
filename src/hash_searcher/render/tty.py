@@ -132,9 +132,15 @@ def render_verdict(verdict: Verdict, report: Report | None = None) -> None:
         for signal in verdict.signals:
             print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
     if report is not None and verdict.level == "UNKNOWN" and report.vt.unavailable:
+        # Mechanism-neutral on purpose: a missing API key never dialled
+        # VirusTotal at all, so "unreachable" would assert something untrue
+        # for that case even though the underlying claim -- this UNKNOWN is
+        # not confirmation of absence -- holds regardless of why VT never
+        # answered. The error text carries the mechanism; this line only
+        # carries the fact that VT did not answer.
         print(
-            "\nNote: VirusTotal was unreachable -- this UNKNOWN reflects a "
-            "failed lookup, not confirmation that nobody has seen this sample."
+            f"\nNote: VirusTotal did not answer ({report.vt.error}) -- "
+            f"this UNKNOWN is not confirmation that nobody has seen this sample."
         )
 
 

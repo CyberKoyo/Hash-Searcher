@@ -140,7 +140,7 @@ def extract_vt(raw) -> VTReport:
         # raw is already known to be an error dict here, so a status of
         # None does not mean "no error" -- it means an error with no HTTP
         # status, which is exactly what a retry-exhausted network failure
-        # (offline, DNS, timeout; see base_call.py's api_get) produces. A
+        # (offline, DNS, timeout; see base_call.py's _finish) produces. A
         # 404 is VirusTotal's answer: "no record", real information. Every
         # other error -- with a status or without one -- means the call
         # failed and VT never actually answered; unavailable is how the

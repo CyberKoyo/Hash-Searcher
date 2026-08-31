@@ -103,6 +103,16 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             ))
         else:
             story.append(Paragraph("No signals fired.", styles['Normal']))
+        if verdict.level == "UNKNOWN" and report.vt.unavailable:
+            # Same caveat tty.py's render_verdict prints, and for the same
+            # reason: a written report an analyst files should not show a
+            # bare UNKNOWN when VT never actually answered -- the Phase 4
+            # KEV bug was exactly this asymmetry, a failed fetch reading as
+            # a clean answer on one surface and not the other.
+            story.append(Paragraph(
+                f"Note: VirusTotal did not answer ({_x(report.vt.error)}) -- "
+                f"this UNKNOWN is not confirmation that nobody has seen this "
+                f"sample.", styles['Normal']))
         story.append(Spacer(1, 12))
 
     if report.vt.detection:

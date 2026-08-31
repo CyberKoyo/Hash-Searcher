@@ -59,6 +59,29 @@ def test_a_verdict_with_no_signals_says_so(sample_report):
     assert "No signals fired." in _texts(story)
 
 
+def test_the_pdf_carries_the_vt_unavailable_caveat_too(sample_report):
+    """render_verdict in tty.py already prints this caveat; the PDF builds
+    its own verdict block and had no equivalent -- the same renderer
+    asymmetry that produced the Phase 4 KEV bug, where a failed fetch read
+    as a clean answer on one surface and not the other."""
+    from hash_searcher.models import VTReport
+
+    sample_report.vt = VTReport(found=False, unavailable=True,
+                                 error="GetTotal API Error 503")
+    texts = _texts(build_story(sample_report, Verdict(level="UNKNOWN", score=0, signals=[])))
+    assert any("VirusTotal did not answer" in t for t in texts)
+    assert any("GetTotal API Error 503" in t for t in texts)
+
+
+def test_the_pdf_caveat_is_silent_when_the_verdict_is_not_unknown(sample_report):
+    from hash_searcher.models import VTReport
+
+    sample_report.vt = VTReport(found=False, unavailable=True,
+                                 error="GetTotal API Error 503")
+    texts = _texts(build_story(sample_report, Verdict(level="CLEAN", score=0, signals=[])))
+    assert not any("VirusTotal did not answer" in t for t in texts)
+
+
 def test_the_pdf_carries_the_attribution_block(sample_report):
     sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet")
     sample_report.vt.signature = Signature(verified=False, signer="Contoso Ltd")

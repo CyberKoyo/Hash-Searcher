@@ -406,7 +406,40 @@ def test_an_unreachable_virustotal_says_so_rather_than_implying_nobody_has_seen_
     report = _phase4_report(vt=VTReport(found=False, unavailable=True,
                                          error="GetTotal API Error 503"))
     render(report, score(report))
-    assert "VirusTotal was unreachable" in capsys.readouterr().out
+    assert "VirusTotal did not answer" in capsys.readouterr().out
+
+
+def test_the_caveat_is_silent_once_the_verdict_no_longer_depends_on_vt(capsys):
+    """unavailable alone must not print the caveat -- only unavailable AND
+    UNKNOWN. Sample evidence (here, a MalwareBazaar hit) escapes the
+    UNKNOWN guard on its own; once the verdict does not lean on VT's
+    non-answer, the caveat has nothing left to qualify."""
+    from hash_searcher.models import BazaarReport, SourceResult
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(
+        vt=VTReport(found=False, unavailable=True, error="GetTotal API Error 503"),
+        bazaar=SourceResult(value=BazaarReport(found=True, family="Emotet"), queried=True),
+    )
+    verdict = score(report)
+    assert verdict.level != "UNKNOWN"
+    render(report, verdict)
+    assert "VirusTotal did not answer" not in capsys.readouterr().out
+
+
+def test_the_caveat_is_silent_for_a_genuine_404_at_unknown(capsys):
+    """A 404 is VirusTotal's actual answer: no record of this sample. That
+    is exactly the UNKNOWN case the caveat must stay silent for -- printing
+    it here would cast doubt on the one answer VT actually gave."""
+    from hash_searcher.analysis.vt import extract_vt
+    from hash_searcher.api.base_call import make_error
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(vt=extract_vt(make_error("Hash not found in GetTotal", 404)))
+    verdict = score(report)
+    assert verdict.level == "UNKNOWN"
+    render(report, verdict)
+    assert "VirusTotal did not answer" not in capsys.readouterr().out
 
 
 def test_detection_section_prints_the_ratio(capsys, sample_report):

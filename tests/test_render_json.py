@@ -143,6 +143,34 @@ def test_json_vt_blocks_vt_never_returned_are_null(sample_report, tmp_path):
     assert vt["sandbox"] == [] and vt["yara"] == [] and vt["techniques"] == []
 
 
+def test_a_404_and_a_503_no_longer_serialize_identically(sample_report, tmp_path):
+    """Before this, the VT JSON block carried neither `error` nor
+    `unavailable` -- a 404 (VT answered: no record) and a 503 (VT never
+    answered) both serialized as every field null, indistinguishable to the
+    one consumer, a script branching on exit 3, this whole task exists to
+    inform."""
+    import json
+    from hash_searcher.analysis.vt import extract_vt
+    from hash_searcher.api.base_call import make_error
+    from hash_searcher.render.json_out import write_json
+
+    sample_report.vt = extract_vt(make_error("Hash not found in GetTotal", 404))
+    path_404 = tmp_path / "404.json"
+    write_json(sample_report, str(path_404))
+    vt_404 = json.loads(path_404.read_text())["report"]["vt"]
+
+    sample_report.vt = extract_vt(make_error("GetTotal API Error 503", 503))
+    path_503 = tmp_path / "503.json"
+    write_json(sample_report, str(path_503))
+    vt_503 = json.loads(path_503.read_text())["report"]["vt"]
+
+    assert vt_404 != vt_503
+    assert vt_404["error"] == "Hash not found in GetTotal"
+    assert "unavailable" not in vt_404
+    assert vt_503["error"] == "GetTotal API Error 503"
+    assert vt_503["unavailable"] is True
+
+
 def test_a_failed_censys_lookup_is_visible_in_the_json(sample_report, tmp_path):
     """The TTY names the error; the JSON used to omit it, so a 403 serialized
     as a host with null org, null asn, and no ports -- indistinguishable from

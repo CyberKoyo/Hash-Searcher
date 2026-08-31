@@ -76,9 +76,20 @@ def _vt_dict(vt: VTReport) -> dict:
     tool never looked". The Phase 1 keys stay exactly where they were --
     `vt_rules` is not folded in here, because moving it would be a schema
     break for anything already reading it.
+
+    `error`/`unavailable` are added only when set -- the same rule
+    _censys_dict follows for its own `error` key -- so the success shape
+    is unchanged and Constraint 7 is satisfied more strongly than a bare
+    additive key would satisfy it. Before this, a 404 (VT answered: no
+    record) and a 503 (VT never answered) serialized byte-identically,
+    every block above null both times -- this function's own docstring
+    promise broken for the one consumer, a script branching on exit 3,
+    that this task exists to inform. `unavailable` alone would still leave
+    that consumer guessing why; `error` carries the reason the same way
+    every other source's JSON block already does.
     """
     detection = vt.detection
-    return {
+    body = {
         # All five buckets: the TTY prints suspicious and undetected, and a
         # consumer that could not reconstruct what the terminal showed would
         # be reading a different report from the one the analyst saw.
@@ -101,6 +112,11 @@ def _vt_dict(vt: VTReport) -> dict:
         "techniques": [asdict(t) for t in vt.techniques],
         "contacted_domains": vt.contacted_domains,
     }
+    if vt.error:
+        body["error"] = vt.error
+    if vt.unavailable:
+        body["unavailable"] = vt.unavailable
+    return body
 
 
 def _static_dict(static: StaticReport) -> dict:
