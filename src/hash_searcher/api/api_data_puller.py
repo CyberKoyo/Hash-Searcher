@@ -18,7 +18,7 @@ from .crtsh import CRTSH_DOMAIN_LIMIT, get_crtsh
 from .greynoise import get_greynoise
 from .malwarebazaar import get_bazaar
 from .shodan_internetdb import get_shodan
-from .threatfox import get_threatfox
+from .threatfox import THREATFOX_CONCURRENCY, get_threatfox
 from .base_call import is_error, make_error, tag_indicator
 from .registry import available, by_name, for_indicator
 from ..static.strings import IOC_LIMIT
@@ -193,13 +193,12 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
             )
             if "malwarebazaar" in hash_sources else None
         )
-        # ThreatFox is queried on the hash only for now, though it accepts
-        # IPs and domains too and the plan's Task 8 asked for a per-IP pass.
-        # The blocker is structural, not editorial: report.threatfox is a
-        # single field, and per-IP results need a dict[str, ThreatFoxReport]
-        # the way shodan and greynoise have. Deferred, not covered elsewhere
-        # -- Shodan gives exposure and GreyNoise gives noise-vs-targeted;
-        # neither names the C2 family, which is ThreatFox's whole value.
+        # ThreatFox answers for the sample AND for every contacted IP; this
+        # is the sample half. The per-IP fan-out is below, beside Shodan,
+        # and lands in its own Report field -- Shodan gives exposure and
+        # GreyNoise gives noise-vs-targeted, and neither names the C2
+        # family, which is ThreatFox's whole value and what its dataset is
+        # overwhelmingly made of.
         threatfox_task = (
             asyncio.create_task(
                 _cached(cache, "threatfox", file_hash,
@@ -248,6 +247,20 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
             )
             if ips and "greynoise" in ip_sources else None
         )
+        # Bounded, not a bare gather: `ips` reaches IOC_LIMIT entries and
+        # abuse.ch is one free endpoint behind one shared account key
+        # (Constraint 8). _cached keys on the IP and inherits the registry
+        # entry's hourly TTL -- the same 3600 the sample lookup gets, and
+        # deliberately not the day the other sources take, because a stale
+        # C2 attribution is worse than none (Constraint 6).
+        threatfox_ips_task = (
+            asyncio.create_task(_bounded_gather(THREATFOX_CONCURRENCY, *(
+                _cached(cache, "threatfox", ip,
+                        lambda ip=ip: get_threatfox(client, ip))
+                for ip in ips
+            )))
+            if ips and "threatfox" in ip_sources else None
+        )
 
         otx_data = await otx_task if otx_task else make_error("OTX key not set")
         # None, not an error dict: a source that was never asked and one
@@ -259,6 +272,8 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         censys_results = await censys_task if censys_task else []
         shodan_results = await shodan_task if shodan_task else []
         greynoise_results = await greynoise_task if greynoise_task else []
+        threatfox_ip_results = (
+            await threatfox_ips_task if threatfox_ips_task else [])
 
         domains = _domains(vt_data, list(ipdb_data), censys_results)
         rdap_results = (
@@ -306,6 +321,7 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         'censys': censys_results, 'ips': ips,
         'domains': domains, 'rdap': list(rdap_results),
         'bazaar': bazaar_data, 'threatfox': threatfox_data,
+        'threatfox_ips': dict(zip(ips, threatfox_ip_results)),
         'shodan': dict(zip(ips, shodan_results)),
         'greynoise': dict(zip(ips, greynoise_results)),
         'crtsh': list(crtsh_results),

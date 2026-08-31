@@ -71,7 +71,7 @@ def _stub_entry(monkeypatch):
 EMPTY_RAW = {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": [],
              "domains": [], "rdap": [], "crtsh": [], "shodan": {},
              "greynoise": {}, "kev": {},
-             "bazaar": None, "threatfox": None}
+             "bazaar": None, "threatfox": None, "threatfox_ips": {}}
 
 
 def _stub_data_puller(monkeypatch, raw):

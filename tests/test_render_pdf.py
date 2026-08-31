@@ -205,7 +205,9 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     CVE cell raised LayoutError and took down an otherwise successful run at
     the very last step. Real Shodan answers carry 120-137 CVEs for one host.
     """
-    from hash_searcher.models import CertReport, KEVEntry, KEVReport, ShodanReport, SourceResult
+    from hash_searcher.models import (
+        CertReport, KEVEntry, KEVReport, ShodanReport, SourceResult, ThreatFoxReport,
+    )
     from hash_searcher.render.pdf import write_pdf
 
     sample_report.shodan = {
@@ -220,7 +222,84 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     sample_report.certs = SourceResult(value=CertReport(
         siblings=[f"host{n}.evil.example" for n in range(100)], count=5000),
         queried=True)
+    # ThreatFox tags are a provider-supplied list landing in a table cell,
+    # the same shape as the CVE column, so they are capped for the same
+    # reason: a row cannot split across pages.
+    sample_report.threatfox_ips = {
+        "198.51.100.10": SourceResult(value=ThreatFoxReport(
+            found=True, malware="Emotet",
+            confidence=90, tags=[f"tag-{n}" for n in range(150)]), queried=True),
+    }
 
     out = tmp_path / "report.pdf"
     write_pdf(sample_report, str(out))
     assert out.stat().st_size > 0
+
+
+def test_the_ip_table_carries_the_threatfox_column(sample_report):
+    from hash_searcher.models import ShodanReport, SourceResult, ThreatFoxReport
+
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        value=ShodanReport(ports=[443]), queried=True)}
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                              tags=["botnet", "c2"]), queried=True)}
+    texts = _texts(build_story(sample_report, None))
+    assert "ThreatFox" in texts, "the IP table needs a ThreatFox header cell"
+    assert any("Emotet" in t and "90%" in t for t in texts)
+    assert any("botnet, c2" in t for t in texts)
+
+
+def test_a_never_asked_per_ip_source_is_not_rendered_as_a_negative_finding(sample_report):
+    """Carried from Task A2's review. "not observed" is a claim GreyNoise
+    made; a result nobody asked for supports no claim at all, and stating
+    the negative is worse than saying nothing on a report an analyst files.
+    """
+    from hash_searcher.models import ShodanReport, SourceResult
+
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        value=ShodanReport(ports=[443]), queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult()}
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult()}
+
+    texts = _texts(build_story(sample_report, None))
+    assert any("443" in t for t in texts), "the row itself is still rendered"
+    assert not any("not observed" in t for t in texts)
+    assert not any("no record" in t for t in texts)
+
+
+def test_the_pdf_ip_table_is_absent_when_no_per_ip_source_was_asked(sample_report):
+    """pdf.py had the identical shape as tty.py's guard -- `if report.shodan
+    or report.greynoise` tests the dicts, not the results, so a dict of
+    never-asked results produced a heading and a table of empty rows."""
+    from hash_searcher.models import SourceResult
+
+    sample_report.shodan = {"198.51.100.10": SourceResult()}
+    sample_report.greynoise = {"198.51.100.10": SourceResult()}
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult()}
+
+    texts = _texts(build_story(sample_report, None))
+    assert "IP Intelligence" not in texts
+    # The IP itself still appears in the AbuseIPDB and Censys tables, so the
+    # column headers unique to this table are what prove it is absent.
+    assert "GreyNoise" not in texts
+    assert "ThreatFox" not in texts
+
+
+def test_markup_in_a_threatfox_family_name_is_escaped_not_parsed(tmp_path, sample_report):
+    """The new column is a provider value like every other one here, and
+    `<script>`/`<title>` are payloads reportlab's paraparser actually
+    rejects -- it silently discards a wholly unknown tag, so a payload it
+    tolerates would prove nothing about _x()."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="<script>Emotet",
+                              confidence=90, tags=["<title>", "c2"]),
+        queried=True)}
+    texts = _texts(build_story(sample_report, None))
+    assert any("&lt;script&gt;Emotet" in t for t in texts)
+    assert any("&lt;title&gt;" in t for t in texts)
+
+    path = write_pdf(sample_report, str(tmp_path / "threatfox.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"

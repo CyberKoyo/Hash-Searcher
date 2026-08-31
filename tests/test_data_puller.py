@@ -91,6 +91,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
         # None rather than an error dict, which would claim a failed call.
         "bazaar": None,
         "threatfox": None,
+        "threatfox_ips": {},
         "shodan": {},
         "greynoise": {},
         "kev": {},
@@ -132,6 +133,7 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
         "crtsh": [],
         "bazaar": None,
         "threatfox": None,
+        "threatfox_ips": {},
         "shodan": {},
         "greynoise": {},
         "kev": {},
@@ -441,3 +443,160 @@ async def test_the_kev_catalog_is_fetched_once_when_a_cve_turns_up(monkeypatch):
     # Two IPs, both reporting the same CVE: still one catalog download.
     assert len(fetched) == 1
     assert result["kev"]["vulnerabilities"] == [{"cveID": "CVE-2021-41617"}]
+
+
+FAKE_VT_TWO_IPS = {
+    "data": {"relationships": {"contacted_ips": {"data": [
+        {"id": "198.51.100.10"}, {"id": "203.0.113.7"},
+    ]}}}
+}
+
+THREATFOX_HIT = {"query_status": "ok", "data": [
+    {"malware_printable": "Emotet", "confidence_level": 90, "tags": ["botnet", "c2"]},
+]}
+
+
+async def test_threatfox_is_asked_about_every_contacted_ip_not_just_the_sample(monkeypatch):
+    """Phase 4 deferred this and said why: report.threatfox was a single
+    field. ThreatFox's dataset is overwhelmingly C2 addresses, and neither
+    Shodan (exposure) nor GreyNoise (noise-vs-targeted) names a family, so
+    querying it on the hash alone throws away the answer it is best at.
+    """
+    async def fake_vt(client, file_hash, **kwargs):
+        return FAKE_VT_TWO_IPS
+
+    asked = []
+
+    async def spy_threatfox(client, indicator, **kwargs):
+        asked.append(indicator)
+        return THREATFOX_HIT
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+                        spy_threatfox)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("threatfox")])
+
+    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+
+    assert sorted(asked) == sorted(["a" * 64, "198.51.100.10", "203.0.113.7"])
+    # Keyed by IP, the way shodan and greynoise are.
+    assert list(result["threatfox_ips"]) == ["198.51.100.10", "203.0.113.7"]
+    assert result["threatfox_ips"]["203.0.113.7"] == THREATFOX_HIT
+    # The sample-level lookup keeps its own slot and its own meaning.
+    assert result["threatfox"] == THREATFOX_HIT
+
+
+def _age_threatfox_rows(path, seconds: float) -> None:
+    """Backdate every cached ThreatFox row by `seconds`.
+
+    Reaching into the sqlite file rather than monkeypatching time.time:
+    the TTL is read inside _cached from the registry entry, and this proves
+    which number it read rather than restating the constant.
+    """
+    import sqlite3
+    import time
+
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE responses SET stored_at = ? WHERE provider = 'threatfox'",
+                 (time.time() - seconds,))
+    conn.commit()
+    conn.close()
+
+
+async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tmp_path):
+    """Constraint 6: ThreatFox's C2 data turns over hourly, so its registry
+    entry sets cache_ttl=3600 rather than the day every other source gets.
+    The per-IP fan-out must inherit that, not the 86400 default -- a stale
+    C2 attribution is worse than none.
+    """
+    async def fake_vt(client, file_hash, **kwargs):
+        return {"data": {"relationships": {"contacted_ips": {
+            "data": [{"id": "198.51.100.10"}]}}}}
+
+    calls = []
+
+    async def spy_threatfox(client, indicator, **kwargs):
+        calls.append(indicator)
+        return THREATFOX_HIT
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+                        spy_threatfox)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("threatfox")])
+
+    file_hash = "a" * 64
+    path = tmp_path / "c.db"
+
+    async def run():
+        cache = ResponseCache(path=path)
+        await data_puller(file_hash, cache)
+        cache.close()
+
+    await run()
+    assert sorted(calls) == sorted([file_hash, "198.51.100.10"])
+
+    _age_threatfox_rows(path, 1800)   # half an hour old
+    await run()
+    assert len(calls) == 2, "a 30-minute-old ThreatFox answer is still fresh"
+
+    _age_threatfox_rows(path, 5400)   # ninety minutes old
+    await run()
+    assert sorted(calls) == sorted(
+        [file_hash, "198.51.100.10"] * 2), (
+        "past the hourly TTL both ThreatFox lookups must be made again"
+    )
+
+
+async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
+    """Constraint 8. `ips` reaches IOC_LIMIT entries, and a bare gather over
+    them opens fifty simultaneous POSTs at one free abuse.ch endpoint --
+    the same failure _bounded_gather was written for on the RDAP fan-out.
+    """
+    import asyncio
+
+    from hash_searcher.api.api_data_puller import IOC_LIMIT
+    from hash_searcher.api.threatfox import THREATFOX_CONCURRENCY
+
+    file_hash = "a" * 64
+    ips = [f"198.51.100.{n}" for n in range(IOC_LIMIT)]
+
+    async def fake_vt(client, indicator, **kwargs):
+        return {"data": {"relationships": {"contacted_ips": {
+            "data": [{"id": ip} for ip in ips]}}}}
+
+    in_flight, peak = [], [0]
+
+    async def spy_threatfox(client, indicator, **kwargs):
+        # The hash lookup is a separate single call, not part of the fan-out
+        # this test bounds -- counting it would measure the wrong thing.
+        counted = indicator != file_hash
+        if counted:
+            in_flight.append(indicator)
+            peak[0] = max(peak[0], len(in_flight))
+        await asyncio.sleep(0)
+        if counted:
+            in_flight.pop()
+        return {"query_status": "no_result", "data": []}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+                        spy_threatfox)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("threatfox")])
+
+    result = await data_puller(file_hash, ResponseCache(enabled=False))
+
+    assert len(result["threatfox_ips"]) == IOC_LIMIT
+    # A hardcoded ceiling, not one derived from THREATFOX_CONCURRENCY: the
+    # assertion below compares the observed peak against that same live
+    # symbol, so widening the constant would otherwise recompute its own
+    # expected value and pass. The bound exists to keep one free abuse.ch
+    # endpoint from seeing a burst, and a cap near IOC_LIMIT bounds it only
+    # nominally.
+    assert THREATFOX_CONCURRENCY <= 10 < IOC_LIMIT
+    assert peak[0] == THREATFOX_CONCURRENCY, (
+        f"{peak[0]} ThreatFox calls were in flight at once; an unbounded "
+        f"gather peaks at {IOC_LIMIT}"
+    )

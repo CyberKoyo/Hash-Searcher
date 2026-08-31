@@ -411,3 +411,56 @@ def test_a_bazaar_family_match_escapes_unknown_without_a_vt_record():
     report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
                                  queried=True)
     assert score(report).level != "UNKNOWN"
+
+
+def test_threatfox_fires_on_a_contacted_ip_even_when_the_sample_is_unknown():
+    """The reason Task A4 exists. ThreatFox's dataset is overwhelmingly C2
+    addresses, so the per-IP answer is the one it most often has -- and
+    before this the signal could only fire on the sample's own hash, which
+    ThreatFox rarely holds. Shodan reports exposure and GreyNoise reports
+    noise-vs-targeted; neither names the family.
+    """
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True)}
+
+    assert report.threatfox.queried is False, "the sample itself was never asked"
+    signals = [s for s in score(report).signals if s.name == "threatfox"]
+    assert len(signals) == 1
+    assert "198.51.100.10" in signals[0].detail
+    assert "Emotet" in signals[0].detail
+
+
+def test_a_threatfox_ip_lookup_with_nothing_to_report_is_not_a_signal():
+    """Both non-answers, and neither is evidence: an address ThreatFox has
+    no record of, and one nobody asked it about."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.threatfox_ips = {
+        "198.51.100.10": SourceResult(value=ThreatFoxReport(found=False),
+                                      queried=True),
+        "203.0.113.7": SourceResult(),
+    }
+    assert not any(s.name == "threatfox" for s in score(report).signals)
+
+
+def test_the_sample_level_threatfox_detail_is_unchanged_by_the_per_ip_pass():
+    """The per-IP fan-out adds targets to this signal; it must not reword
+    the answer the sample-level lookup already gave."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.threatfox = SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
+        queried=True)
+    signal = next(s for s in score(report).signals if s.name == "threatfox")
+    assert signal.detail == (
+        "ThreatFox names this indicator Emotet (90% confidence)"
+    )

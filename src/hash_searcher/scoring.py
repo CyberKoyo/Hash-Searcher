@@ -194,13 +194,30 @@ def _bazaar_signal(report: Report) -> Signal | None:
 
 
 def _threatfox_signal(report: Report) -> Signal | None:
-    threatfox = report.threatfox
-    if not threatfox.ok or not threatfox.value.found:
+    """Fires on the sample, on any contacted IP, or on both.
+
+    The per-IP half is the half that usually lands: ThreatFox's dataset is
+    overwhelmingly C2 addresses, not sample hashes. One signal rather than
+    one per target, and a flat W_THREATFOX either way -- four contacted IPs
+    in the same botnet's C2 pool is one fact stated four times, and letting
+    it multiply would out-vote the engine consensus.
+
+    .ok gates each result before .value is touched: a SourceResult has no
+    __bool__, so a never-asked one is truthy and `.value` is None on it.
+    """
+    hits = []
+    if report.threatfox.ok and report.threatfox.value.found:
+        hits.append(("this indicator", report.threatfox.value))
+    hits += [(f"the contacted IP {ip}", result.value)
+             for ip, result in report.threatfox_ips.items()
+             if result.ok and result.value.found]
+    if not hits:
         return None
     return Signal(name="threatfox", points=W_THREATFOX,
-                  detail=f"ThreatFox names this indicator "
-                         f"{threatfox.value.malware or 'a known IOC'} "
-                         f"({threatfox.value.confidence}% confidence)")
+                  detail="ThreatFox names " + "; ".join(
+                      f"{target} {value.malware or 'a known IOC'} "
+                      f"({value.confidence}% confidence)"
+                      for target, value in hits))
 
 
 def _kev_signal(report: Report) -> Signal | None:

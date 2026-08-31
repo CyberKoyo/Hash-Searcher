@@ -308,13 +308,52 @@ def render_threatfox(report: Report) -> None:
 #: list is still in the JSON report.
 CVE_DISPLAY_LIMIT = 12
 
+#: ThreatFox tags for a busy C2 address run to dozens. Same bargain as
+#: CVE_DISPLAY_LIMIT: the list is capped and the total printed beside it, so
+#: a truncated list never reads as the whole answer. Shared with pdf.py,
+#: where the cap is load-bearing rather than cosmetic -- an unbounded
+#: provider list in a table cell raises LayoutError.
+TAG_DISPLAY_LIMIT = 8
+
+
+def tag_text(tags: list[str]) -> str:
+    """A capped, honestly-labelled tag list, or "" when there are none."""
+    if not tags:
+        return ""
+    shown = ", ".join(tags[:TAG_DISPLAY_LIMIT])
+    if len(tags) <= TAG_DISPLAY_LIMIT:
+        return f"tags: {shown}"
+    return f"{len(tags)} tags (showing {TAG_DISPLAY_LIMIT}): {shown}"
+
+
+def queried_ips(report: Report) -> list[str]:
+    """Every contacted IP at least one per-IP source actually answered for.
+
+    The dicts cannot be the gate. They hold SourceResults, which have no
+    __bool__, so a dict of nothing but never-asked results is non-empty and
+    therefore truthy -- `if not report.shodan and not report.greynoise`
+    passed, the section header printed, and each IP rendered as a bare
+    `IP: x.x.x.x` line with nothing under it. Asking whether anything was
+    queried is the question the guard meant to ask all along, and it stops
+    mattering only in theory once a THIRD per-IP dict exists: one source
+    populated and another not is exactly the state threatfox_ips creates.
+
+    pdf.py's IP table shares this, so the two surfaces cannot drift into
+    disagreeing about which addresses are worth a row.
+    """
+    per_ip = (report.shodan, report.greynoise, report.threatfox_ips)
+    return [ip for ip in dict.fromkeys(k for source in per_ip for k in source)
+            if any(ip in source and source[ip].queried for source in per_ip)]
+
 
 def render_ip_intel(report: Report) -> None:
-    """Shodan exposure and GreyNoise noise-vs-targeted, per contacted IP."""
-    if not report.shodan and not report.greynoise:
+    """Shodan exposure, GreyNoise noise-vs-targeted, and ThreatFox's C2
+    attribution, per contacted IP."""
+    ips = queried_ips(report)
+    if not ips:
         return
     _header("IP INTELLIGENCE")
-    for ip in dict.fromkeys((*report.shodan, *report.greynoise)):
+    for ip in ips:
         print(f"\nIP:      {ip}")
         shodan = report.shodan.get(ip)
         if shodan and shodan.error:
@@ -342,6 +381,20 @@ def render_ip_intel(report: Report) -> None:
             # The more interesting answer of the two: an address GreyNoise
             # has never seen scanning is not internet background noise.
             print("GreyNoise: not observed scanning the internet")
+        # The one thing neither source above says: which malware family the
+        # address belongs to. Same three-way split as GreyNoise -- a failed
+        # lookup, a hit, and a clean "no record", with a source nobody asked
+        # rendering as silence.
+        threatfox = report.threatfox_ips.get(ip)
+        if threatfox and threatfox.error:
+            print(f"ThreatFox: {threatfox.error}")
+        elif threatfox and threatfox.ok and threatfox.value.found:
+            tags = tag_text(threatfox.value.tags)
+            print(f"ThreatFox: {threatfox.value.malware or 'unnamed'} "
+                  f"({threatfox.value.confidence}% confidence)"
+                  f"{f', {tags}' if tags else ''}")
+        elif threatfox and threatfox.ok:
+            print("ThreatFox: no C2 record for this address")
 
 
 def render_kev(report: Report) -> None:

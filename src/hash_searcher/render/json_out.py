@@ -156,6 +156,15 @@ def _phase4_dict(report: Report) -> dict:
     their own top-level keys -- both already shipped on main, and Global
     Constraint 7 says an existing JSON key never moves -- populated from the
     SourceResult[KEVReport] that replaced the two bolted-on Report fields.
+
+    `threatfox_ips` is a new key, which Constraint 7 permits only with an
+    argument. The argument: it is additive and keyed by IP exactly as
+    `shodan` and `greynoise` already are, and `threatfox` keeps its
+    existing meaning untouched -- the sample's own answer, never a
+    contacted host's. Without it, the C2 attribution this task exists to
+    produce would reach the terminal and the PDF but stay invisible to the
+    machine consumer, which is the defect _vt_dict was fixed for one task
+    ago.
     """
     kev = report.kev
     return {
@@ -166,6 +175,8 @@ def _phase4_dict(report: Report) -> dict:
                    for ip, r in report.shodan.items()},
         "greynoise": {ip: _source_dict(r, GreyNoiseReport())
                       for ip, r in report.greynoise.items()},
+        "threatfox_ips": {ip: _source_dict(r, ThreatFoxReport())
+                          for ip, r in report.threatfox_ips.items()},
         "kev": [asdict(entry) for entry in kev.value.entries] if kev.value else [],
         # Present-but-null unless the catalog could not be fetched, so a
         # consumer never reads an empty "kev" as "nothing is exploited"

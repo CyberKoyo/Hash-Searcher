@@ -206,6 +206,10 @@ async def run_cli(argv: list[str] | None = None) -> int:
         # returns a SourceResult saying so instead of cli.py checking first.
         bazaar=extract_bazaar(raw["bazaar"]),
         threatfox=extract_threatfox(raw["threatfox"]),
+        # The same extractor over the per-IP payloads: ThreatFox's answer
+        # has the same shape whatever the indicator type was.
+        threatfox_ips={ip: extract_threatfox(payload)
+                       for ip, payload in raw["threatfox_ips"].items()},
         certs=merge_crtsh(raw["crtsh"]),
         shodan=shodan,
         greynoise=greynoise,

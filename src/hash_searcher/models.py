@@ -411,6 +411,15 @@ class Report:
     #: IPs rather than describing the sample itself.
     shodan: dict[str, SourceResult[ShodanReport]] = field(default_factory=dict)
     greynoise: dict[str, SourceResult[GreyNoiseReport]] = field(default_factory=dict)
+    #: ThreatFox again, but per contacted IP rather than for the sample.
+    #: A separate field, not a widening of `threatfox`: that one answers
+    #: "what is this sample", this one answers "what is the address it
+    #: called", and collapsing them would make a C2 hit on a contacted host
+    #: indistinguishable from a hit on the file itself. ThreatFox's dataset
+    #: is overwhelmingly C2 addresses, so this is where it usually answers
+    #: -- and neither Shodan (exposure) nor GreyNoise (noise-vs-targeted)
+    #: names a family.
+    threatfox_ips: dict[str, SourceResult[ThreatFoxReport]] = field(default_factory=dict)
     #: CVEs on contacted IPs that CISA has confirmed are exploited in the
     #: wild. `.queried is False` when there was nothing to check -- the
     #: catalog is only fetched when Shodan reported CVEs. On a fetch failure

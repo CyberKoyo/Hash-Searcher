@@ -15,6 +15,12 @@ from .malwarebazaar import abusech_headers
 
 THREATFOX_URL = "https://threatfox-api.abuse.ch/api/v1/"
 
+#: ThreatFox is asked about every contacted IP as well as the sample, and
+#: that list reaches IOC_LIMIT entries. Five at a time, the same bound the
+#: RDAP fan-out takes: abuse.ch is a free service on one shared account key,
+#: and a bare gather would open fifty simultaneous POSTs at it.
+THREATFOX_CONCURRENCY = 5
+
 
 async def get_threatfox(client: httpx.AsyncClient, indicator, **kwargs) -> dict:
     return await api_post(

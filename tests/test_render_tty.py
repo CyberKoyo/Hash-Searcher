@@ -929,3 +929,105 @@ def test_a_long_cve_list_is_capped_with_the_total_kept(capsys):
     assert cves[CVE_DISPLAY_LIMIT] not in out
     assert f"128 CVEs" in out
     assert f"showing {CVE_DISPLAY_LIMIT}" in out
+
+
+def test_ip_intel_names_the_c2_family_for_a_contacted_ip(capsys):
+    """The section already had exposure (Shodan) and noise-vs-targeted
+    (GreyNoise). Neither names a C2 family, which is ThreatFox's whole
+    value and the reason it now runs per IP as well as per sample."""
+    from hash_searcher.models import ShodanReport, SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[443]), queried=True)},
+        threatfox_ips={"198.51.100.10": SourceResult(
+            value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                                  tags=["botnet", "c2"]), queried=True)},
+    ))
+    out = capsys.readouterr().out
+    assert "ThreatFox: Emotet (90% confidence)" in out
+    assert "botnet, c2" in out
+
+
+def test_an_ip_only_threatfox_answered_for_still_gets_a_row(capsys):
+    """threatfox_ips is a third per-IP dict beside shodan and greynoise, so
+    it has to join the key union too -- otherwise an attribution for an
+    address Shodan never answered about is fetched and then dropped."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Qakbot", confidence=75),
+        queried=True)}))
+    out = capsys.readouterr().out
+    assert "IP INTELLIGENCE" in out
+    assert "IP:      203.0.113.7" in out
+    assert "ThreatFox: Qakbot (75% confidence)" in out
+
+
+def test_an_address_threatfox_has_no_record_of_says_so(capsys):
+    """A real answer, and a different one from an error or a source nobody
+    asked -- the same three-way split every other renderer here makes."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=False), queried=True)}))
+    assert "ThreatFox: no C2 record for this address" in capsys.readouterr().out
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        error="ThreatFox rejected the key", queried=True)}))
+    assert "ThreatFox: ThreatFox rejected the key" in capsys.readouterr().out
+
+
+def test_ip_intel_is_silent_when_no_per_ip_source_was_ever_asked(capsys):
+    """Carried from Task A2's review. The old guard tested the DICTS --
+    `if not report.shodan and not report.greynoise` -- and a dict holding
+    only never-asked SourceResults is non-empty and therefore truthy. The
+    header printed and each IP rendered as a bare `IP: x.x.x.x` line with
+    nothing under it. The gate has to ask whether anything was queried."""
+    from hash_searcher.models import SourceResult
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult()},
+        greynoise={"198.51.100.10": SourceResult()},
+        threatfox_ips={"198.51.100.10": SourceResult()},
+    ))
+    assert capsys.readouterr().out == ""
+
+
+def test_an_ip_nobody_asked_about_is_dropped_while_the_answered_ones_stay(capsys):
+    """The third per-IP dict is exactly the change that can leave one dict
+    populated and another not, so the gate is per IP, not per section."""
+    from hash_searcher.models import ShodanReport, SourceResult
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[443]), queried=True),
+            "203.0.113.7": SourceResult()},
+        threatfox_ips={"203.0.113.7": SourceResult()},
+    ))
+    out = capsys.readouterr().out
+    assert "198.51.100.10" in out
+    assert "203.0.113.7" not in out
+
+
+def test_a_long_threatfox_tag_list_is_capped_with_the_total_kept(capsys):
+    """Same bargain as the CVE cap: a truncated list that reads as complete
+    is worse than no list. In the PDF the cap is load-bearing rather than
+    cosmetic -- an unbounded provider list in a table cell raises
+    LayoutError -- so both surfaces share TAG_DISPLAY_LIMIT."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import TAG_DISPLAY_LIMIT, render_ip_intel
+
+    tags = [f"tag-{n:03d}" for n in range(40)]
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                              tags=tags), queried=True)}))
+    out = capsys.readouterr().out
+    assert tags[TAG_DISPLAY_LIMIT] not in out
+    assert tags[TAG_DISPLAY_LIMIT - 1] in out
+    assert f"40 tags (showing {TAG_DISPLAY_LIMIT})" in out

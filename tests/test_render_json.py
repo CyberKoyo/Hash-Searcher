@@ -15,7 +15,13 @@ def test_schema_keys_are_preserved(sample_report):
                                    # source never ran.
                                    "bazaar", "threatfox", "certs", "shodan",
                                    "greynoise", "kev", "kev_error",
-                                   "kev_unchecked"}
+                                   "kev_unchecked",
+                                   # Phase 5 Task A4: ThreatFox per contacted
+                                   # IP. Additive and keyed by IP the way
+                                   # "shodan"/"greynoise" are; "threatfox"
+                                   # keeps its meaning (the sample lookup)
+                                   # untouched.
+                                   "threatfox_ips"}
 
 
 def test_censys_entry_has_no_hostnames_key(sample_report):
@@ -322,3 +328,35 @@ def test_a_source_that_never_ran_is_null_rather_than_missing(tmp_path, sample_re
     assert body["threatfox"] is None
     assert body["certs"] is None
     assert body["shodan"] == {} and body["greynoise"] == {} and body["kev"] == []
+
+
+def test_per_ip_threatfox_reaches_the_json(sample_report):
+    """The machine consumer is the one that most needs a C2 attribution --
+    an analyst can read the TTY, a script branching on exit codes cannot.
+    Never-asked stays present-but-null, the rule the rest of the module
+    follows, so "ThreatFox had nothing" never reads as "nobody asked"."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+
+    sample_report.threatfox_ips = {
+        "198.51.100.10": SourceResult(
+            value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                                  tags=["botnet"]), queried=True),
+        "203.0.113.7": SourceResult(),
+    }
+    block = to_dict(sample_report)["report"]["threatfox_ips"]
+    assert block["198.51.100.10"] == {
+        "found": True, "malware": "Emotet", "confidence": 90,
+        "tags": ["botnet"], "error": None,
+    }
+    assert block["203.0.113.7"] is None
+
+
+def test_the_sample_level_threatfox_key_still_means_the_sample(sample_report):
+    """Constraint 7: an existing key never changes meaning. A per-IP hit
+    must not leak into the key a consumer already reads as the sample's
+    own answer."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet"), queried=True)}
+    assert to_dict(sample_report)["report"]["threatfox"] is None

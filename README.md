@@ -163,7 +163,7 @@ The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
 | suspicious_imports | +15 | A locally-parsed PE imports 3 or more APIs associated with process injection or evasion |
 | yara_local | +20 | A local YARA rule (from `--yara-rules` or the default rules directory) matched |
 | bazaar    | +15 | MalwareBazaar holds this exact sample, usually with a family name |
-| threatfox | +15 | ThreatFox attributes this indicator to a malware family |
+| threatfox | +15 | ThreatFox attributes the sample **or any contacted IP** to a malware family. Its dataset is overwhelmingly C2 addresses, so the per-IP half is usually the half that fires |
 | kev       | +25 | A contacted host exposes a CVE CISA lists as known-exploited |
 | internet_noise | −10 | GreyNoise calls a contacted IP benign internet background noise — scanning everyone is not evidence about *this* sample |
 
@@ -263,8 +263,9 @@ AbuseIPDB table, Censys enrichment, and WHOIS records for those IPs. Sections
 with nothing to say stay silent rather than printing an empty frame.
 
 The Phase 4 sources add their own sections: MALWAREBAZAAR and THREATFOX for
-family attribution, IP INTELLIGENCE (Shodan ports/CVEs and the GreyNoise
-noise-versus-targeted call) per contacted IP, KNOWN EXPLOITED VULNERABILITIES
+family attribution, IP INTELLIGENCE (Shodan ports/CVEs, the GreyNoise
+noise-versus-targeted call, and ThreatFox's C2 family attribution) per
+contacted IP, KNOWN EXPLOITED VULNERABILITIES
 for any CVE in the CISA KEV catalog, and CERTIFICATE TRANSPARENCY for sibling
 domains. The sibling list is capped at 100 names but always prints the
 untruncated total, because a truncated list that reads as complete is worse

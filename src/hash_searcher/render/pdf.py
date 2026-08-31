@@ -1,3 +1,17 @@
+"""The written report an analyst files.
+
+Two rules govern this module, and both were learned from a crash: every
+interpolated provider value goes through _x(), and every provider-supplied
+LIST that lands in a table cell is capped before it gets there. A table row
+cannot split across pages, so an unbounded cell raises LayoutError after
+every provider has already succeeded.
+
+Neither rule can be checked by asserting on build_story's flowables. Only a
+real doc.build() raises either failure, and only a payload reportlab
+actually rejects exercises the first -- an unknown tag is discarded
+silently. See test_write_pdf_survives_a_realistic_worst_case.
+"""
+
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -6,7 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..models import Report, Verdict
-from .tty import CVE_DISPLAY_LIMIT, VT_UNAVAILABLE_NOTE
+from .tty import CVE_DISPLAY_LIMIT, VT_UNAVAILABLE_NOTE, queried_ips, tag_text
 
 TABLE_STYLE = TableStyle([
     ('BACKGROUND',      (0, 0), (-1, 0), colors.grey),
@@ -40,9 +54,14 @@ def _table(rows, widths=None) -> Table:
 
 
 def _ip_rows(report: Report):
-    """Every IP either Shodan or GreyNoise had something to say about."""
-    return [(ip, report.shodan.get(ip))
-            for ip in dict.fromkeys((*report.shodan, *report.greynoise))]
+    """Every IP some per-IP source was actually asked about.
+
+    queried_ips is shared with tty.py's render_ip_intel: `if report.shodan
+    or report.greynoise` tested the DICTS, and a dict of never-asked
+    SourceResults is non-empty and therefore truthy, so this table printed
+    a heading and a row of empty cells per IP. See queried_ips.
+    """
+    return [(ip, report.shodan.get(ip)) for ip in queried_ips(report)]
 
 
 def _cve_cell(shodan) -> str:
@@ -68,14 +87,42 @@ def _cve_cell(shodan) -> str:
 
 
 def _greynoise_cell(noise) -> str:
-    if noise is None:
+    """Blank when nobody asked -- never "not observed".
+
+    "Not observed" is a claim GreyNoise made. A result nobody asked for
+    supports no claim at all, and this cell used to state the opposite of
+    the truth for exactly the case `queried` exists to express. Same rule
+    as _threatfox_cell below, and as every renderer in this tree: a source
+    that never ran renders as silence, not as a negative finding.
+    """
+    if noise is None or not noise.queried:
         return ""
     if noise.error:
         return noise.error
-    if not noise.ok or not noise.value.seen:
+    if not noise.value.seen:
         return "not observed"
     return " -- ".join(
         x for x in (noise.value.classification or "seen", noise.value.name) if x)
+
+
+def _threatfox_cell(result) -> str:
+    """ThreatFox's C2 attribution for one address.
+
+    `tags` is a provider-supplied list in a table cell, so it is capped --
+    this module's second rule, and the reason is a crash, not tidiness.
+    tag_text states the untruncated total beside the capped list, the same
+    bargain _cve_cell makes.
+    """
+    if result is None or not result.queried:
+        return ""
+    if result.error:
+        return result.error
+    if not result.value.found:
+        return "no record"
+    tags = tag_text(result.value.tags)
+    return (f"{result.value.malware or 'unnamed'} "
+            f"({result.value.confidence}% confidence)"
+            f"{f' -- {tags}' if tags else ''}")
 
 
 def build_story(report: Report, verdict: Verdict | None = None) -> list:
@@ -208,17 +255,19 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             f"({report.threatfox.value.confidence}% confidence)", styles['Normal']))
         story.append(Spacer(1, 12))
 
-    if report.shodan or report.greynoise:
+    ip_rows = _ip_rows(report)
+    if ip_rows:
         story.append(Paragraph("IP Intelligence", styles['Heading1']))
         story.append(_table(
-            [["IP", "Ports", "CVEs", "GreyNoise"]]
+            [["IP", "Ports", "CVEs", "GreyNoise", "ThreatFox"]]
             + [[Paragraph(_x(ip)),
                 Paragraph(_x(", ".join(str(p) for p in s.value.ports)
                             if s and s.ok else "")),
                 Paragraph(_x(_cve_cell(s))),
-                Paragraph(_x(_greynoise_cell(report.greynoise.get(ip))))]
-               for ip, s in _ip_rows(report)],
-            widths=[90, 80, 160, 120],
+                Paragraph(_x(_greynoise_cell(report.greynoise.get(ip)))),
+                Paragraph(_x(_threatfox_cell(report.threatfox_ips.get(ip))))]
+               for ip, s in ip_rows],
+            widths=[80, 60, 120, 95, 105],
         ))
         story.append(Spacer(1, 12))
 
