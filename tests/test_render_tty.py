@@ -1,5 +1,6 @@
 from hash_searcher.render.tty import (
-    RULE, render, render_hosts, render_ip_intel, render_ips, render_otx, render_vt, render_whois,
+    RULE, VT_UNAVAILABLE_NOTE, render, render_hosts, render_ip_intel, render_ips, render_otx,
+    render_vt, render_whois,
 )
 from hash_searcher.models import (
     AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
@@ -406,7 +407,17 @@ def test_an_unreachable_virustotal_says_so_rather_than_implying_nobody_has_seen_
     report = _phase4_report(vt=VTReport(found=False, unavailable=True,
                                          error="GetTotal API Error 503"))
     render(report, score(report))
-    assert "VirusTotal did not answer" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    # Pinned against the literal wording, not just re-derived from the same
+    # live import -- VT_UNAVAILABLE_NOTE.format(...) alone would recompute
+    # its expected value from the very constant under test, so deleting the
+    # caveat's second clause would vanish from both sides at once and this
+    # assertion would never notice.
+    assert VT_UNAVAILABLE_NOTE == (
+        "VirusTotal did not answer ({error}) -- this UNKNOWN is not "
+        "confirmation that nobody has seen this sample."
+    )
+    assert f"Note: {VT_UNAVAILABLE_NOTE.format(error='GetTotal API Error 503')}" in out.splitlines()
 
 
 def test_the_caveat_is_silent_once_the_verdict_no_longer_depends_on_vt(capsys):

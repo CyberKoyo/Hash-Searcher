@@ -14,7 +14,8 @@ from hash_searcher.models import (
     AttackTechnique, Detection, SandboxVerdict, Signature, SigmaRule, Signal,
     ThreatClass, Verdict, YaraMatch,
 )
-from hash_searcher.render.pdf import build_story, write_pdf
+from hash_searcher.render.pdf import _x, build_story, write_pdf
+from hash_searcher.render.tty import VT_UNAVAILABLE_NOTE
 
 
 def _texts(story) -> list[str]:
@@ -78,13 +79,22 @@ def test_the_pdf_carries_the_vt_unavailable_caveat_too(tmp_path, sample_report):
     sample_report.vt = VTReport(found=False, unavailable=True,
                                  error="GetTotal API Error 503")
     texts = _texts(build_story(sample_report, verdict))
-    assert any("VirusTotal did not answer" in t for t in texts)
-    assert any("GetTotal API Error 503" in t for t in texts)
+    # Pinned against the literal wording, not just re-derived from the same
+    # live import -- VT_UNAVAILABLE_NOTE.format(...) alone would recompute
+    # its expected value from the very constant under test, so deleting the
+    # caveat's second clause would vanish from both sides at once and this
+    # assertion would never notice.
+    assert VT_UNAVAILABLE_NOTE == (
+        "VirusTotal did not answer ({error}) -- this UNKNOWN is not "
+        "confirmation that nobody has seen this sample."
+    )
+    assert (f"Note: {VT_UNAVAILABLE_NOTE.format(error=_x('GetTotal API Error 503'))}"
+            in texts)
 
     sample_report.vt = VTReport(found=False, unavailable=True,
-                                 error="Network Error: <timeout>")
+                                 error="Network Error: <script>")
     texts = _texts(build_story(sample_report, verdict))
-    assert any("Network Error: &lt;timeout&gt;" in t for t in texts)
+    assert any("Network Error: &lt;script&gt;" in t for t in texts)
     path = write_pdf(sample_report, str(tmp_path / "vt_unavailable.pdf"), verdict)
     assert open(path, "rb").read(5) == b"%PDF-"
 
