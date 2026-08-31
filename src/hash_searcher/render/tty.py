@@ -113,6 +113,17 @@ def render_otx(report: Report) -> None:
 
 SIGNAL_NAME_WIDTH = 11
 
+#: The caveat both render_verdict (here) and pdf.py's build_story print for
+#: an UNKNOWN verdict that rests on a VT call which never actually
+#: answered. One template so the load-bearing second clause -- "not
+#: confirmation that nobody has seen this sample" -- cannot drift between
+#: the two surfaces the way two independently written copies of the same
+#: sentence eventually do.
+VT_UNAVAILABLE_NOTE = (
+    "VirusTotal did not answer ({error}) -- this UNKNOWN is not "
+    "confirmation that nobody has seen this sample."
+)
+
 
 def render_verdict(verdict: Verdict, report: Report | None = None) -> None:
     """Score first, then every signal that produced it.
@@ -138,10 +149,7 @@ def render_verdict(verdict: Verdict, report: Report | None = None) -> None:
         # not confirmation of absence -- holds regardless of why VT never
         # answered. The error text carries the mechanism; this line only
         # carries the fact that VT did not answer.
-        print(
-            f"\nNote: VirusTotal did not answer ({report.vt.error}) -- "
-            f"this UNKNOWN is not confirmation that nobody has seen this sample."
-        )
+        print(f"\nNote: {VT_UNAVAILABLE_NOTE.format(error=report.vt.error)}")
 
 
 def render_static(report: Report) -> None:

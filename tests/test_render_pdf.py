@@ -59,18 +59,34 @@ def test_a_verdict_with_no_signals_says_so(sample_report):
     assert "No signals fired." in _texts(story)
 
 
-def test_the_pdf_carries_the_vt_unavailable_caveat_too(sample_report):
+def test_the_pdf_carries_the_vt_unavailable_caveat_too(tmp_path, sample_report):
     """render_verdict in tty.py already prints this caveat; the PDF builds
     its own verdict block and had no equivalent -- the same renderer
     asymmetry that produced the Phase 4 KEV bug, where a failed fetch read
-    as a clean answer on one surface and not the other."""
+    as a clean answer on one surface and not the other.
+
+    The error text is a provider value like any other -- it goes through
+    _x() -- so this also exercises the crafted-markup path
+    test_markup_in_a_provider_string_is_escaped_not_parsed already covers
+    for every other field: a stray '<' in VT's own error text must not
+    reach doc.build() unescaped, or `-o report.pdf` dies on the last step
+    of an otherwise successful run.
+    """
     from hash_searcher.models import VTReport
 
+    verdict = Verdict(level="UNKNOWN", score=0, signals=[])
     sample_report.vt = VTReport(found=False, unavailable=True,
                                  error="GetTotal API Error 503")
-    texts = _texts(build_story(sample_report, Verdict(level="UNKNOWN", score=0, signals=[])))
+    texts = _texts(build_story(sample_report, verdict))
     assert any("VirusTotal did not answer" in t for t in texts)
     assert any("GetTotal API Error 503" in t for t in texts)
+
+    sample_report.vt = VTReport(found=False, unavailable=True,
+                                 error="Network Error: <timeout>")
+    texts = _texts(build_story(sample_report, verdict))
+    assert any("Network Error: &lt;timeout&gt;" in t for t in texts)
+    path = write_pdf(sample_report, str(tmp_path / "vt_unavailable.pdf"), verdict)
+    assert open(path, "rb").read(5) == b"%PDF-"
 
 
 def test_the_pdf_caveat_is_silent_when_the_verdict_is_not_unknown(sample_report):
@@ -79,6 +95,19 @@ def test_the_pdf_caveat_is_silent_when_the_verdict_is_not_unknown(sample_report)
     sample_report.vt = VTReport(found=False, unavailable=True,
                                  error="GetTotal API Error 503")
     texts = _texts(build_story(sample_report, Verdict(level="CLEAN", score=0, signals=[])))
+    assert not any("VirusTotal did not answer" in t for t in texts)
+
+
+def test_the_pdf_caveat_is_silent_for_a_genuine_404_at_unknown(sample_report):
+    """A 404 is VirusTotal's actual answer: no record. Printing the caveat
+    here would put "VirusTotal did not answer" into a filed written report
+    for the one case where VT actually did -- the precise falsehood Ruling
+    4 was raised to remove, on the surface an analyst archives."""
+    from hash_searcher.analysis.vt import extract_vt
+    from hash_searcher.api.base_call import make_error
+
+    sample_report.vt = extract_vt(make_error("Hash not found in GetTotal", 404))
+    texts = _texts(build_story(sample_report, Verdict(level="UNKNOWN", score=0, signals=[])))
     assert not any("VirusTotal did not answer" in t for t in texts)
 
 

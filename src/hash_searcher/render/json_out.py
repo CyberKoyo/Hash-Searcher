@@ -77,16 +77,21 @@ def _vt_dict(vt: VTReport) -> dict:
     `vt_rules` is not folded in here, because moving it would be a schema
     break for anything already reading it.
 
-    `error`/`unavailable` are added only when set -- the same rule
-    _censys_dict follows for its own `error` key -- so the success shape
-    is unchanged and Constraint 7 is satisfied more strongly than a bare
-    additive key would satisfy it. Before this, a 404 (VT answered: no
-    record) and a 503 (VT never answered) serialized byte-identically,
-    every block above null both times -- this function's own docstring
-    promise broken for the one consumer, a script branching on exit 3,
-    that this task exists to inform. `unavailable` alone would still leave
-    that consumer guessing why; `error` carries the reason the same way
-    every other source's JSON block already does.
+    `error`/`unavailable` follow the same present-but-null principle above,
+    one level up. On a healthy call there is nothing to report, so both
+    keys are omitted entirely -- the same precedent _censys_dict sets for
+    its own `error` key -- and the success shape stays exactly what it was
+    before this task. But once a call HAS failed, `unavailable` is always
+    present and explicit (`true` or `false`), never omitted: omitting it on
+    a 404 would ask a JSON consumer to read meaning into a missing key,
+    the exact anti-pattern this docstring's opening sentence rules out for
+    every other field here. `error` always rides alongside it -- alone,
+    `unavailable` would tell a consumer VT failed without saying why,
+    unlike every other source's JSON block. Before this, a 404 (VT
+    answered: no record) and a 503 (VT never answered) serialized
+    byte-identically, every block null both times -- broken against this
+    function's own opening promise, for the one consumer, a script
+    branching on exit 3, that this whole task exists to inform.
     """
     detection = vt.detection
     body = {
@@ -114,8 +119,7 @@ def _vt_dict(vt: VTReport) -> dict:
     }
     if vt.error:
         body["error"] = vt.error
-    if vt.unavailable:
-        body["unavailable"] = vt.unavailable
+        body["unavailable"] = vt.unavailable  # explicit, even when False (a 404)
     return body
 
 

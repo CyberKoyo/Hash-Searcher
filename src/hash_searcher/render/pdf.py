@@ -6,7 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..models import Report, Verdict
-from .tty import CVE_DISPLAY_LIMIT
+from .tty import CVE_DISPLAY_LIMIT, VT_UNAVAILABLE_NOTE
 
 TABLE_STYLE = TableStyle([
     ('BACKGROUND',      (0, 0), (-1, 0), colors.grey),
@@ -104,15 +104,17 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         else:
             story.append(Paragraph("No signals fired.", styles['Normal']))
         if verdict.level == "UNKNOWN" and report.vt.unavailable:
-            # Same caveat tty.py's render_verdict prints, and for the same
-            # reason: a written report an analyst files should not show a
-            # bare UNKNOWN when VT never actually answered -- the Phase 4
-            # KEV bug was exactly this asymmetry, a failed fetch reading as
-            # a clean answer on one surface and not the other.
+            # Same caveat tty.py's render_verdict prints, sharing its exact
+            # wording via VT_UNAVAILABLE_NOTE, and for the same reason: a
+            # written report an analyst files should not show a bare
+            # UNKNOWN when VT never actually answered -- the Phase 4 KEV
+            # bug was exactly this asymmetry, a failed fetch reading as a
+            # clean answer on one surface and not the other. Only the
+            # interpolated error value is escaped, per this module's own
+            # rule -- the template text is this module's own markup.
             story.append(Paragraph(
-                f"Note: VirusTotal did not answer ({_x(report.vt.error)}) -- "
-                f"this UNKNOWN is not confirmation that nobody has seen this "
-                f"sample.", styles['Normal']))
+                f"Note: {VT_UNAVAILABLE_NOTE.format(error=_x(report.vt.error))}",
+                styles['Normal']))
         story.append(Spacer(1, 12))
 
     if report.vt.detection:

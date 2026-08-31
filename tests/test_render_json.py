@@ -148,8 +148,8 @@ def test_a_404_and_a_503_no_longer_serialize_identically(sample_report, tmp_path
     `unavailable` -- a 404 (VT answered: no record) and a 503 (VT never
     answered) both serialized as every field null, indistinguishable to the
     one consumer, a script branching on exit 3, this whole task exists to
-    inform."""
-    import json
+    inform. `unavailable` is explicit on both -- `false` on the 404, not a
+    missing key a consumer has to read meaning into."""
     from hash_searcher.analysis.vt import extract_vt
     from hash_searcher.api.base_call import make_error
     from hash_searcher.render.json_out import write_json
@@ -166,9 +166,21 @@ def test_a_404_and_a_503_no_longer_serialize_identically(sample_report, tmp_path
 
     assert vt_404 != vt_503
     assert vt_404["error"] == "Hash not found in GetTotal"
-    assert "unavailable" not in vt_404
+    assert vt_404["unavailable"] is False
     assert vt_503["error"] == "GetTotal API Error 503"
     assert vt_503["unavailable"] is True
+
+
+def test_a_healthy_vt_block_carries_no_error_or_unavailable_key(sample_report):
+    """_vt_dict follows _censys_dict's exact precedent: `error`/`unavailable`
+    are omitted entirely on a healthy call, so the success shape stays
+    byte-identical to before this task. Mirrors
+    test_censys_entry_has_no_hostnames_key and
+    test_whois_success_entry_has_no_error_key -- the same guarantee, for
+    the one block neither of those two tests covers."""
+    vt = to_dict(sample_report)["report"]["vt"]
+    assert set(vt) == {"detection", "threat", "submission", "signature",
+                        "sandbox", "yara", "pe", "techniques", "contacted_domains"}
 
 
 def test_a_failed_censys_lookup_is_visible_in_the_json(sample_report, tmp_path):
