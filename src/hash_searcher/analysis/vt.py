@@ -137,14 +137,18 @@ def _pe(attributes: dict) -> PEInfo | None:
 
 def extract_vt(raw) -> VTReport:
     if is_error(raw):
-        # A 404 means "VirusTotal has no record" -- real information, not a
-        # failure. Any other status (a 5xx, a rate limit, malformed JSON)
-        # means the call failed without VT actually answering; unavailable
-        # is how the render layer tells the two apart.
+        # raw is already known to be an error dict here, so a status of
+        # None does not mean "no error" -- it means an error with no HTTP
+        # status, which is exactly what a retry-exhausted network failure
+        # (offline, DNS, timeout; see base_call.py's api_get) produces. A
+        # 404 is VirusTotal's answer: "no record", real information. Every
+        # other error -- with a status or without one -- means the call
+        # failed and VT never actually answered; unavailable is how the
+        # render layer tells the two apart.
         return VTReport(
             found=False,
             error=error_message(raw),
-            unavailable=error_status(raw) not in (None, 404),
+            unavailable=error_status(raw) != 404,
         )
 
     attributes = raw.get("data", {}).get("attributes", {})

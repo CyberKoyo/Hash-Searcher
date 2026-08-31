@@ -32,6 +32,15 @@ def test_a_failed_vt_call_is_not_the_same_as_vt_having_no_record():
     assert extract_vt({"data": {"attributes": {}}}).unavailable is False
 
 
+def test_a_network_failure_to_virustotal_is_unavailable_not_unrecorded():
+    """base_call.py emits a statusless error dict when every retry attempt
+    fails at the transport layer -- offline, DNS, timeout -- and that is the
+    single most common way VirusTotal fails to answer, far more common than
+    a clean 5xx. A statusless error is still an error, not a 404; reporting
+    it as "no record" would claim evidence of absence the tool never had."""
+    assert extract_vt(make_error("Network Error: Connection timed out")).unavailable is True
+
+
 def test_extract_otx_deduplicates_techniques_in_first_seen_order(fixture_json):
     otx = extract_otx(fixture_json("otx_pulses"))
     assert otx.recorded_instances == 7
