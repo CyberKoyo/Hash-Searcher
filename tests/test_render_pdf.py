@@ -213,15 +213,32 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     from hash_searcher.render.pdf import write_pdf
     from hash_searcher.scoring import score
 
+    # Shodan at IOC_LIMIT hosts at 137 CVEs each, not one host at 150. Every
+    # per-IP source is at the cap here, so the CVE column is laid out
+    # IOC_LIMIT times rather than once.
     sample_report.shodan = {
-        "198.51.100.10": SourceResult(value=ShodanReport(
+        f"198.51.100.{n}": SourceResult(value=ShodanReport(
             ports=list(range(1, 40)),
-            vulns=[f"CVE-2021-{n:05d}" for n in range(150)]), queried=True),
+            vulns=[f"CVE-2021-{c:05d}" for c in range(137)]), queried=True)
+        for n in range(IOC_LIMIT)
     }
-    # 200, not 60: known_exploited() caps nothing, and the CVE list it
-    # intersects against the catalog is bounded only by Shodan's vulns
-    # across every contacted IP -- 150 for one host here, and IOC_LIMIT
-    # hosts are possible. 60 was an arbitrary number under the threshold.
+    # 200 KEV entries, and DELIBERATELY not the reachable maximum.
+    # known_exploited() caps nothing, and the CVE list it intersects against
+    # the catalog is bounded only by Shodan's vulns across every contacted
+    # IP -- IOC_LIMIT hosts at the realistic 137 each is 6850. That maximum
+    # IS exercised, in test_the_pdf_backstop_never_fires_on_input_the_
+    # puller_can_produce, which is where it belongs: the thing it proves is
+    # that the KEV SIGNAL DETAIL stays bounded, and that costs nothing to
+    # check without building a PDF.
+    #
+    # Building one is what makes it expensive, for a reason unrelated to
+    # this test: the "Known Exploited Vulnerabilities" table below emits one
+    # ROW PER ENTRY, uncapped. That is not the crash this file guards --
+    # a many-row table splits across pages perfectly well -- but layout time
+    # grows superlinearly with the row count. Measured: 200 entries 0.26s,
+    # 1000 1.0s, 3000 3.6s, 6850 16.1s. Paying 16 seconds on every suite run
+    # to re-prove a bound another test already proves is a bad trade; the
+    # row cap that table wants is its own change.
     sample_report.kev = SourceResult(value=KEVReport(entries=[
         KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
                 product="HTTP Server", name="Some Vulnerability",
@@ -229,17 +246,12 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     sample_report.certs = SourceResult(value=CertReport(
         siblings=[f"host{n}.evil.example" for n in range(100)], count=5000),
         queried=True)
-    # ThreatFox tags are a provider-supplied list landing in a table cell,
-    # the same shape as the CVE column, so they are capped for the same
-    # reason: a row cannot split across pages.
-    sample_report.threatfox_ips = {
-        "198.51.100.10": SourceResult(value=ThreatFoxReport(
-            found=True, malware="Emotet",
-            confidence=90, tags=[f"tag-{n}" for n in range(150)]), queried=True),
-    }
-
-    # Every per-IP source at IOC_LIMIT, so the signals below are built from
-    # the worst input the puller can actually hand the scorer.
+    # threatfox and greynoise complete the set: all three per-IP sources at
+    # IOC_LIMIT, so the signals below are built from the worst per-IP input
+    # the puller can hand the scorer rather than the two-of-three this
+    # fixture used to carry. The 150 ThreatFox tags are a provider-supplied
+    # list landing in a table cell, the same shape as the CVE column, and
+    # capped for the same reason -- a row cannot split across pages.
     ips = [f"198.51.100.{n}" for n in range(IOC_LIMIT)]
     sample_report.threatfox_ips = {
         ip: SourceResult(value=ThreatFoxReport(
@@ -356,8 +368,11 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
     other four one large provider answer away from the same crash.
 
     So the cell defends itself. The measured threshold for this column is
-    2445 characters; the budget is well under it, and the truncation says
-    what it did rather than dropping the tail silently.
+    content-dependent rather than a single number -- bisected against a real
+    write_pdf, 1664 characters of wide capitals, 1677 of CVE list, up to
+    ~2500 of narrower text. 1677 is the one that matters, because CVE
+    content is what crosses first. The budget is under it, and the
+    truncation says what it did rather than dropping the tail silently.
     """
     from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
 
@@ -372,9 +387,13 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
         "a truncated detail must say it was truncated and how much there was"
     )
     # A hardcoded ceiling rather than one derived from DETAIL_CHAR_LIMIT:
-    # widening the budget past the measured 2445-character crash threshold
-    # would otherwise recompute this test's own expectation and pass.
-    assert DETAIL_CHAR_LIMIT <= 2000
+    # widening the budget would otherwise recompute this test's own
+    # expectation and pass. 1400, not 2000 -- 2000 is a CRASHING value, and
+    # a ceiling that sanctions it is not a ceiling. Bisected with this
+    # test's own 400-CVE detail against a real write_pdf: 1600 builds, 1700
+    # raises LayoutError, and 2000 gives "tallest row 774". 1400 leaves real
+    # headroom under that boundary.
+    assert DETAIL_CHAR_LIMIT <= 1400
 
     # And it must actually build -- the assertion above is on the string,
     # and only doc.build() raises LayoutError.
@@ -384,8 +403,9 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
 
 def test_a_normal_signal_detail_is_left_exactly_alone(sample_report):
     """The backstop must be invisible for every detail that renders today.
-    internet_noise at IOC_LIMIT reaches ~808 characters and kev at 60 CVEs
-    ~1019; neither may acquire a truncation marker."""
+    internet_noise at IOC_LIMIT reaches ~808 characters -- the largest any
+    real input produces now that the joined details are capped in
+    scoring.py -- and it may not acquire a truncation marker."""
     from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
 
     detail = "GreyNoise calls these contacted IPs benign internet background noise: " \

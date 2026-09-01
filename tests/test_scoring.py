@@ -521,7 +521,7 @@ def test_a_long_threatfox_target_list_is_capped_with_the_total_kept():
     """This detail lands in a reportlab table cell whose row cannot split
     across pages, so an unbounded join here is a crash in the filed PDF --
     rule 2 of render/pdf.py's module docstring. Capped at an item boundary
-    with the remainder counted, the way tag_text and _cve_cell already do.
+    with the TOTAL stated, the way tag_text and _cve_cell already do.
     """
     from hash_searcher.scoring import THREATFOX_TARGET_LIMIT, score
 
@@ -532,8 +532,202 @@ def test_a_long_threatfox_target_list_is_capped_with_the_total_kept():
     detail = next(s for s in score(report).signals if s.name == "threatfox").detail
     assert ips[THREATFOX_TARGET_LIMIT - 1] in detail
     assert ips[THREATFOX_TARGET_LIMIT] not in detail
-    assert f"and {50 - THREATFOX_TARGET_LIMIT} more contacted IPs" in detail
+    assert f"50 targets (showing {THREATFOX_TARGET_LIMIT})" in detail
     # A hardcoded ceiling, not one derived from the constant under test: the
     # cap exists to keep this string out of LayoutError territory, and the
-    # measured crash threshold for that cell is 2445 characters.
+    # measured crash threshold for that cell is content-dependent -- 1664
+    # characters of wide capitals, 1677 of CVE list, up to ~2500 for
+    # narrower text.
     assert len(detail) < 1000
+
+
+# ---------------------------------------------------------------------------
+# Every signal detail that joins a provider list is capped HERE, at the
+# source, not at the table cell that renders it.
+#
+# render/pdf.py's DETAIL_CHAR_LIMIT is a backstop: it truncates mid-string
+# and says so, which is the right thing to do for an input nobody
+# anticipated and the wrong thing to do for the ordinary case. A KEV detail
+# for one busy host crosses it today -- the documented realistic figure is
+# 120-137 CVEs, and 80 is enough -- so the analyst reads a mid-identifier
+# fragment ("...CVE-2021-00070, CVE ... (truncated at 1200 of 2251
+# characters)") on input the tool sees every day. A last-resort fallback
+# that fires on ordinary input is no longer a signal that anything is wrong.
+#
+# The ceilings below are hardcoded rather than derived from the constant
+# under test. A ceiling computed from the symbol it is bounding is not a
+# bound: widening the constant would recompute the expectation and stay
+# green.
+# ---------------------------------------------------------------------------
+
+def _kev_at_the_provider_maximum():
+    """KEV at the largest result the puller can actually produce.
+
+    known_exploited() caps nothing; it intersects the CVEs Shodan reported
+    across every contacted IP against the catalog. That is IOC_LIMIT hosts
+    at the documented realistic 137 CVEs each.
+    """
+    from hash_searcher.api.api_data_puller import IOC_LIMIT
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
+
+    return SourceResult(value=KEVReport(entries=[
+        KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache", product="HTTP Server",
+                 name="Some Vulnerability", date_added="2022-03-03")
+        for n in range(IOC_LIMIT * 137)]), queried=True)
+
+
+def test_the_kev_detail_is_capped_at_the_source():
+    """137 CVEs for one host is the figure _cve_cell's own docstring calls
+    realistic, and 80 of them already overflow the PDF's detail budget.
+    Uncapped, the reachable maximum is over a hundred thousand characters."""
+    from hash_searcher.scoring import score
+
+    report = _report()
+    report.kev = _kev_at_the_provider_maximum()
+
+    detail = next(s for s in score(report).signals if s.name == "kev").detail
+    assert len(detail) < 400, f"kev detail is {len(detail)} characters"
+    assert "CVE-2021-00000" in detail, "the named CVEs must still be named"
+    assert "6850 CVEs" in detail, "the untruncated total, recoverable without arithmetic"
+    assert "CVE-2021-06849" not in detail
+
+
+def test_the_crowdsourced_yara_detail_is_capped_at_the_source():
+    """analysis/vt.py's NAME_LIMIT reaches `names` and nothing else. VT
+    returns hundreds of crowdsourced YARA results and _yara caps none."""
+    from hash_searcher.scoring import score
+
+    rules = [f"APT_Cobalt_Strike_Beacon_x64_variant_{n}" for n in range(500)]
+    report = _report(vt=VTReport(found=True,
+                                 yara=[YaraMatch(rule=r) for r in rules]))
+
+    detail = next(s for s in score(report).signals if s.name == "yara").detail
+    assert len(detail) < 400, f"yara detail is {len(detail)} characters"
+    assert rules[0] in detail
+    assert "500 rules" in detail
+    assert rules[-1] not in detail
+
+
+def test_the_sandbox_detail_is_capped_at_the_source():
+    """Same gap as the YARA one: _sandbox caps nothing either."""
+    from hash_searcher.scoring import score
+
+    names = [f"Zenbox Sandbox Cluster Node {n}" for n in range(200)]
+    report = _report(vt=VTReport(found=True, sandbox=[
+        SandboxVerdict(sandbox=n, category="malicious") for n in names]))
+
+    detail = next(s for s in score(report).signals if s.name == "sandbox").detail
+    assert len(detail) < 400, f"sandbox detail is {len(detail)} characters"
+    assert names[0] in detail
+    assert "200 sandboxes" in detail
+    assert names[-1] not in detail
+
+
+def test_the_local_yara_detail_is_capped_at_the_source():
+    """Bounded only by how many rules the operator dropped in the rules
+    directory -- which is to say, not bounded by this tool at all."""
+    from hash_searcher.models import StaticReport, YaraHit
+    from hash_searcher.scoring import score
+
+    rules = [f"Local_Detection_Rule_For_Family_{n}" for n in range(300)]
+    report = _report()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 yara=[YaraHit(rule=r) for r in rules])
+
+    detail = next(s for s in score(report).signals if s.name == "yara_local").detail
+    assert len(detail) < 400, f"yara_local detail is {len(detail)} characters"
+    assert rules[0] in detail
+    assert "300 rules" in detail
+    assert rules[-1] not in detail
+
+
+def test_a_capped_detail_states_the_total_never_the_remainder():
+    """One convention across all five capped joins.
+
+    _cve_cell says "137 CVEs (showing 12): ..." and tag_text says "150 tags
+    (showing 8): ...". The threatfox detail used to say "-- and 46 more
+    contacted IPs", the REMAINDER, which forces the reader to add two
+    numbers to learn how many there were -- and which contradicted the
+    comment above THREATFOX_TARGET_LIMIT claiming it stated the total.
+    """
+    from hash_searcher.models import SourceResult, ThreatFoxReport, YaraHit
+    from hash_searcher.models import StaticReport
+    from hash_searcher.scoring import score
+
+    report = _report(vt=VTReport(
+        found=True,
+        yara=[YaraMatch(rule=f"Rule_{n}") for n in range(500)],
+        sandbox=[SandboxVerdict(sandbox=f"Box{n}", category="malicious")
+                 for n in range(200)]))
+    report.kev = _kev_at_the_provider_maximum()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 yara=[YaraHit(rule=f"Local_{n}") for n in range(300)])
+    report.threatfox_ips = _threatfox_hits(*(f"198.51.100.{n}" for n in range(50)))
+
+    capped = {s.name: s.detail for s in score(report).signals}
+    assert {"kev", "yara", "sandbox", "yara_local", "threatfox"} <= set(capped)
+    for name, detail in capped.items():
+        if name not in {"kev", "yara", "sandbox", "yara_local", "threatfox"}:
+            continue
+        assert "(showing " in detail, f"{name} does not state what it showed"
+        assert " more " not in detail, (
+            f"{name} states a remainder; the convention is the total")
+
+
+def test_a_capped_list_of_six_does_not_read_as_one_more():
+    """The remainder convention produced "-- and 1 more contacted IPs" at
+    exactly six hits. Stating the total instead makes the plural bug
+    unreachable: the count is only printed when it exceeds the cap, so it
+    is never one."""
+    from hash_searcher.scoring import THREATFOX_TARGET_LIMIT, score
+
+    report = _report()
+    report.threatfox_ips = _threatfox_hits(
+        *(f"198.51.100.{n}" for n in range(THREATFOX_TARGET_LIMIT + 1)))
+
+    detail = next(s for s in score(report).signals if s.name == "threatfox").detail
+    assert "1 more contacted IPs" not in detail
+    assert "6 targets" in detail
+
+
+def test_the_pdf_backstop_never_fires_on_input_the_puller_can_produce():
+    """The point of capping at the source.
+
+    DETAIL_CHAR_LIMIT truncates mid-identifier and labels itself the blunt
+    last resort. With every join capped upstream it stays a last resort:
+    drive every joined signal to its reachable provider maximum at once and
+    no detail comes near it. The ceiling is hardcoded -- deriving it from
+    DETAIL_CHAR_LIMIT would let a widened backstop excuse an uncapped
+    source.
+    """
+    from hash_searcher.models import SourceResult, GreyNoiseReport
+    from hash_searcher.models import StaticReport, YaraHit
+    from hash_searcher.api.api_data_puller import IOC_LIMIT
+    from hash_searcher.scoring import score
+
+    report = _report(vt=VTReport(
+        found=True,
+        yara=[YaraMatch(rule=f"APT_Cobalt_Strike_Beacon_x64_variant_{n}")
+              for n in range(500)],
+        sandbox=[SandboxVerdict(sandbox=f"Zenbox Cluster Node {n}",
+                                category="malicious") for n in range(200)]))
+    report.kev = _kev_at_the_provider_maximum()
+    report.static = StaticReport(path="x", size=1, sha256="a" * 64,
+                                 yara=[YaraHit(rule=f"Local_Detection_Rule_{n}")
+                                       for n in range(300)])
+    ips = [f"198.51.100.{n}" for n in range(IOC_LIMIT)]
+    report.threatfox_ips = _threatfox_hits(*ips)
+    report.greynoise = {ip: SourceResult(value=GreyNoiseReport(
+        seen=True, classification="benign", name="Shodan Scanner"), queried=True)
+        for ip in ips}
+
+    # 1000, hardcoded and below DETAIL_CHAR_LIMIT, so this test proves the
+    # backstop stays unreached. The largest detail here is internet_noise at
+    # 808 characters, and it is the one join deliberately left uncapped: it
+    # is bounded by IOC_LIMIT rather than by a display cap. That bound is a
+    # puller tuning constant, not a display decision, so if IOC_LIMIT is ever
+    # raised this assertion is what says so.
+    for signal in score(report).signals:
+        assert len(signal.detail) < 1000, (
+            f"{signal.name} reaches {len(signal.detail)} characters, so the "
+            f"blunt backstop is this signal's ordinary rendering path")

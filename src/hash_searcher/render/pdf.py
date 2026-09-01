@@ -49,23 +49,32 @@ def _x(value) -> str:
 #: Hard ceiling on any one signal's detail before it becomes a table cell.
 #:
 #: The per-signal caps in scoring.py are the honest fix -- they truncate at
-#: an item boundary and state the total. This is the backstop, and it exists
-#: because the crash is a property of the CELL, not of any one signal: five
-#: of the seven details in scoring.py are `", ".join(...)` over a
-#: provider-supplied list that nothing upstream caps. known_exploited()
-#: caps nothing and intersects a CVE list bounded only by Shodan's vulns
-#: across every contacted IP; analysis/vt.py caps `names` but not
-#: `sandbox_verdicts` or `crowdsourced_yara_results`; the local YARA hits
-#: are bounded only by the rules directory. Capping only the signal that
-#: happened to cross the threshold would leave the other four one large
-#: provider answer away from the same LayoutError.
+#: an item boundary and state the total, so a shortened list still reads as
+#: a shortened list. All five joined details are capped there now
+#: (_capped_join): kev, yara, sandbox, yara_local and threatfox. This is the
+#: blunt last resort behind them, and it exists because the crash is a
+#: property of the CELL, not of any one signal -- a detail nobody
+#: anticipated, from a source added later, still cannot be allowed to take
+#: down `-o report.pdf` after every provider has succeeded.
 #:
-#: 1200 against a measured threshold of 2445 characters for this column, so
-#: the budget holds even if the column or the font changes. Both details
-#: that render at their realistic maxima today -- internet_noise at ~808
-#: characters, kev at 60 CVEs at ~1019 -- pass through untouched, and a
-#: truncated one says what it dropped rather than losing the tail silently.
-#: The full text is always in the JSON report.
+#: It truncates mid-string, which is why it must stay a last resort. Before
+#: the source caps landed it was the ordinary rendering path for a KEV
+#: detail, which crosses this budget at 80 CVEs against the 120-137 for a
+#: single host that _cve_cell below calls realistic -- so an analyst read
+#: "...CVE-2021-00070, CVE ... (truncated)" on Tuesday input, and a fallback
+#: that fires routinely no longer signals that anything is wrong.
+#:
+#: The measured build threshold for this column is content-dependent, not
+#: one number. Bisected against a real write_pdf: 1664 characters of wide
+#: capitals, 1677 of CVE list, ~1770 of YARA rule names, ~2400-2500 of IP
+#: and threatfox text. 1677 is the figure that matters -- CVE content is the
+#: lowest of the shapes that actually occur, and it is what crosses first.
+#: 1200 plus the ~80-character truncation notice is 1280, a margin of 1.30x
+#: over that floor, not the ~2x the earlier "2445" figure implied. The
+#: largest detail real input produces today is internet_noise at ~808
+#: characters, which passes through untouched, and a truncated one says what
+#: it dropped rather than losing the tail silently. The full text is always
+#: in the JSON report.
 DETAIL_CHAR_LIMIT = 1200
 
 

@@ -50,26 +50,70 @@ W_YARA_LOCAL = 20
 # corroboration reach SUSPICIOUS on their own but never MALICIOUS.
 SIGMA_CAP = 30
 
-#: Targets named in the threatfox signal's detail before the rest are
-#: counted instead. That string lands in a reportlab table cell whose row
-#: cannot split across pages, so an unbounded join here is not a long line
-#: -- it is a LayoutError that kills `-o report.pdf` after every provider
-#: has already succeeded (render/pdf.py's module docstring, rule 2). The
-#: measured threshold for that cell is 2445 characters and 42 Emotet hits
-#: crossed it, well inside the IOC_LIMIT of 50 addresses the puller can
-#: hand this. Same bargain as CVE_DISPLAY_LIMIT and tag_text: cap at an
-#: item boundary and state the untruncated total, so a shortened list never
-#: reads as the whole answer.
-#:
-#: This is the honest cap. render/pdf.py also enforces a blunt character
-#: bound on EVERY signal detail, because four other signals join provider
-#: lists that nothing upstream caps -- see DETAIL_CHAR_LIMIT.
+# --- Bounds on the provider lists a signal detail names -------------------
+#
+# Five details below join a list someone else supplied, and that string
+# lands in a reportlab table cell whose row cannot split across pages. An
+# unbounded join here is not a long line -- it is a LayoutError that kills
+# `-o report.pdf` after every provider has already succeeded (render/pdf.py's
+# module docstring, rule 2).
+#
+# The measured build threshold for that column is content-dependent, not one
+# number: 1664 characters of wide capitals, 1677 of CVE list, and up to ~2500
+# for narrower text. CVE content is the lowest of the shapes that actually
+# occur, so 1677 is the figure to design against -- and a KEV detail crosses
+# it at 80 CVEs, against the 120-137 for a single host that render/pdf.py's
+# _cve_cell calls realistic. Fifty contacted hosts at that rate is a detail
+# of 109,659 characters.
+#
+# render/pdf.py also enforces DETAIL_CHAR_LIMIT on every detail, but that is
+# a backstop: it truncates mid-identifier, which is the right answer for an
+# input nobody anticipated and the wrong answer for Tuesday. These caps are
+# what keep it a last resort.
+
+#: CVE identifiers are short and uniform, so more of them fit and more of
+#: them are worth reading. Deliberately the same 12 as
+#: render.tty.CVE_DISPLAY_LIMIT, so the KEV signal and the PDF's CVE column
+#: never disagree about how many CVEs a report names. Not imported from
+#: there: scoring is the domain layer and must not depend on a renderer.
+KEV_CVE_LIMIT = 12
+
+#: Free-form provider strings -- YARA rule names, sandbox names -- run to
+#: forty characters each, so fewer fit. Same 8 as
+#: render.tty.TAG_DISPLAY_LIMIT, and for the same reason.
+DETAIL_ITEM_LIMIT = 8
+
+#: A threatfox entry is a whole clause ("the contacted IP 198.51.100.7
+#: RedLine Stealer (90% confidence)"), ~55 characters rather than ~14, so it
+#: gets the tightest cap of the three.
 THREATFOX_TARGET_LIMIT = 5
+
 
 STRONG_DETECTION = 5
 SUSPICIOUS_ENGINES = 3    # below this, engine hedging is noise
 ABUSE_CONFIDENCE = 75
 SUSPICIOUS_IMPORT_FLOOR = 3   # below this, one or two hits could be legitimate
+
+
+def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ") -> str:
+    """A provider list, truncated at an ITEM boundary, stating its total.
+
+    "137 CVEs (showing 12): CVE-..., CVE-..." -- the same shape and the same
+    bargain as render/pdf.py's _cve_cell and render/tty.py's tag_text: the
+    untruncated total is stated, so a shortened list never reads as the
+    whole answer, and the reader recovers it without arithmetic. Truncating
+    mid-identifier is what DETAIL_CHAR_LIMIT does when everything else has
+    failed; it is not what any of these should do.
+
+    Stating the TOTAL rather than the remainder also makes a plural bug
+    unreachable. The count is printed only when it exceeds `limit`, and
+    every limit here is at least 5, so the number is never 1 -- the
+    remainder form produced "and 1 more contacted IPs" at exactly six hits.
+    """
+    shown = sep.join(items[:limit])
+    if len(items) <= limit:
+        return shown
+    return f"{len(items)} {noun} (showing {limit}): {shown}"
 
 
 def _detection_signal(report: Report) -> Signal | None:
@@ -121,16 +165,18 @@ def _sandbox_signal(report: Report) -> Signal | None:
     if not report.vt.sandbox:
         return None
     return Signal(name="sandbox", points=W_SANDBOX,
-                  detail="flagged by sandbox: "
-                         + ", ".join(v.sandbox for v in report.vt.sandbox))
+                  detail="flagged by sandbox: " + _capped_join(
+                      [v.sandbox for v in report.vt.sandbox],
+                      DETAIL_ITEM_LIMIT, "sandboxes"))
 
 
 def _yara_signal(report: Report) -> Signal | None:
     if not report.vt.yara:
         return None
     return Signal(name="yara", points=W_YARA,
-                  detail="crowdsourced YARA matched: "
-                         + ", ".join(y.rule for y in report.vt.yara))
+                  detail="crowdsourced YARA matched: " + _capped_join(
+                      [y.rule for y in report.vt.yara],
+                      DETAIL_ITEM_LIMIT, "rules"))
 
 
 def _otx_signal(report: Report) -> Signal | None:
@@ -192,8 +238,9 @@ def _yara_local_signal(report: Report) -> Signal | None:
     if not static or not static.yara:
         return None
     return Signal(name="yara_local", points=W_YARA_LOCAL,
-                  detail="local YARA rules matched: "
-                         + ", ".join(h.rule for h in static.yara))
+                  detail="local YARA rules matched: " + _capped_join(
+                      [h.rule for h in static.yara],
+                      DETAIL_ITEM_LIMIT, "rules"))
 
 
 def _bazaar_signal(report: Report) -> Signal | None:
@@ -221,9 +268,9 @@ def _threatfox_signal(report: Report) -> Signal | None:
     .ok gates each result before .value is touched: a SourceResult has no
     __bool__, so a never-asked one is truthy and `.value` is None on it.
 
-    The named targets are capped at THREATFOX_TARGET_LIMIT with the
-    remainder counted -- see that constant: this detail is rendered into a
-    PDF table cell whose row cannot split across pages.
+    The named targets are capped at THREATFOX_TARGET_LIMIT and the total
+    stated -- see _capped_join: this detail is rendered into a PDF table
+    cell whose row cannot split across pages.
     """
     hits = []
     if report.threatfox.ok and report.threatfox.value.found:
@@ -234,28 +281,31 @@ def _threatfox_signal(report: Report) -> Signal | None:
 
     if not hits:
         return None
-    named = hits[:THREATFOX_TARGET_LIMIT]
-    detail = "ThreatFox names " + "; ".join(
-        f"{target} {value.malware or 'a known IOC'} "
-        f"({value.confidence}% confidence)"
-        for target, value in named)
-    if len(hits) > len(named):
-        # Always contacted IPs: the sample, when it matched at all, is
-        # hits[0] and therefore always inside the cap.
-        detail += f" -- and {len(hits) - len(named)} more contacted IPs"
+    detail = "ThreatFox names " + _capped_join(
+        [f"{target} {value.malware or 'a known IOC'} "
+         f"({value.confidence}% confidence)" for target, value in hits],
+        THREATFOX_TARGET_LIMIT, "targets", sep="; ")
     return Signal(name="threatfox", points=W_THREATFOX, detail=detail)
 
 
 def _kev_signal(report: Report) -> Signal | None:
     """Confirmed exploitation in the wild -- the strongest single statement
-    any Phase 4 source makes, which is why it outweighs the rest of them."""
+    any Phase 4 source makes, which is why it outweighs the rest of them.
+
+    known_exploited() caps nothing, and the CVE list it intersects against
+    the catalog is bounded only by Shodan's vulns across every contacted
+    host: fifty hosts at the realistic 137 CVEs each is a detail of over a
+    hundred thousand characters. KEV_CVE_LIMIT is the reason that is not
+    what an analyst reads.
+    """
     kev = report.kev
     if not kev.ok or not kev.value.entries:
         return None
     return Signal(name="kev", points=W_KEV,
                   detail="a contacted host exposes CVEs CISA lists as "
-                         "known-exploited: "
-                         + ", ".join(entry.cve for entry in kev.value.entries))
+                         "known-exploited: " + _capped_join(
+                             [entry.cve for entry in kev.value.entries],
+                             KEV_CVE_LIMIT, "CVEs"))
 
 
 def _internet_noise_signal(report: Report) -> Signal | None:
