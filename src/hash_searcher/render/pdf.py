@@ -1,17 +1,27 @@
 """The written report an analyst files.
 
 Two rules govern this module, and both were learned from a crash: every
-interpolated provider value goes through _x(), and every provider-supplied
-STRING that lands in a table cell goes through _fitted(). A table row
+interpolated provider value goes through _x(), and every table cell is
+built by _table(), which fits it to the column it lands in. A table row
 cannot split across pages, so an unbounded cell raises LayoutError after
 every provider has already succeeded.
 
-Rule 2 used to say "every provider-supplied LIST ... is capped", and that
-was the narrower half of it. Capping the list bounds how many items a cell
-names; it does not bound how long one of them is, and one 400-character
-"rule name" overflowed the row on its own. Nor is a character count the
-bound: what overflows is HEIGHT, and 624pt of it is 740 characters of one
-shape and 2669 of another (CELL_HEIGHT_LIMIT). _fitted measures instead.
+Rule 2 has been widened three times, and each time the widening was right
+and the application was partial. It said "every provider-supplied LIST is
+capped": capping a list bounds how many items a cell names, not how long
+one of them is, and one 400-character "rule name" overflowed the row on
+its own. It then said "every provider-supplied STRING goes through
+_fitted()", which was true of three tables out of five -- Censys and WHOIS
+built bare Paragraphs, and 280 Censys services, which is not even hostile
+input, raised. So the rule is no longer a thing to remember at a call
+site: _table is the only cell factory here, it requires the column widths,
+and it fits every body cell. A table added later gets the bound by
+construction, and test_every_table_the_report_builds_fits_an_oversized_
+provider_value enumerates the tables rather than listing them.
+
+Nor is a character count the bound: what overflows is HEIGHT, and the 630pt
+budget is 728 characters of one shape and 2760 of another
+(CELL_HEIGHT_LIMIT). _fitted measures instead.
 
 Neither rule can be checked by asserting on build_story's flowables. Only a
 real doc.build() raises either failure, and only a payload reportlab
@@ -53,13 +63,26 @@ def _x(value) -> str:
     return escape(str(value))
 
 
-#: The three tables' column widths, named because _fitted has to measure
-#: against exactly the number the Table lays out with. They drifted apart
-#: once already: the IP table's five columns sum to 460pt inside a 456pt
-#: frame.
+#: EVERY table's column widths, named because _table has to measure each
+#: cell against exactly the number the Table lays out with.
+#:
+#: All five live here, and that is the point. Three of them were promoted to
+#: constants when the height fit landed, precisely BECAUSE the fit needs
+#: them, while the Censys and WHOIS widths stayed inline literals at their
+#: call sites -- and those are exactly the two tables the fit was never
+#: applied to. The divergence was visible in this block before it was
+#: visible in the output. A table whose widths are not here cannot be built
+#: at all now: _table takes them as a required argument and is the only
+#: thing in this module that constructs a cell.
+#:
+#: They drifted apart once already in the other direction: the IP table's
+#: five columns summed to 460pt inside a 456pt frame.
 SIGNAL_WIDTHS = [50, 90, 250]
 IP_WIDTHS = [80, 55, 120, 95, 100]
 KEV_WIDTHS = [130, 200, 90]
+ABUSE_WIDTHS = [150, 100, 100]
+CENSYS_WIDTHS = [80, 120, 70, 60, 120]
+WHOIS_WIDTHS = [150, 70, 70, 150]
 
 #: reportlab's default cell padding, 6pt per side. Subtracted from a column
 #: width to get the width its Paragraph actually wraps in, and from the
@@ -68,29 +91,65 @@ CELL_PADDING = 6
 
 #: The real bound on a table cell, in points of rendered height.
 #:
-#: A character count is not one. Bisected against a real write_pdf with the
-#: character backstop disabled, every content shape crossed the frame at the
-#: SAME wrapped height -- 624.0pt, to the point -- while the character count
-#: that reaches it varies by 3.6x:
+#: A character count is not one. Measured in a 250pt column
+#: (SIGNAL_WIDTHS[2]), these are the longest strings of each shape that
+#: still fit -- every payload quoted, because a number whose input is only
+#: described cannot be re-derived:
 #:
-#:     ("W" * 13 + " ")            740      ", ".join CVE ids     1678
-#:     ("W" * 10 + " ")           1149      ", ".join YARA names  2128
-#:     "W" * n                    1301      ", ".join IPs         2389
-#:     ALL CAPS PROSE             1914      lowercase prose       2669
+#:     ("W" * 13 + " ") * n                          728
+#:     ("W" * 10 + " ") * n                         1144
+#:     "W" * n                                      1300
+#:     ", ".join(f"CVE-2021-{i:05d}")               1662
+#:     ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
+#:     ", ".join(f"198.51.100.{i % 256}")           2384
+#:     "THE QUICK BROWN FOX " * n                   1820
+#:     "the quick brown fox " * n                   2760
 #:
-#: That is why DETAIL_CHAR_LIMIT = 1200 was not a bound: against the first
-#: shape it truncated to ~1276 characters and the TRUNCATED string still
-#: raised LayoutError. Any single number of characters is either too small
-#: for prose or too large for wide capitals, because it is a proxy for a
-#: width the font decides.
+#: A 3.8x spread against one crossing height, and independent bisects across
+#: 8 shapes x 5 geometries put the crossing at the same height every time
+#: while the character count spanned 12x. That is why DETAIL_CHAR_LIMIT =
+#: 1200 was not a bound: against the first shape it truncated to ~1276
+#: characters and the TRUNCATED string still raised LayoutError. Any single
+#: number of characters is either too small for prose or too large for wide
+#: capitals, because it is a proxy for a width the font decides.
 #:
-#: 624 is where the measurement puts the frame: letter is 792pt, the
-#: SimpleDocTemplate margins write_pdf accepts take 144, the frame's padding
-#: 12, and a cell's own padding 6 top and 6 bottom. 600 keeps two lines of
-#: 12pt leading in hand against a style or margin change, and costs nothing
-#: real -- the largest detail today, internet_noise at ~808 characters of
-#: IP list, wraps to about 210pt.
+#: Where the frame puts the budget: letter is 792pt, the SimpleDocTemplate
+#: margins write_pdf accepts take 72 top and 72 bottom, and the Frame's own
+#: padding another 6 and 6 -- 636pt of room for a flowable, and 636 is the
+#: number reportlab compares a row against ("tallest row 654 ... too
+#: large"). A row is its Paragraph plus reportlab's VERTICAL cell padding,
+#: which is 3 top and 3 bottom (Table.topPadding/bottomPadding), NOT the 6
+#: of CELL_PADDING above -- only left and right are 6. So the Paragraph
+#: budget is 636 - 6 = 630, confirmed by bisection: a 630pt row lays out and
+#: the next step, 654, does not. (624 stood here before, reached by
+#: subtracting 6 top and 6 bottom. It is the largest multiple of the 12pt
+#: leading below 630, so it is what a bisection observes -- right answer,
+#: wrong arithmetic, and it would mislead anyone re-deriving this after a
+#: style change.)
+#:
+#: 600 keeps two lines of 12pt leading in hand against a style or margin
+#: change, and costs nothing real -- the largest detail today,
+#: internet_noise at ~808 characters of IP list, wraps to about 210pt.
 CELL_HEIGHT_LIMIT = 600
+
+#: An absolute ceiling on how much text the height fit will ever MEASURE.
+#:
+#: _fitted binary-searches for the longest prefix that fits, but its FIRST
+#: measurement was the whole string, and only the signal detail arrives
+#: pre-capped (DETAIL_CHAR_LIMIT). Every other cell handed it the provider's
+#: string unbounded, so a 200,000-character GreyNoise name cost 1.8s of
+#: wrapping before the search could narrow anything, and 2M cost 42s -- for
+#: a cell that was always going to be cut to a few hundred characters.
+#: Starting the search here instead makes the work independent of how much
+#: text the provider sent.
+#:
+#: It cannot truncate anything that would otherwise have fitted. The widest
+#: column a 456pt frame allows is 444pt of text, and at that width the
+#: narrowest glyph in this font (the apostrophe) reaches the 630pt budget at
+#: 12,064 characters; "i" and "l" at 10,348, "." at 8,268, "W" at 2,444.
+#: 20,000 is above all of them, and _shortened states the untruncated total
+#: either way.
+FIT_CHAR_CEILING = 20000
 
 #: Hard ceiling on any one signal's detail before it becomes a table cell.
 #:
@@ -121,8 +180,13 @@ CELL_HEIGHT_LIMIT = 600
 #: in the JSON report.
 DETAIL_CHAR_LIMIT = 1200
 
-#: How many KEV entries the table below prints, out of a reachable 6850 --
-#: IOC_LIMIT contacted hosts at the 120-137 CVEs _cve_cell calls realistic.
+#: How many KEV entries the table below prints, against an upper bound of
+#: 6850 -- IOC_LIMIT contacted hosts at the 120-137 CVEs _cve_cell calls
+#: realistic. NOT a reachable count: known_exploited (analysis/kev.py)
+#: de-duplicates those CVEs into a set and intersects it with CISA's
+#: catalog, ~1,300 entries, so the true maximum is min(unique observed
+#: CVEs, catalog size). 6850 errs high, which is the right direction for a
+#: bound and the wrong word for what it is.
 #:
 #: This one is not a crash bound either, and for the opposite reason to
 #: DETAIL_CHAR_LIMIT: a many-row table splits across pages perfectly well,
@@ -171,8 +235,15 @@ def _fitted(text: str, width: float, char_limit: int | None = None) -> Paragraph
     character of ink -- and truncating the RAW text before escaping is
     equally deliberate, since cutting an escaped string can leave a
     half-written entity for the parser.
+
+    `char_limit` is a READING cap the caller wants applied first;
+    FIT_CHAR_CEILING is the ceiling that applies when there is none, so the
+    first measurement is never the whole of a 200,000-character provider
+    string. Neither can shorten a cell that would have fitted.
     """
-    keep = len(text) if char_limit is None else min(len(text), char_limit)
+    keep = min(len(text), FIT_CHAR_CEILING)
+    if char_limit is not None:
+        keep = min(keep, char_limit)
     if _cell_height(_shortened(text, keep), width) <= CELL_HEIGHT_LIMIT:
         return Paragraph(_x(_shortened(text, keep)))
     low, high = 0, keep
@@ -191,9 +262,31 @@ def _cell_height(text: str, width: float) -> float:
                                     CELL_HEIGHT_LIMIT)[1]
 
 
-def _table(rows, widths=None) -> Table:
-    """One style, three tables. It was copy-pasted per table before."""
-    table = Table(rows, colWidths=widths)
+def _table(header: list[str], body, widths: list[int],
+           char_limits: dict[int, int] | None = None) -> Table:
+    """One style, one fitter, every table. The only cell factory in this module.
+
+    It was copy-pasted per table once; then the height fit was added per
+    table, and three of the five got it. Fitting HERE is what makes the
+    module docstring's second rule true by construction rather than by
+    everyone remembering: a table cannot be built without widths, and no
+    body cell can reach a Table without having been measured against the
+    column it lands in. `_fitted` is called nowhere else.
+
+    `header` is this module's own text -- short, fixed, and not a provider
+    value -- so it stays a bare string. `char_limits` maps a column index to
+    a reading cap applied before the height fit; only the verdict table's
+    "Why" column has one.
+
+    Every body cell is str()'d first: Censys's `asn` is an int, AbuseIPDB's
+    `reports` a count, and a Paragraph needs text either way.
+    """
+    limits = char_limits or {}
+    table = Table(
+        [header] + [[_fitted(str(cell), widths[column], limits.get(column))
+                     for column, cell in enumerate(row)]
+                    for row in body],
+        colWidths=widths)
     table.setStyle(TABLE_STYLE)
     return table
 
@@ -288,11 +381,9 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             f"Verdict: {_x(verdict.level)} (score {verdict.score})", styles['Heading1']))
         if verdict.signals:
             story.append(_table(
-                [["Points", "Signal", "Why"]]
-                + [[f"{s.points:+d}", _fitted(s.name, SIGNAL_WIDTHS[1]),
-                    _fitted(s.detail, SIGNAL_WIDTHS[2], DETAIL_CHAR_LIMIT)]
-                   for s in verdict.signals],
-                widths=SIGNAL_WIDTHS,
+                ["Points", "Signal", "Why"],
+                [[f"{s.points:+d}", s.name, s.detail] for s in verdict.signals],
+                SIGNAL_WIDTHS, char_limits={2: DETAIL_CHAR_LIMIT},
             ))
         else:
             story.append(Paragraph("No signals fired.", styles['Normal']))
@@ -326,33 +417,44 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("AbuseIPDB", styles['Heading1']))
+    # These were bare strings, on the reasoning that a cell which does not
+    # wrap cannot overflow by height. It can: reportlab gives a string cell
+    # one line per '\n' in it, so 200 newlines is a 2406pt row and a
+    # LayoutError -- measured. `ip` comes off the provider's `ipAddress` in
+    # analysis/ipdb.py with no validation, so that is reachable, not
+    # theoretical. Fitted like every other cell now.
     story.append(_table(
-        [["IP", "Confidence", "Reports"]]
-        + [[_x(i.ip), f"{_x(i.confidence)}%", _x(i.reports)] for i in report.ips.values()]
+        ["IP", "Confidence", "Reports"],
+        [[i.ip, f"{i.confidence}%", i.reports] for i in report.ips.values()],
+        ABUSE_WIDTHS,
     ))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("Censys Enrichment", styles['Heading1']))
     story.append(_table(
-        [["IP", "Org", "ASN", "Country", "Ports"]]
+        ["IP", "Org", "ASN", "Country", "Ports"],
         # An errored host used to render as a row of "None": the lookup failed
         # and the PDF showed it as a host Censys had nothing on. Say which.
-        + [[Paragraph(_x(h.ip)), Paragraph(_x(h.error)), "", "", ""] if h.error
-           else [Paragraph(_x(h.ip)), Paragraph(_x(h.org or "N/A")), Paragraph(_x(h.asn)),
-                 Paragraph(_x(h.country)),
-                 Paragraph(_x(", ".join(str(p) for p in h.ports)))]
-           for h in report.hosts],
-        widths=[80, 120, 70, 60, 120],
+        #
+        # `ports` is a plain provider list with no cap anywhere upstream
+        # (analysis/censys.py builds it from every service on the host), and
+        # 280 services overflowed the row on entirely ordinary input --
+        # Shodan's identical data went through the fit in the IP table and
+        # this did not. `org` is an unbounded AS name.
+        [[h.ip, h.error, "", "", ""] if h.error
+         else [h.ip, h.org or "N/A", h.asn, h.country,
+               ", ".join(str(p) for p in h.ports)]
+         for h in report.hosts],
+        CENSYS_WIDTHS,
     ))
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("WHOIS Data", styles['Heading1']))
     story.append(_table(
-        [["Domain", "Created", "Expires", "Registrar"]]
-        + [[Paragraph(_x(w.domain)), Paragraph(_x(w.created)),
-            Paragraph(_x(w.expires)), Paragraph(_x(w.registrar))]
-           for w in report.whois if not w.error],
-        widths=[150, 70, 70, 150],
+        ["Domain", "Created", "Expires", "Registrar"],
+        [[w.domain, w.created, w.expires, w.registrar]
+         for w in report.whois if not w.error],
+        WHOIS_WIDTHS,
     ))
     story.append(Spacer(1, 12))
 
@@ -405,16 +507,14 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
     if ip_rows:
         story.append(Paragraph("IP Intelligence", styles['Heading1']))
         story.append(_table(
-            [["IP", "Ports", "CVEs", "GreyNoise", "ThreatFox"]]
-            + [[_fitted(ip, IP_WIDTHS[0]),
-                _fitted(", ".join(str(p) for p in s.value.ports)
-                        if s and s.ok else "", IP_WIDTHS[1]),
-                _fitted(_cve_cell(s), IP_WIDTHS[2]),
-                _fitted(_greynoise_cell(report.greynoise.get(ip)), IP_WIDTHS[3]),
-                _fitted(_threatfox_cell(report.threatfox_ips.get(ip)),
-                        IP_WIDTHS[4])]
-               for ip, s in ip_rows],
-            widths=IP_WIDTHS,
+            ["IP", "Ports", "CVEs", "GreyNoise", "ThreatFox"],
+            [[ip,
+              ", ".join(str(p) for p in s.value.ports) if s and s.ok else "",
+              _cve_cell(s),
+              _greynoise_cell(report.greynoise.get(ip)),
+              _threatfox_cell(report.threatfox_ips.get(ip))]
+             for ip, s in ip_rows],
+            IP_WIDTHS,
         ))
         story.append(Spacer(1, 12))
 
@@ -422,7 +522,7 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         entries = report.kev.value.entries
         story.append(Paragraph("Known Exploited Vulnerabilities", styles['Heading1']))
         if len(entries) > KEV_ROW_LIMIT:
-            # One row per entry was unbounded, and the reachable maximum is
+            # One row per entry was unbounded, against an upper bound of
             # 6850 of them. See KEV_ROW_LIMIT: the total goes here so a
             # shortened table never reads as the whole answer, the same
             # bargain _cve_cell and _capped_join make.
@@ -431,13 +531,11 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
                 f"(showing {KEV_ROW_LIMIT}); the full list is in the JSON "
                 f"report.", styles['Normal']))
         story.append(_table(
-            [["CVE", "Product", "Added"]]
-            + [[_fitted(e.cve, KEV_WIDTHS[0]),
-                _fitted(" ".join(x for x in (e.vendor, e.product) if x),
-                        KEV_WIDTHS[1]),
-                _fitted(e.date_added or "N/A", KEV_WIDTHS[2])]
-               for e in entries[:KEV_ROW_LIMIT]],
-            widths=KEV_WIDTHS,
+            ["CVE", "Product", "Added"],
+            [[e.cve, " ".join(x for x in (e.vendor, e.product) if x),
+              e.date_added or "N/A"]
+             for e in entries[:KEV_ROW_LIMIT]],
+            KEV_WIDTHS,
         ))
         story.append(Spacer(1, 12))
 

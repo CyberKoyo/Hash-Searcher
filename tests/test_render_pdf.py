@@ -222,10 +222,13 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
             vulns=[f"CVE-2021-{c:05d}" for c in range(137)]), queried=True)
         for n in range(IOC_LIMIT)
     }
-    # 200 KEV entries, and DELIBERATELY not the reachable maximum.
-    # known_exploited() caps nothing, and the CVE list it intersects against
-    # the catalog is bounded only by Shodan's vulns across every contacted
-    # IP -- IOC_LIMIT hosts at the realistic 137 each is 6850. That maximum
+    # 200 KEV entries, and DELIBERATELY not the upper bound. known_exploited()
+    # caps nothing, and the CVE list it intersects against the catalog is
+    # bounded only by Shodan's vulns across every contacted IP -- IOC_LIMIT
+    # hosts at the realistic 137 each is 6850. That is a bound, not a
+    # reachable count: known_exploited de-duplicates those CVEs into a set
+    # and intersects it with CISA's ~1,300-entry catalog, so the true
+    # maximum is min(unique observed CVEs, catalog size). The bound
     # IS exercised, in test_the_pdf_backstop_never_fires_on_input_the_
     # puller_can_produce, which is where it belongs: the thing it proves is
     # that the KEV SIGNAL DETAIL stays bounded, and that costs nothing to
@@ -237,7 +240,7 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     # guards -- a many-row table splits across pages perfectly well -- but
     # layout time grew superlinearly with the row count: 200 entries 0.26s,
     # 1000 1.0s, 3000 3.6s, 6850 16.1s on the machine that first measured
-    # it. KEV_ROW_LIMIT is why the reachable maximum is affordable here
+    # it. KEV_ROW_LIMIT is why that bound is affordable here
     # now, and paying it is the point: 200 was a number chosen to keep the
     # suite fast, and this fixture is supposed to be the worst input the
     # puller can produce.
@@ -428,15 +431,19 @@ def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
         tmp_path, sample_report):
     """A character count is not a bound on a table row's HEIGHT.
 
-    Bisected against a real write_pdf with the character backstop disabled,
-    the "Why" column crosses the frame at a wrapped height of exactly 624pt
-    -- the same 624.0 for every shape tried, while the character count that
-    reaches it varies by 3.6x:
+    Measured against a real write_pdf with the character backstop disabled,
+    every shape crosses the frame at the same wrapped height while the
+    character count that reaches it varies by 3.8x. Each payload is quoted,
+    because a number whose input is only described cannot be re-derived:
 
-        ("W" * 13 + " ")            740      ", ".join CVE ids     1678
-        ("W" * 10 + " ")           1149      ", ".join YARA names  2128
-        "W" * n                    1301      ", ".join IPs         2389
-        ALL CAPS PROSE             1914      lowercase prose       2669
+        ("W" * 13 + " ") * n                          728
+        ("W" * 10 + " ") * n                         1144
+        "W" * n                                      1300
+        ", ".join(f"CVE-2021-{i:05d}")               1662
+        ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
+        ", ".join(f"198.51.100.{i % 256}")           2384
+        "THE QUICK BROWN FOX " * n                   1820
+        "the quick brown fox " * n                   2760
 
     So DETAIL_CHAR_LIMIT = 1200 is not a crash bound at all: against the
     first of those shapes it truncated to ~1276 characters and the
@@ -447,15 +454,21 @@ def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
     """
     from hash_searcher.render.pdf import CELL_HEIGHT_LIMIT, write_pdf
 
-    detail = ("W" * 13 + " ") * 300          # 4200 characters, 5.7x the 740
+    detail = ("W" * 13 + " ") * 300          # 4200 characters, 5.8x the 728
     verdict = Verdict(level="MALICIOUS", score=10, signals=[
         Signal(name="yara", points=10, detail=detail)])
 
     # Hardcoded rather than derived from the frame: letter is 792pt tall,
-    # SimpleDocTemplate's default margins take 144, the frame's own padding
-    # 12, and a cell's padding 6 top and 6 bottom -- 624pt, which is exactly
-    # where every shape above crossed.
-    assert CELL_HEIGHT_LIMIT <= 624
+    # SimpleDocTemplate's default margins take 72 top and 72 bottom, and the
+    # Frame's own padding another 6 and 6, leaving 636pt for a flowable. A
+    # ROW is its Paragraph plus reportlab's vertical cell padding, which is
+    # 3 top and 3 bottom -- not the 6 of CELL_PADDING, which is horizontal
+    # only -- so the Paragraph budget is 636 - 6 = 630. Bisected: a 630pt
+    # row lays out and the next step, 654, does not. (This said 624 and
+    # derived it by subtracting 6 and 6. 624 is the largest multiple of the
+    # 12pt leading below 630, so it is what a bisection observes; the number
+    # was right and the arithmetic was not.)
+    assert CELL_HEIGHT_LIMIT <= 630
 
     path = write_pdf(sample_report, str(tmp_path / "wide.pdf"), verdict)
     assert open(path, "rb").read(5) == b"%PDF-"
@@ -487,7 +500,13 @@ def test_a_provider_string_in_the_ip_table_is_fitted_too(tmp_path, sample_report
 
 
 def test_the_kev_table_caps_its_rows_and_states_the_total(sample_report):
-    """One row per entry, uncapped, at a reachable 6850 entries.
+    """One row per entry, uncapped, against an upper bound of 6850 entries.
+
+    A bound, not a reachable count: known_exploited (analysis/kev.py)
+    de-duplicates the observed CVEs into a set and intersects it with CISA's
+    catalog of ~1,300, so the true maximum is min(unique observed CVEs,
+    catalog size). 6850 errs high, which is the right direction for a
+    fixture and the wrong word for what it is.
 
     That never raises -- a many-row table splits across pages -- but layout
     time grows superlinearly with the row count: measured on this machine,
@@ -520,3 +539,268 @@ def test_the_kev_table_caps_its_rows_and_states_the_total(sample_report):
     # 130 pages, which no reader of a filed report can use. The full list
     # stays in the JSON report either way.
     assert KEV_ROW_LIMIT <= 100
+
+
+#: The height a Table gets on a fresh page, in points, and the number
+#: reportlab compares its tallest row against before raising LayoutError.
+#: Hardcoded rather than read back off a SimpleDocTemplate: letter is 792pt,
+#: the default margins write_pdf accepts take 72 top and 72 bottom, and the
+#: Frame's own padding another 6 and 6. A row taller than this cannot be
+#: laid out anywhere, because a table row does not split across pages.
+FRAME_HEIGHT = 636
+
+#: Frame width, by the same arithmetic across the 612pt page: 612 - 72 - 72
+#: - 6 - 6. Only used to make the tables below wrap at a realistic width.
+FRAME_WIDTH = 456
+
+
+def _oversized_report(sample_report):
+    """A report in which every provider value a table can render is too big.
+
+    Deliberately built by field rather than by table: the test below
+    ENUMERATES the tables build_story produces, so a table added later is
+    covered the moment it renders any of these fields.
+
+    Every string here is 1008 characters of the widest shape measured -- a
+    13-W token crosses the 630pt row budget at 728 characters in the widest
+    column any of these tables has (250pt), so this is 1.4x over there and
+    far more in the 55pt one. Kept well below the 4200 the crash was
+    reported at because the height fit binary-searches and its cost tracks
+    the length it starts from; the caller checks that premise against the
+    live widths rather than trusting this comment.
+    """
+    from hash_searcher.models import (
+        CensysHost, GreyNoiseReport, IPReport, KEVEntry, KEVReport,
+        ShodanReport, SourceResult, ThreatFoxReport, WhoisRecord,
+    )
+
+    big = ("W" * 13 + " ") * 72
+    ip = "198.51.100.10"
+
+    sample_report.ips = {ip: IPReport(ip=big, confidence=big, reports=big)}
+    sample_report.hosts = [
+        CensysHost(ip=big, org=big, asn=big, country=big,
+                   ports=list(range(1, 121))),
+        CensysHost(ip=big, error=big),
+    ]
+    sample_report.whois = [WhoisRecord(domain=big, created=big, expires=big,
+                                       registrar=big)]
+    sample_report.shodan = {ip: SourceResult(value=ShodanReport(
+        ports=list(range(1, 121)),
+        vulns=[f"CVE-2021-{n:05d}" for n in range(300)]), queried=True)}
+    sample_report.greynoise = {ip: SourceResult(value=GreyNoiseReport(
+        seen=True, classification=big, name=big), queried=True)}
+    sample_report.threatfox_ips = {ip: SourceResult(value=ThreatFoxReport(
+        found=True, malware=big, confidence=95,
+        tags=[big[:60] for _ in range(50)]), queried=True)}
+    sample_report.kev = SourceResult(value=KEVReport(entries=[
+        KEVEntry(cve=big, vendor=big, product=big, date_added=big)]),
+        queried=True)
+
+    verdict = Verdict(level="MALICIOUS", score=99, signals=[
+        Signal(name=big, points=50, detail=big)])
+    return sample_report, verdict
+
+
+def test_every_table_the_report_builds_fits_an_oversized_provider_value(
+        tmp_path, sample_report):
+    """The bound is per TABLE, and three rounds of this fix covered a subset.
+
+    A4 capped ThreatFox's tags and missed the signal detail; A4b capped how
+    many items a detail names and missed how long one is; A4c fitted the
+    signal, IP and KEV tables and missed Censys and WHOIS -- each round
+    generalised the rule correctly and then applied it to some of the sites
+    the rule covers. So this asserts over every Table build_story emits
+    rather than over a list of them, and a table added later is covered
+    without anyone remembering to come back here.
+
+    Reproduced before the fix, from a real write_pdf:
+
+        Censys ports, 280 services  LayoutError <1 rows x 5 cols(tallest row 930)>
+        Censys org 4200 chars       LayoutError <1 rows x 5 cols(tallest row 4266)>
+        WHOIS registrar 4200 chars  LayoutError <1 rows x 4 cols(tallest row 3606)>
+
+    280 Censys services needs no hostile input at all: `ports` at
+    analysis/censys.py is a plain provider list with no cap, and 279 build
+    where 280 raise.
+    """
+    from hash_searcher.render.pdf import (
+        ABUSE_WIDTHS, CENSYS_WIDTHS, IP_WIDTHS, KEV_WIDTHS, SIGNAL_WIDTHS,
+        WHOIS_WIDTHS, _cell_height,
+    )
+
+    report, verdict = _oversized_report(sample_report)
+
+    # The fixture's own premise, checked rather than assumed: the payload
+    # must still overflow the WIDEST column any of these tables has, or a
+    # later width change quietly turns this into a test of nothing.
+    widest = max(w for widths in (SIGNAL_WIDTHS, IP_WIDTHS, KEV_WIDTHS,
+                                  ABUSE_WIDTHS, CENSYS_WIDTHS, WHOIS_WIDTHS)
+                 for w in widths)
+    assert _cell_height(verdict.signals[0].detail, widest) > FRAME_HEIGHT, (
+        f"the oversized payload fits in a {widest}pt column -- it is not "
+        f"oversized any more")
+
+    story = build_story(report, verdict)
+    tables = [f for f in story if isinstance(f, Table)]
+
+    # Five today: verdict signals, AbuseIPDB, Censys, WHOIS, IP intel, KEV.
+    assert len(tables) >= 5, "the fixture must actually reach every table"
+
+    def _header(table):
+        return " | ".join(str(c) for c in table._cellvalues[0])
+
+    # Snapshot the body cells BEFORE anything wraps: Table.wrap rewrites
+    # _cellvalues into its own _ExpandedCellTuple wrappers, and the
+    # structural half of this assertion is about what build_story put there.
+    bodies = {id(t): [list(row) for row in t._cellvalues[1:]] for t in tables}
+
+    for table in tables:
+        table.wrap(FRAME_WIDTH, FRAME_HEIGHT)
+        # _rowHeights is the exact quantity reportlab names in the
+        # LayoutError it raises ("tallest row 930"), which is why the
+        # assertion is made against it rather than against the total.
+        tallest = max(table._rowHeights)
+        assert tallest <= FRAME_HEIGHT, (
+            f"a row of the [{_header(table)}] table is {tallest}pt tall and "
+            f"cannot split across pages -- it will raise LayoutError")
+
+    # And the structural half: a cell that was never measured is a cell the
+    # height assertion above only happens to pass for, on this fixture.
+    for table in tables:
+        for row in bodies[id(table)]:
+            for cell in row:
+                assert isinstance(cell, Paragraph), (
+                    f"a body cell of the [{_header(table)}] table is a bare "
+                    f"{type(cell).__name__} -- it was not measured against "
+                    f"the column it lands in")
+
+    # And the real thing: only doc.build() raises the failure this guards.
+    path = write_pdf(report, str(tmp_path / "oversized.pdf"), verdict)
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_no_table_is_wider_than_the_page():
+    """The other half of the widths block, and it drifted once already: the
+    IP table's five columns summed to 460pt inside a 456pt frame.
+
+    Enumerated off the module rather than listed, for the same reason as the
+    test above -- a sixth table's widths are covered the moment they are
+    named here. A column wider than the frame does not raise, which is why
+    nothing caught it: reportlab draws the overflow off the edge of the
+    paper, and the fit then measures a cell against a width the reader never
+    gets.
+    """
+    from hash_searcher.render import pdf as pdf_module
+
+    blocks = {name: value for name, value in vars(pdf_module).items()
+              if name.endswith("_WIDTHS")}
+    assert len(blocks) >= 6, (
+        f"only {sorted(blocks)} -- a table's widths are defined somewhere "
+        f"other than the widths block")
+    for name, widths in blocks.items():
+        assert sum(widths) <= FRAME_WIDTH, (
+            f"{name} sums to {sum(widths)}pt in a {FRAME_WIDTH}pt frame")
+
+
+def test_the_censys_table_fits_a_host_with_many_services(tmp_path, sample_report):
+    """Censys `ports` is uncapped and needs no hostile provider to overflow.
+
+    analysis/censys.py builds it from every service on the host. Bisected
+    against a real write_pdf: 279 services lay out and 280 raise
+    `LayoutError: <Table 1 rows x 5 cols(tallest row 930)>`. Shodan's ports
+    go through the fitter in the IP table; Censys's identical data did not.
+    """
+    from hash_searcher.models import CensysHost
+
+    sample_report.hosts = [CensysHost(ip="198.51.100.10", org="Example AS",
+                                      asn=64496, country="NL",
+                                      ports=list(range(1, 281)))]
+    path = write_pdf(sample_report, str(tmp_path / "censys_ports.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_the_censys_table_fits_an_unbounded_org_name(tmp_path, sample_report):
+    """`org` is the AS name straight off the provider, with no bound at all.
+
+    Both branches of the Censys row are exercised: the error branch renders
+    `h.error`, which is provider text too and was equally unfitted.
+    """
+    from hash_searcher.models import CensysHost
+
+    big = ("W" * 13 + " ") * 300
+    sample_report.hosts = [
+        CensysHost(ip="198.51.100.10", org=big, asn=64496, country="NL",
+                   ports=[80]),
+        CensysHost(ip="198.51.100.11", error=big),
+    ]
+    path = write_pdf(sample_report, str(tmp_path / "censys_org.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_the_whois_table_fits_an_unbounded_registrar(tmp_path, sample_report):
+    """WHOIS is the fifth table, and `registrar` and `domain` are both raw
+    provider strings: 4200 characters of either raised
+    `LayoutError: <Table 1 rows x 4 cols(tallest row 3606)>`."""
+    from hash_searcher.models import WhoisRecord
+
+    big = ("W" * 13 + " ") * 300
+    sample_report.whois = [WhoisRecord(domain=big, created="2020-01-01",
+                                       expires="2027-01-01", registrar=big)]
+    path = write_pdf(sample_report, str(tmp_path / "whois.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_a_provider_value_carrying_newlines_cannot_overflow_a_row(
+        tmp_path, sample_report):
+    """A bare-string table cell is NOT safe just because it does not wrap.
+
+    reportlab splits a string cell on '\\n' and gives it one line per piece,
+    so 200 newlines is a 2406pt row and a LayoutError -- measured. The
+    AbuseIPDB table was left as bare strings on the reasoning that an
+    unwrapped cell cannot overflow by height; it can, and
+    `analysis/ipdb.py` takes `ip` straight from the provider's `ipAddress`
+    with no validation, so this is reachable rather than theoretical.
+    """
+    from hash_searcher.models import IPReport
+
+    newlines = "\n".join(f"line {n}" for n in range(200))
+    sample_report.ips = {"198.51.100.10": IPReport(
+        ip=newlines, confidence=newlines, reports=newlines)}
+    path = write_pdf(sample_report, str(tmp_path / "newlines.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_fitting_a_huge_string_never_measures_more_than_the_ceiling(
+        monkeypatch, sample_report):
+    """The height fit is a binary search, but its FIRST measurement was the
+    whole string.
+
+    Every call site except the signal detail passes no char_limit, so a
+    200,000-character GreyNoise name wrapped 200,000 characters before the
+    search could narrow anything -- 1.8s here, and 42s at 2M. The ceiling
+    makes the work independent of how much text the provider sent.
+
+    Asserted by recording what actually gets measured rather than by the
+    clock, which would be flaky. 20000 is a hardcoded ceiling, not one read
+    back off the constant: the widest column a 456pt frame allows is 444pt
+    of text, and the narrowest glyph in this font reaches the 630pt budget
+    at 12064 characters, so nothing that would otherwise have fitted is
+    lost.
+    """
+    from hash_searcher.render import pdf as pdf_module
+
+    assert pdf_module.FIT_CHAR_CEILING <= 20000
+
+    measured = []
+    real = pdf_module._cell_height
+    monkeypatch.setattr(pdf_module, "_cell_height",
+                        lambda text, width: measured.append(len(text)) or real(text, width))
+
+    cell = pdf_module._fitted("W" * 200_000, 250)
+    assert measured, "the fit must measure something"
+    assert max(measured) <= pdf_module.FIT_CHAR_CEILING + 200, (
+        f"the fit wrapped {max(measured)} characters; the ceiling is "
+        f"{pdf_module.FIT_CHAR_CEILING}")
+    assert "of 200000 characters" in cell.text, (
+        "a cell cut by the ceiling must still state the untruncated total")

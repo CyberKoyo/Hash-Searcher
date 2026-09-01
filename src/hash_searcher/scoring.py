@@ -58,23 +58,28 @@ SIGMA_CAP = 30
 # `-o report.pdf` after every provider has already succeeded (render/pdf.py's
 # module docstring, rule 2).
 #
-# How much text that column holds is NOT a character count. Bisected against
-# a real write_pdf, every content shape crossed the frame at the same
-# wrapped height -- 624pt -- and the character count that reaches it varies
-# by 3.6x with the shape:
+# How much text that column holds is NOT a character count. Measured in the
+# 250pt "Why" column, these are the longest strings of each shape that still
+# fit inside the 630pt a row has (render/pdf.py's CELL_HEIGHT_LIMIT carries
+# the arithmetic). Every payload is quoted, because a number whose input is
+# only described cannot be re-derived:
 #
-#     ("W" * 13 + " ")            740      ", ".join CVE ids     1678
-#     ("W" * 10 + " ")           1149      ", ".join YARA names  2128
-#     "W" * n                    1301      ", ".join IPs         2389
-#     ALL CAPS PROSE             1914      lowercase prose       2669
+#     ("W" * 13 + " ") * n                          728
+#     ("W" * 10 + " ") * n                         1144
+#     "W" * n                                      1300
+#     ", ".join(f"CVE-2021-{i:05d}")               1662
+#     ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
+#     ", ".join(f"198.51.100.{i % 256}")           2384
+#     "THE QUICK BROWN FOX " * n                   1820
+#     "the quick brown fox " * n                   2760
 #
 # So no character cap here can be the crash bound; render/pdf.py fits each
 # cell by measured height, which is a bound on the thing that overflows.
 # What these caps buy is honesty, and that is not a lesser job: the fit
-# truncates mid-string, and a KEV detail at the reachable maximum -- 50
-# contacted hosts at the 120-137 CVEs render/pdf.py's _cve_cell calls
-# realistic, 109,659 characters -- would otherwise reach the analyst as one
-# fragment. Capped here it names 12 CVEs and says there were 6850.
+# truncates mid-string, and a KEV detail at its upper bound -- 50 contacted
+# hosts at the 120-137 CVEs render/pdf.py's _cve_cell calls realistic,
+# 109,659 characters -- would otherwise reach the analyst as one fragment.
+# Capped here it names 12 CVEs and says how many there were.
 #
 # Two dimensions need capping, because a list is bounded only when both are:
 # how MANY items a detail names (the three limits below) and how long ONE
@@ -100,13 +105,24 @@ DETAIL_ITEM_LIMIT = 8
 #: gets the tightest cap of the three.
 THREATFOX_TARGET_LIMIT = 5
 
-#: And how long any ONE of those items may be. Real YARA rule names, sandbox
-#: names and malware families run to about forty characters, so this leaves
-#: every string real input produces untouched -- it exists for the provider
-#: that returns a 400-character "rule name", where capping the count alone
-#: bounds nothing. 80 rather than 40: the cap must not fire on the ordinary
-#: case, because an item shortened here is one the analyst cannot search
-#: for verbatim.
+#: And how long any ONE PROVIDER STRING may be. Real YARA rule names,
+#: sandbox names and malware families run to about forty characters, so this
+#: leaves every string real input produces untouched -- it exists for the
+#: provider that returns a 400-character "rule name", where capping the
+#: count alone bounds nothing. 80 rather than 40: the cap must not fire on
+#: the ordinary case, because an item shortened here is one the analyst
+#: cannot search for verbatim.
+#:
+#: "Provider string", not "join item", and the distinction is load-bearing
+#: at exactly one site. Four of the five details join provider strings
+#: directly, so the two are the same thing. _threatfox_signal joins CLAUSES
+#: it composed: "the contacted IP " plus an address plus " (100%
+#: confidence)" is 51 characters this repo wrote, which left a malware
+#: family 29 of the 80 -- and "the contacted IP 198.51.100.10
+#: Trojan.Win32.Emotet.Downloader (95% confidence)" is 78, two short of
+#: firing on an ordinary answer and cutting the confidence figure off the
+#: end. So that site caps each provider substring on its own and tells
+#: _capped_join not to measure the clause (cap_items=False).
 ITEM_CHAR_LIMIT = 80
 
 
@@ -116,7 +132,8 @@ ABUSE_CONFIDENCE = 75
 SUSPICIOUS_IMPORT_FLOOR = 3   # below this, one or two hits could be legitimate
 
 
-def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ") -> str:
+def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ",
+                 cap_items: bool = True) -> str:
     """A provider list, truncated at an ITEM boundary, stating its total.
 
     "137 CVEs (showing 12): CVE-..., CVE-..." -- the same shape and the same
@@ -130,8 +147,15 @@ def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ") -> st
     unreachable. The count is printed only when it exceeds `limit`, and
     every limit here is at least 5, so the number is never 1 -- the
     remainder form produced "and 1 more contacted IPs" at exactly six hits.
+
+    `cap_items=False` is for the one caller whose items are CLAUSES it
+    composed rather than strings a provider sent -- see ITEM_CHAR_LIMIT. It
+    turns off the length cap here because that caller has already applied it
+    to each provider substring, where the budget means something; it never
+    turns the cap off altogether.
     """
-    shown = sep.join(_capped_item(item) for item in items[:limit])
+    shown = sep.join(_capped_item(item) if cap_items else item
+                     for item in items[:limit])
     if len(items) <= limit:
         return shown
     return f"{len(items)} {noun} (showing {limit}): {shown}"
@@ -308,20 +332,28 @@ def _threatfox_signal(report: Report) -> Signal | None:
     The named targets are capped at THREATFOX_TARGET_LIMIT and the total
     stated -- see _capped_join: this detail is rendered into a PDF table
     cell whose row cannot split across pages.
+
+    The two PROVIDER strings in each clause -- the address and the family --
+    are capped one at a time, and the join is told not to measure the clause
+    (cap_items=False). Measured against the clause, ITEM_CHAR_LIMIT spent 51
+    of its 80 characters on wording this function wrote; see the constant.
     """
     hits = []
     if report.threatfox.ok and report.threatfox.value.found:
         hits.append(("this indicator", report.threatfox.value))
-    hits += [(f"the contacted IP {ip}", result.value)
+    # The address is a provider value too -- cli.py rebuilds threatfox_ips
+    # straight from a JSON file's keys -- so it gets its own ITEM_CHAR_LIMIT
+    # budget here rather than sharing one with the malware family below.
+    hits += [(f"the contacted IP {_capped_item(ip)}", result.value)
              for ip, result in report.threatfox_ips.items()
              if result.ok and result.value.found]
 
     if not hits:
         return None
     detail = "ThreatFox names " + _capped_join(
-        [f"{target} {value.malware or 'a known IOC'} "
+        [f"{target} {_capped_item(value.malware or 'a known IOC')} "
          f"({value.confidence}% confidence)" for target, value in hits],
-        THREATFOX_TARGET_LIMIT, "targets", sep="; ")
+        THREATFOX_TARGET_LIMIT, "targets", sep="; ", cap_items=False)
     return Signal(name="threatfox", points=W_THREATFOX, detail=detail)
 
 

@@ -781,3 +781,63 @@ def test_a_provider_string_of_ordinary_length_is_not_touched():
 
     detail = next(s for s in score(report).signals if s.name == "yara").detail
     assert detail == "crowdsourced YARA matched: " + ", ".join(rules)
+
+
+def test_the_threatfox_item_cap_is_measured_against_the_provider_string():
+    """ITEM_CHAR_LIMIT bounds how long ONE PROVIDER string may be. At four of
+    its five call sites the item IS the provider string; at this one it is a
+    whole clause this module composed, and most of the budget went on our
+    own scaffolding.
+
+    "the contacted IP " plus a max-length IPv4 plus " (100% confidence)" is
+    51 characters of text nobody outside this repo wrote, leaving a malware
+    family 29 of the 80. `"the contacted IP 198.51.100.10 "
+    "Trojan.Win32.Emotet.Downloader (95% confidence)"` is 78 characters --
+    two short of firing on an entirely ordinary answer, at which point the
+    analyst reads a family name cut mid-word and a lost confidence figure.
+
+    Each provider substring is measured on its own now, so the composed
+    clause may exceed 80 while neither thing ThreatFox actually said does.
+    """
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import ITEM_CHAR_LIMIT
+
+    family = "Trojan.Win32.Emotet.Downloader.Gen.Variant.B"   # 44 chars, real shape
+    assert len(family) <= ITEM_CHAR_LIMIT, "the provider string is not the long thing"
+
+    report = _report(vt=VTReport(found=True))
+    report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware=family, confidence=95),
+        queried=True)}
+
+    detail = next(s for s in score(report).signals if s.name == "threatfox").detail
+    assert family in detail, (
+        "the family name ThreatFox returned is 44 characters and must "
+        "survive whole")
+    assert "(95% confidence)" in detail, (
+        "the confidence figure is the tail the composed-item cap ate")
+    assert "chars)" not in detail, "nothing here was long enough to truncate"
+
+
+def test_an_unbounded_threatfox_target_is_still_capped():
+    """Dropping the cap on the composed clause must not drop it on the parts.
+
+    The keys of `threatfox_ips` are provider-supplied too -- cli.py rebuilds
+    the dict straight from a JSON file's keys -- so the address half of the
+    clause gets its own budget rather than none.
+    """
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.scoring import ITEM_CHAR_LIMIT
+
+    report = _report(vt=VTReport(found=True))
+    report.threatfox_ips = {"9" * 4000: SourceResult(
+        value=ThreatFoxReport(found=True, malware="E" * 4000, confidence=90),
+        queried=True)}
+
+    detail = next(s for s in score(report).signals if s.name == "threatfox").detail
+    assert "9" * (ITEM_CHAR_LIMIT + 1) not in detail
+    assert "E" * (ITEM_CHAR_LIMIT + 1) not in detail
+    # A hardcoded ceiling, not one computed from the limits it checks: two
+    # capped substrings, their two "(N of M chars)" suffixes, and this
+    # module's own wording cannot reach a quarter of DETAIL_CHAR_LIMIT.
+    assert len(detail) < 300
