@@ -867,14 +867,20 @@ def test_a_provider_supplied_number_in_a_detail_is_bounded_too():
     failure class's exact signature, and the TTY and the JSON report have no
     such backstop.
 
-    All three provider numbers a detail names are checked, not just the one
-    that regressed: AbuseIPDB's `abuseConfidenceScore` and OTX's pulse
-    `count` are taken off their payloads with no more validation than
-    ThreatFox's figure. Fixing the reported site and leaving its siblings is
-    the exact move five rounds of this failure have already made.
+    Every provider number a detail names is checked, not just the one that
+    regressed. AbuseIPDB's `abuseConfidenceScore` and OTX's pulse `count`
+    are taken off their payloads with no more validation than ThreatFox's
+    figure -- and VT's engine counts have LESS: analysis/vt.py:38-44 builds
+    Detection from a bare `stats.get(name, 0)`, so `malicious`, `suspicious`
+    and the `total` summed from them are provider integers with nothing
+    between the payload and the detail. The previous version of this
+    docstring said "all three provider numbers" while the fixture reached
+    three of six, which is how the round it documents shipped an all-clear
+    over eight uncapped sites. Fixing the reported site and leaving its
+    siblings is the exact move six rounds of this failure have already made.
     """
     from hash_searcher.models import (
-        OTXReport, IPReport, SourceResult, ThreatFoxReport,
+        Detection, OTXReport, IPReport, SourceResult, ThreatFoxReport,
     )
     from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
 
@@ -882,6 +888,7 @@ def test_a_provider_supplied_number_in_a_detail_is_bounded_too():
     assert len(str(huge)) == 4000, "json.loads has no integer width limit"
 
     report = _report(
+        vt=VTReport(found=True, detection=Detection(malicious=huge)),
         otx=OTXReport(recorded_instances=huge, has_pulses=True,
                       otx_responded=True),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=huge,
@@ -892,11 +899,11 @@ def test_a_provider_supplied_number_in_a_detail_is_bounded_too():
         queried=True)}
 
     details = {s.name: s.detail for s in score(report).signals}
-    assert {"threatfox", "abuseipdb", "otx"} <= set(details), (
+    assert {"threatfox", "abuseipdb", "otx", "detection"} <= set(details), (
         f"the fixture must reach every signal that names a number; got "
         f"{sorted(details)}")
 
-    for name in ("threatfox", "abuseipdb", "otx"):
+    for name in ("threatfox", "abuseipdb", "otx", "detection"):
         detail = details[name]
         assert "9" * (ITEM_CHAR_LIMIT + 1) not in detail, (
             f"the {name} detail carries an unbounded provider number")
@@ -914,11 +921,13 @@ def test_a_number_of_ordinary_size_is_printed_exactly():
     produces. A confidence score is 0-100 and a pulse count is a handful of
     digits; a cap that touched those would be a bug, not a bound."""
     from hash_searcher.models import (
-        OTXReport, IPReport, SourceResult, ThreatFoxReport,
+        Detection, OTXReport, IPReport, SourceResult, ThreatFoxReport,
     )
     from hash_searcher.scoring import score
 
     report = _report(
+        vt=VTReport(found=True,
+                    detection=Detection(malicious=48, undetected=24)),
         otx=OTXReport(recorded_instances=7, has_pulses=True, otx_responded=True),
         ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90,
                                        reports=1)})
@@ -934,3 +943,274 @@ def test_a_number_of_ordinary_size_is_printed_exactly():
     assert details["threatfox"] == ("ThreatFox names the contacted IP "
                                     "198.51.100.10 RedLine Stealer "
                                     "(95% confidence)")
+    # The detection detail is composed from Detection.malicious and
+    # Detection.total rather than from Detection.ratio, because ratio is a
+    # clause and ITEM_CHAR_LIMIT budgets values. This literal is the proof
+    # that the substitution is invisible; test_cli asserts the same text end
+    # to end.
+    assert details["detection"] == "48/72 engines flagged this file"
+
+
+def test_every_provider_string_a_detail_names_is_bounded_too():
+    """The other half of the same overclaim.
+
+    ITEM_CHAR_LIMIT said "every provider value a detail names goes through
+    _capped_item now" on the strength of three call sites. Four provider
+    STRINGS were interpolated raw at the time: VT's threat family
+    (analysis/vt.py:64, `families[0]`, straight off
+    popular_threat_classification), VT's signer (analysis/vt.py:93,
+    `signers.split(";")[0]`), MalwareBazaar's family (analysis/bazaar.py:47,
+    `entry.get("signature")`), and _internet_noise_signal's join of
+    report.greynoise's keys.
+
+    None of the four is validated anywhere on its path, and a 400-character
+    "rule name" is already the documented shape of this failure -- eight of
+    them made a 3409-character detail that raised LayoutError out of a real
+    write_pdf. The first three are checked here; the join has its own test
+    below, because it needed a second bound the other three do not.
+    """
+    from hash_searcher.models import (
+        BazaarReport, Signature, SourceResult, ThreatClass,
+    )
+    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+
+    huge = "W" * 4000
+    report = _report(vt=VTReport(
+        found=True,
+        threat=ThreatClass(label="trojan.x", family=huge),
+        signature=Signature(verified=True, signer=huge)))
+    report.bazaar = SourceResult(value=BazaarReport(found=True, family=huge),
+                                 queried=True)
+
+    details = {s.name: s.detail for s in score(report).signals}
+    assert {"family", "signed", "bazaar"} <= set(details), (
+        f"the fixture must reach every signal that names a provider string; "
+        f"got {sorted(details)}")
+
+    for name in ("family", "signed", "bazaar"):
+        detail = details[name]
+        assert "W" * (ITEM_CHAR_LIMIT + 1) not in detail, (
+            f"the {name} detail carries an unbounded provider string")
+        assert f"of {len(huge)} chars" in detail, (
+            f"the {name} detail shortened a string without saying so")
+        # A hardcoded ceiling, not one computed from the limits it checks.
+        assert len(detail) < 300, (
+            f"the {name} detail is {len(detail)} characters")
+
+
+def test_the_greynoise_join_is_capped_in_both_dimensions():
+    """The site the review that found the other seven did not name at all.
+
+    report.greynoise is keyed exactly as report.threatfox_ips is --
+    api/api_data_puller.py:326 `dict(zip(ips, greynoise_results))`, the same
+    `ips` list, so the same unvalidated IP-shaped strings; the ThreatFox
+    site already carries that argument in a comment. _internet_noise_signal
+    joined them with a bare `", ".join(noisy)`: no cap on how long one
+    address may be, and none on how many are named. It is the only one of
+    the six joined details that had neither, which is the whole reason a
+    list needs both.
+    """
+    from hash_searcher.models import GreyNoiseReport, SourceResult
+    from hash_searcher.scoring import (
+        DETAIL_ITEM_LIMIT, ITEM_CHAR_LIMIT, score,
+    )
+
+    huge = "9" * 4000
+    ips = [huge] + [f"198.51.100.{n}" for n in range(49)]
+    report = _report(vt=VTReport(found=True))
+    report.greynoise = {ip: SourceResult(
+        value=GreyNoiseReport(seen=True, classification="benign"),
+        queried=True) for ip in ips}
+
+    detail = next(s for s in score(report).signals
+                  if s.name == "internet_noise").detail
+    assert "9" * (ITEM_CHAR_LIMIT + 1) not in detail, (
+        "one GreyNoise address is unbounded")
+    assert f"{len(ips)} IPs (showing {DETAIL_ITEM_LIMIT}):" in detail, (
+        "the count of addresses is unbounded, and a truncated list that does "
+        "not state its total reads as the whole answer")
+    # A hardcoded ceiling, not one computed from the limits it checks: the
+    # uncapped form of this exact fixture is ~4700 characters.
+    assert len(detail) < 400, f"the detail is {len(detail)} characters"
+
+
+def test_an_ordinary_provider_string_in_a_detail_is_printed_exactly():
+    """The bound above must be invisible for every value real input makes.
+
+    A malware family, a certificate signer and an IPv4 address are all far
+    inside ITEM_CHAR_LIMIT, and two contacted IPs are far inside
+    DETAIL_ITEM_LIMIT; a cap that touched any of them would be a bug, not a
+    bound. Literals rather than expressions built from the limits, so
+    mutating a limit moves the code and not the expectation.
+    """
+    from hash_searcher.models import (
+        BazaarReport, GreyNoiseReport, Signature, SourceResult, ThreatClass,
+    )
+    from hash_searcher.scoring import score
+
+    report = _report(vt=VTReport(
+        found=True,
+        threat=ThreatClass(label="trojan.emotet", family="emotet"),
+        signature=Signature(verified=True, signer="Contoso Ltd")))
+    report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
+                                 queried=True)
+    report.greynoise = {ip: SourceResult(
+        value=GreyNoiseReport(seen=True, classification="benign"), queried=True)
+        for ip in ("198.51.100.10", "198.51.100.11")}
+
+    details = {s.name: s.detail for s in score(report).signals}
+    assert details["family"] == "VT names the family 'emotet'"
+    assert details["signed"] == "valid signature from Contoso Ltd"
+    assert details["bazaar"] == "MalwareBazaar holds this sample as Emotet"
+    assert details["internet_noise"] == (
+        "GreyNoise calls these contacted IPs benign internet background "
+        "noise: 198.51.100.10, 198.51.100.11")
+
+
+#: The dynamic parts a signal detail may interpolate without going through
+#: _capped_item or _capped_join, keyed by their `ast.unparse` form, each
+#: carrying the reason it needs neither. Every entry must still be reachable
+#: -- an unused one is a licence left behind for the next value to inherit,
+#: and the test below reddens on it.
+DETAIL_PARTS_NEEDING_NO_CAP = {
+    "len(report.vt.by_level('high'))":
+        "a count this module computed, not a number a provider sent",
+    "len(report.vt.by_level('medium'))":
+        "a count this module computed, same as the high one above",
+    "static.entropy.overall":
+        "a float static/entropy.py computed from the sample's own bytes",
+    "static.entropy.note":
+        "one of static/entropy.py's own literal notes (entropy.py:53), not "
+        "provider text",
+    "len(imports)":
+        "a count this module computed",
+    "', '.join(imports)":
+        "static/pe.py's suspicious() maps every name through the fixed "
+        "_LOOKUP and returns canonical names, so both dimensions of this "
+        "join are bounded by the literal SUSPICIOUS_IMPORTS set",
+    "target":
+        "a clause _threatfox_signal composed; the provider half of it went "
+        "through _capped_item where `hits` was built, which is the whole "
+        "point of that site's cap_items=False",
+}
+
+
+def _detail_leaves(node, assigns):
+    """The dynamic sub-expressions a `detail=` expression interpolates.
+
+    Returns [] for anything already bounded, so a leaf that comes back is a
+    provider value reaching a detail with nothing measuring it.
+    """
+    import ast
+
+    if isinstance(node, ast.Constant):
+        return []
+    if isinstance(node, ast.JoinedStr):
+        return [leaf for part in node.values
+                if isinstance(part, ast.FormattedValue)
+                for leaf in _detail_leaves(part.value, assigns)]
+    if isinstance(node, ast.BinOp):
+        return (_detail_leaves(node.left, assigns)
+                + _detail_leaves(node.right, assigns))
+    if isinstance(node, ast.IfExp):
+        return (_detail_leaves(node.body, assigns)
+                + _detail_leaves(node.orelse, assigns))
+    if isinstance(node, (ast.ListComp, ast.GeneratorExp)):
+        return _detail_leaves(node.elt, assigns)
+    if isinstance(node, ast.Name) and node.id in assigns:
+        return _detail_leaves(assigns[node.id], assigns)
+    if isinstance(node, ast.Call):
+        called = getattr(node.func, "id", None)
+        if called == "_capped_item":
+            return []                     # bounded, whatever went in
+        if called == "_capped_join":
+            capped = next((k.value for k in node.keywords
+                           if k.arg == "cap_items"), None)
+            if not (isinstance(capped, ast.Constant) and capped.value is False):
+                return []                 # every item goes through _capped_item
+            # This caller promised to cap the parts itself. Check that it did.
+            items = (node.args[0] if node.args else
+                     next(k.value for k in node.keywords if k.arg == "items"))
+            return _detail_leaves(items, assigns)
+    return [node]
+
+
+def test_every_provider_value_a_signal_detail_names_is_bounded():
+    """The completeness claim ITEM_CHAR_LIMIT makes, checked against source.
+
+    Six rounds of this fix generalised the rule correctly and then applied it
+    to a subset of the sites the rule covers. The round before this one
+    widened _capped_item from one call site to three, wrote "every provider
+    value a detail names goes through _capped_item now" into the module, and
+    left EIGHT interpolation sites uncapped: VT's malicious, suspicious and
+    total engine counts, the ratio composed from two of them, VT's threat
+    family, VT's signer, MalwareBazaar's family, and _internet_noise_signal's
+    join -- and the review that caught seven of those did not name the
+    eighth, which was the only one uncapped in both dimensions.
+
+    A prose count cannot carry that claim. It is a statement about fifteen
+    functions, it was written by the same change that falsified it, and it
+    sits in the exact place the next round reads to decide it need not look
+    further. So the claim is checked rather than asserted: each `_*_signal`
+    is parsed, every dynamic part of every `detail=` is walked through the
+    function's locals, its joins and its conditionals, and each leaf must be
+    a _capped_item, a _capped_join that caps its own items, or an entry in
+    DETAIL_PARTS_NEEDING_NO_CAP carrying the reason it needs neither.
+
+    Read source rather than run the scorer, for the reason round 2's
+    render/pdf.py guard reads source: a runtime test can only see the signals
+    its fixture makes fire, and it judges a detail by what the fixture put in
+    it. A signal added later that interpolates a raw provider value over a
+    field no fixture stresses passes every behavioural test in this file.
+
+    Nothing here can pass vacuously. The set of makers is compared against
+    SIGNALS itself rather than counted, at least sixteen `detail=`
+    expressions must be found, and an allowlist entry nothing matched is a
+    failure -- so a rename, an emptied file or a stale reason all redden.
+    """
+    import ast
+    import inspect
+
+    from hash_searcher import scoring
+
+    tree = ast.parse(inspect.getsource(scoring))
+
+    makers = {n.name: n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name.endswith("_signal")}
+    assert set(makers) == {f.__name__ for f in scoring.SIGNALS}, (
+        f"the signal makers in this module and the ones score() runs have "
+        f"drifted apart: {set(makers) ^ {f.__name__ for f in scoring.SIGNALS}}")
+
+    unmatched = dict(DETAIL_PARTS_NEEDING_NO_CAP)
+    details = []
+    for name, maker in makers.items():
+        assigns = {t.id: n.value for n in ast.walk(maker)
+                   if isinstance(n, ast.Assign)
+                   for t in n.targets if isinstance(t, ast.Name)}
+        for call in ast.walk(maker):
+            if not (isinstance(call, ast.Call)
+                    and getattr(call.func, "id", None) == "Signal"):
+                continue
+            detail = next((k.value for k in call.keywords if k.arg == "detail"),
+                          None)
+            assert detail is not None, (
+                f"{name} builds a Signal without a detail on line {call.lineno}")
+            details.append(detail)
+            for leaf in _detail_leaves(detail, assigns):
+                source = ast.unparse(leaf)
+                assert source in DETAIL_PARTS_NEEDING_NO_CAP, (
+                    f"{name} interpolates `{source}` into its detail with "
+                    f"nothing bounding it (line {getattr(leaf, 'lineno', '?')})."
+                    f" Route it through _capped_item, or add it to "
+                    f"DETAIL_PARTS_NEEDING_NO_CAP with the reason it needs no "
+                    f"cap -- see ITEM_CHAR_LIMIT")
+                unmatched.pop(source, None)
+
+    assert len(details) >= 16, (
+        f"only {len(details)} detail expressions found across "
+        f"{len(makers)} signal makers -- this walk stopped seeing them, so "
+        f"it is asserting nothing")
+    assert not unmatched, (
+        f"DETAIL_PARTS_NEEDING_NO_CAP names {sorted(unmatched)}, which no "
+        f"detail interpolates any more -- a licence left behind for the next "
+        f"value to inherit")

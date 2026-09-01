@@ -414,9 +414,13 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
 
 def test_a_normal_signal_detail_is_left_exactly_alone(sample_report):
     """The backstop must be invisible for every detail that renders today.
-    internet_noise at IOC_LIMIT reaches ~808 characters -- the largest any
-    real input produces now that the joined details are capped in
-    scoring.py -- and it may not acquire a truncation marker."""
+
+    This payload is an internet_noise detail at IOC_LIMIT as scoring.py used
+    to emit it, ~808 characters -- comfortably the largest thing that ever
+    reached this cell. scoring.py caps that join at DETAIL_ITEM_LIMIT now, so
+    50 addresses is no longer what real input produces; keeping the wider
+    payload here keeps the backstop tested against the wider input, and it
+    may not acquire a truncation marker."""
     from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
 
     detail = "GreyNoise calls these contacted IPs benign internet background noise: " \
@@ -752,6 +756,13 @@ def test_no_table_can_be_built_outside_the_cell_factory():
     its own prose, an import line names `Table` without calling it, and
     "inside _table" has to mean real containment rather than a line range.
 
+    The construction check matches by the bare name `Table`, so the import
+    is checked too. Adding `from reportlab.platypus import Table as Tbl`
+    ALONGSIDE the existing import leaves `constructions` at 1 while `Tbl(...)`
+    builds a table nothing here measures. Replacing the import rather than
+    adding to it already reddens -- constructions drops to 0 -- so it is the
+    second, alias-bearing import that has to be ruled out.
+
     The widths are checked here too, and that is not a duplicate of
     test_no_table_is_wider_than_the_page. That test enumerates module
     globals ending in `_WIDTHS`, so a section that declares its widths as a
@@ -784,6 +795,15 @@ def test_no_table_can_be_built_outside_the_cell_factory():
     from hash_searcher.render import pdf as pdf_module
 
     tree = ast.parse(inspect.getsource(pdf_module))
+
+    imported = [alias for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                for alias in node.names if alias.name == "Table"]
+    assert len(imported) == 1 and imported[0].asname is None, (
+        f"render/pdf.py imports Table as {[a.asname or a.name for a in imported]};"
+        f" exactly one unaliased import is what lets the construction check "
+        f"below match by the bare name -- a second name for the same class "
+        f"builds tables this test cannot see")
 
     factories = [n for n in ast.walk(tree)
                  if isinstance(n, ast.FunctionDef) and n.name == "_table"]
@@ -841,9 +861,13 @@ def test_no_table_can_be_built_outside_the_cell_factory():
                 and all(isinstance(c, ast.Constant) and isinstance(c.value, str)
                         for c in header.elts)), (
             f"the _table call on line {call.lineno} builds its header from "
-            f"something other than string literals -- header cells are the "
-            f"one thing _table does not fit, on the grounds that they are "
-            f"this module's own text")
+            f"something other than a list of string literals -- header cells "
+            f"are the one thing _table does not fit, on the grounds that they "
+            f"are this module's own text. A module-level constant "
+            f"(KEV_HEADER = ['CVE', 'Product', 'Added'], passed by name) is "
+            f"just as safe and is still rejected here: admitting it means "
+            f"resolving names to values, and that machinery costs more than "
+            f"writing the list at the call site. Inline the literals.")
 
 
 def test_the_censys_table_fits_a_host_with_many_services(tmp_path, sample_report):
