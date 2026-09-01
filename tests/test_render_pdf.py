@@ -436,14 +436,14 @@ def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
     character count that reaches it varies by 3.8x. Each payload is quoted,
     because a number whose input is only described cannot be re-derived:
 
-        ("W" * 13 + " ") * n                          728
-        ("W" * 10 + " ") * n                         1144
-        "W" * n                                      1300
-        ", ".join(f"CVE-2021-{i:05d}")               1662
-        ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
-        ", ".join(f"198.51.100.{i % 256}")           2384
-        "THE QUICK BROWN FOX " * n                   1820
-        "the quick brown fox " * n                   2760
+        ("W" * 13 + " ") * n                                           728
+        ("W" * 10 + " ") * n                                          1144
+        "W" * n                                                       1300
+        ", ".join(f"CVE-2021-{i:05d}" for i in range(n))               1662
+        ", ".join("APT28_Sofacy_Downloader_Stage2" for _ in range(n))  1662
+        ", ".join(f"198.51.100.{i % 256}" for i in range(n))           2384
+        "THE QUICK BROWN FOX " * n                                    1820
+        "the quick brown fox " * n                                    2760
 
     So DETAIL_CHAR_LIMIT = 1200 is not a crash bound at all: against the
     first of those shapes it truncated to ~1276 characters and the
@@ -464,10 +464,12 @@ def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
     # ROW is its Paragraph plus reportlab's vertical cell padding, which is
     # 3 top and 3 bottom -- not the 6 of CELL_PADDING, which is horizontal
     # only -- so the Paragraph budget is 636 - 6 = 630. Bisected: a 630pt
-    # row lays out and the next step, 654, does not. (This said 624 and
-    # derived it by subtracting 6 and 6. 624 is the largest multiple of the
-    # 12pt leading below 630, so it is what a bisection observes; the number
-    # was right and the arithmetic was not.)
+    # row (52 lines of 12pt leading) lays out and the next step, 642, does
+    # not. 654 is the SECOND failing step; it is quoted in this module only
+    # where it is quoting an observed message. (This said 624 and derived it
+    # by subtracting 6 and 6. 624 is the largest multiple of the 12pt
+    # leading below 630, so it is what a bisection observes; the number was
+    # right and the arithmetic was not.)
     assert CELL_HEIGHT_LIMIT <= 630
 
     path = write_pdf(sample_report, str(tmp_path / "wide.pdf"), verdict)
@@ -568,6 +570,9 @@ def _oversized_report(sample_report):
     reported at because the height fit binary-searches and its cost tracks
     the length it starts from; the caller checks that premise against the
     live widths rather than trusting this comment.
+
+    The one exception is the WHOIS domain, 1020 characters because it is
+    prefixed with a dot-bearing label; see the comment at that line.
     """
     from hash_searcher.models import (
         CensysHost, GreyNoiseReport, IPReport, KEVEntry, KEVReport,
@@ -583,7 +588,13 @@ def _oversized_report(sample_report):
                    ports=list(range(1, 121))),
         CensysHost(ip=big, error=big),
     ]
-    sample_report.whois = [WhoisRecord(domain=big, created=big, expires=big,
+    # "bad.example " prefixed rather than plain `big`: the WHOIS section is
+    # the one a guard would plausibly write about the SHAPE of a domain, and
+    # a payload with no dot in it lets `if "." in w.domain` skip this table
+    # without any test noticing. Twelve characters, and the string is still
+    # 1.4x over the widest column here.
+    sample_report.whois = [WhoisRecord(domain="bad.example " + big,
+                                       created=big, expires=big,
                                        registrar=big)]
     sample_report.shodan = {ip: SourceResult(value=ShodanReport(
         ports=list(range(1, 121)),
@@ -644,8 +655,18 @@ def test_every_table_the_report_builds_fits_an_oversized_provider_value(
     story = build_story(report, verdict)
     tables = [f for f in story if isinstance(f, Table)]
 
-    # Five today: verdict signals, AbuseIPDB, Censys, WHOIS, IP intel, KEV.
-    assert len(tables) >= 5, "the fixture must actually reach every table"
+    # Six today: verdict signals, AbuseIPDB, Censys, WHOIS, IP intel, KEV.
+    #
+    # This is the one guard whose job is "the fixture reaches every table",
+    # so it must not tolerate one dropping out. At >= 5 it did: unfit the
+    # WHOIS table and put its section behind a plausible guard the payload
+    # fails (`all("." in w.domain for w in report.whois)` -- the payload had
+    # no dot), and the whole suite stayed green while real input raised
+    # `LayoutError <Table 1 rows x 4 cols(tallest row 3606)>`. The same
+    # guard silently disarmed test_the_whois_table_fits_an_unbounded_
+    # registrar, whose payload had no dot either; both payloads carry one
+    # now. test_no_table_is_wider_than_the_page has always said >= 6.
+    assert len(tables) >= 6, "the fixture must actually reach every table"
 
     def _header(table):
         return " | ".join(str(c) for c in table._cellvalues[0])
@@ -703,6 +724,128 @@ def test_no_table_is_wider_than_the_page():
             f"{name} sums to {sum(widths)}pt in a {FRAME_WIDTH}pt frame")
 
 
+def test_no_table_can_be_built_outside_the_cell_factory():
+    """The fit is a property of _table. Only this makes that an invariant.
+
+    Every round of this fix generalised the rule correctly and then applied
+    it to a subset of the sites the rule covers. The round that made _table
+    the sole cell factory repeated the pattern one level up: it enumerated
+    the TABLES and left the FACTORY resting on convention. `Table(`
+    appearing exactly once, and `_fitted` having exactly one call site, were
+    both true and both unenforced.
+
+    That gap is not reachable from a runtime assertion, which is why this
+    test reads source. A test over build_story's flowables can only see the
+    tables the fixture actually reaches, and it judges a cell by what the
+    fixture put in it. Demonstrated in one edit: a section added to
+    build_story that constructs its own `Table` of `Paragraph(_x(t))` over
+    `report.otx.attack_techniques` passes
+    test_every_table_the_report_builds_fits_an_oversized_provider_value on
+    BOTH halves -- the cells are Paragraphs, and the oversized fixture
+    leaves that list at its 13-character `sample_report` default -- with the
+    full suite green, and `attack_techniques=[("W" * 13 + " ") * 300]` then
+    raises `LayoutError <Table 1 rows x 1 cols(tallest row 1206)>`. "No
+    other call site exists" is a claim about the code, so it is checked
+    against the code.
+
+    Parsed with `ast` rather than grepped: this module quotes `Table(` in
+    its own prose, an import line names `Table` without calling it, and
+    "inside _table" has to mean real containment rather than a line range.
+
+    The widths are checked here too, and that is not a duplicate of
+    test_no_table_is_wider_than_the_page. That test enumerates module
+    globals ending in `_WIDTHS`, so a section that declares its widths as a
+    function local is invisible to it -- and the single-`Table(` rule does
+    not make that moot, because such a section can call `_table` quite
+    happily, get every cell fitted, and still lay a row of columns summing
+    past the 456pt frame off the edge of the paper, with the fit measuring
+    each cell against a width the reader never gets. Requiring every
+    `_table` call to name a module-level `*_WIDTHS` makes that test's
+    enumeration complete rather than merely current.
+
+    The headers are checked for the same reason. `_table` fits every BODY
+    cell and passes `header` through untouched, deliberately -- it is this
+    module's own text, short and fixed. That is a property of the six call
+    sites, not of the signature, and it is the last unfitted path into a
+    table cell: one `f"Ports ({n})"` header built from a provider value
+    lands in a row that cannot split, with nothing measuring it. So every
+    header must be a list of string literals.
+
+    None of this can pass vacuously. Every count is asserted positively --
+    exactly one Table construction, exactly one `_fitted` call, at least six
+    `_table` calls, at least six widths blocks -- so an ast query that
+    matched nothing because `_table` was renamed, because the constructions
+    moved, or because the file was emptied, reddens rather than reporting
+    zero findings and calling that a pass.
+    """
+    import ast
+    import inspect
+
+    from hash_searcher.render import pdf as pdf_module
+
+    tree = ast.parse(inspect.getsource(pdf_module))
+
+    factories = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "_table"]
+    assert len(factories) == 1, (
+        "render/pdf.py defines no single _table factory -- the rule this "
+        "test enforces has no subject")
+    inside_factory = {id(node) for node in ast.walk(factories[0])}
+
+    def called(name):
+        return [n for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and name in (getattr(n.func, "id", None),
+                             getattr(n.func, "attr", None))]
+
+    constructions = called("Table")
+    assert len(constructions) == 1, (
+        f"render/pdf.py constructs Table at {len(constructions)} places; "
+        f"exactly one, inside _table, is what makes the fit unbypassable")
+    assert id(constructions[0]) in inside_factory, (
+        f"the Table on line {constructions[0].lineno} is built outside "
+        f"_table, so its cells were never measured against the column they "
+        f"land in -- see this module's rule 2")
+
+    fits = called("_fitted")
+    assert len(fits) == 1, (
+        f"_fitted has {len(fits)} call sites; the fit belongs to the "
+        f"factory, not to whoever remembers to ask for it")
+    assert id(fits[0]) in inside_factory, (
+        f"_fitted is called on line {fits[0].lineno}, outside _table -- a "
+        f"cell fitted at a call site is a cell the next call site forgets")
+
+    built = called("_table")
+    assert len(built) >= 6, (
+        f"only {len(built)} _table calls in render/pdf.py, and build_story "
+        f"emits six tables -- either a table stopped going through the "
+        f"factory or the factory was renamed out from under this test")
+
+    named_widths = {name for name in vars(pdf_module) if name.endswith("_WIDTHS")}
+    assert len(named_widths) >= 6, (
+        f"only {sorted(named_widths)} -- a table's widths are defined "
+        f"somewhere other than the widths block")
+    for call in built:
+        widths = (call.args[2] if len(call.args) > 2 else
+                  next((k.value for k in call.keywords if k.arg == "widths"), None))
+        assert isinstance(widths, ast.Name) and widths.id in named_widths, (
+            f"the _table call on line {call.lineno} passes widths that are "
+            f"not a module-level *_WIDTHS name, so "
+            f"test_no_table_is_wider_than_the_page cannot see them and the "
+            f"row may be laid out off the edge of the page")
+
+        header = (call.args[0] if call.args else
+                  next((k.value for k in call.keywords if k.arg == "header"), None))
+        assert (isinstance(header, ast.List)
+                and header.elts
+                and all(isinstance(c, ast.Constant) and isinstance(c.value, str)
+                        for c in header.elts)), (
+            f"the _table call on line {call.lineno} builds its header from "
+            f"something other than string literals -- header cells are the "
+            f"one thing _table does not fit, on the grounds that they are "
+            f"this module's own text")
+
+
 def test_the_censys_table_fits_a_host_with_many_services(tmp_path, sample_report):
     """Censys `ports` is uncapped and needs no hostile provider to overflow.
 
@@ -745,7 +888,11 @@ def test_the_whois_table_fits_an_unbounded_registrar(tmp_path, sample_report):
     from hash_searcher.models import WhoisRecord
 
     big = ("W" * 13 + " ") * 300
-    sample_report.whois = [WhoisRecord(domain=big, created="2020-01-01",
+    # The domain carries a dot for the reason the enumerating test's fixture
+    # does: a guard on domain shape must not be able to skip this table and
+    # leave the test passing on a section that no longer runs.
+    sample_report.whois = [WhoisRecord(domain="bad.example " + big,
+                                       created="2020-01-01",
                                        expires="2027-01-01", registrar=big)]
     path = write_pdf(sample_report, str(tmp_path / "whois.pdf"))
     assert open(path, "rb").read(5) == b"%PDF-"
@@ -756,15 +903,60 @@ def test_a_provider_value_carrying_newlines_cannot_overflow_a_row(
     """A bare-string table cell is NOT safe just because it does not wrap.
 
     reportlab splits a string cell on '\\n' and gives it one line per piece,
-    so 200 newlines is a 2406pt row and a LayoutError -- measured. The
-    AbuseIPDB table was left as bare strings on the reasoning that an
-    unwrapped cell cannot overflow by height; it can, and
-    `analysis/ipdb.py` takes `ip` straight from the provider's `ipAddress`
-    with no validation, so this is reachable rather than theoretical.
+    so the newlines alone set the row height. The AbuseIPDB table was left
+    as bare strings on the reasoning that an unwrapped cell cannot overflow
+    by height; it can, and `analysis/ipdb.py` takes `ip` straight from the
+    provider's `ipAddress` with no validation, so this is reachable rather
+    than theoretical.
+
+    The payload is sized so that ONLY the newlines overflow it. This test
+    used 200 lines, 1689 characters, which is over the budget on LENGTH as
+    well: flattened to spaces it still wrapped to 636pt in the 150pt column
+    against a 630pt row budget. It reddened correctly for "AbuseIPDB must be
+    fitted" and would have reddened identically had newlines been
+    irrelevant, so it did not pin the finding it was built around. Both
+    directions are asserted below instead, at 60 lines / 469 characters:
+
+        bare-string cell, newlines kept       726pt row   (frame is 636)
+        Paragraph, newlines -> spaces         180pt at 150pt, 288 at 100pt
+        Paragraph, newlines kept              the same 180 / 288 / 288
+
+    -- the third line being why the fix works at all: reportlab's mini-HTML
+    parser treats '\\n' as ordinary whitespace, so a fitted cell keeps every
+    character of this payload while a bare-string cell of the same text
+    cannot be laid out on any page.
     """
     from hash_searcher.models import IPReport
+    from hash_searcher.render.pdf import (
+        ABUSE_WIDTHS, CELL_HEIGHT_LIMIT, TABLE_STYLE, _cell_height, _fitted,
+    )
 
-    newlines = "\n".join(f"line {n}" for n in range(200))
+    newlines = "\n".join(f"line {n}" for n in range(60))
+    flattened = newlines.replace("\n", " ")
+
+    # Direction one: length is not what overflows this payload. Flattened,
+    # it fits every column of this table with most of the budget to spare,
+    # so nothing below can be explained by the string being too long.
+    for width in ABUSE_WIDTHS:
+        assert _cell_height(flattened, width) <= CELL_HEIGHT_LIMIT, (
+            f"the payload overflows a {width}pt column with its newlines "
+            f"already removed -- this test would pin length, not newlines")
+
+    # Direction two: the newlines alone put a bare-string cell past the
+    # frame, which is the pre-fix rendering and the crash being guarded.
+    bare = Table([["IP", "Confidence", "Reports"],
+                  [newlines, newlines, newlines]], colWidths=ABUSE_WIDTHS)
+    bare.setStyle(TABLE_STYLE)
+    bare.wrap(FRAME_WIDTH, FRAME_HEIGHT)
+    assert max(bare._rowHeights) > FRAME_HEIGHT, (
+        f"a bare-string row of this payload is {max(bare._rowHeights)}pt "
+        f"and fits the {FRAME_HEIGHT}pt frame -- the newlines are not "
+        f"overflowing anything and this test guards nothing")
+
+    # And the fitted cell keeps the whole thing: the newlines are harmless
+    # once the cell is a Paragraph, so the fit costs no text here.
+    assert "truncated" not in _fitted(newlines, ABUSE_WIDTHS[0]).text
+
     sample_report.ips = {"198.51.100.10": IPReport(
         ip=newlines, confidence=newlines, reports=newlines)}
     path = write_pdf(sample_report, str(tmp_path / "newlines.pdf"))

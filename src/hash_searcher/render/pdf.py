@@ -11,13 +11,22 @@ and the application was partial. It said "every provider-supplied LIST is
 capped": capping a list bounds how many items a cell names, not how long
 one of them is, and one 400-character "rule name" overflowed the row on
 its own. It then said "every provider-supplied STRING goes through
-_fitted()", which was true of three tables out of five -- Censys and WHOIS
-built bare Paragraphs, and 280 Censys services, which is not even hostile
-input, raised. So the rule is no longer a thing to remember at a call
-site: _table is the only cell factory here, it requires the column widths,
-and it fits every body cell. A table added later gets the bound by
-construction, and test_every_table_the_report_builds_fits_an_oversized_
-provider_value enumerates the tables rather than listing them.
+_fitted()", which was true of three tables out of SIX -- Censys and WHOIS
+built bare Paragraphs, AbuseIPDB built bare strings with no widths at all,
+and 280 Censys services, which is not even hostile input, raised. So the
+rule is no longer a thing to remember at a call site: _table is the only
+cell factory here, it requires the column widths, and it fits every body
+cell. A table added later gets the bound by construction, and
+test_every_table_the_report_builds_fits_an_oversized_provider_value
+enumerates the tables rather than listing them.
+
+Enumerating the tables is one level short of the rule, though, because a
+test can only enumerate the tables its fixture reaches. A section added
+here that builds its own Table over a field the fixture leaves at its
+default passes that test on both halves -- its cells ARE Paragraphs, and
+its column is never stressed -- and still raises on real input. So the
+FACTORY is pinned too, and from the source rather than from a run:
+test_no_table_can_be_built_outside_the_cell_factory.
 
 Nor is a character count the bound: what overflows is HEIGHT, and the 630pt
 budget is 728 characters of one shape and 2760 of another
@@ -66,14 +75,16 @@ def _x(value) -> str:
 #: EVERY table's column widths, named because _table has to measure each
 #: cell against exactly the number the Table lays out with.
 #:
-#: All five live here, and that is the point. Three of them were promoted to
+#: All six live here, and that is the point. Three of them were promoted to
 #: constants when the height fit landed, precisely BECAUSE the fit needs
 #: them, while the Censys and WHOIS widths stayed inline literals at their
-#: call sites -- and those are exactly the two tables the fit was never
-#: applied to. The divergence was visible in this block before it was
-#: visible in the output. A table whose widths are not here cannot be built
-#: at all now: _table takes them as a required argument and is the only
-#: thing in this module that constructs a cell.
+#: call sites and AbuseIPDB carried no widths at all -- and those are
+#: exactly the three tables the fit was never applied to. The divergence was
+#: visible in this block before it was visible in the output. A table whose
+#: widths are not here cannot be built at all now: _table takes them as a
+#: required argument and is the only thing in this module that constructs a
+#: cell, and test_no_table_can_be_built_outside_the_cell_factory reads the
+#: source to check that both of those stay true.
 #:
 #: They drifted apart once already in the other direction: the IP table's
 #: five columns summed to 460pt inside a 456pt frame.
@@ -96,14 +107,14 @@ CELL_PADDING = 6
 #: still fit -- every payload quoted, because a number whose input is only
 #: described cannot be re-derived:
 #:
-#:     ("W" * 13 + " ") * n                          728
-#:     ("W" * 10 + " ") * n                         1144
-#:     "W" * n                                      1300
-#:     ", ".join(f"CVE-2021-{i:05d}")               1662
-#:     ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
-#:     ", ".join(f"198.51.100.{i % 256}")           2384
-#:     "THE QUICK BROWN FOX " * n                   1820
-#:     "the quick brown fox " * n                   2760
+#:     ("W" * 13 + " ") * n                                           728
+#:     ("W" * 10 + " ") * n                                          1144
+#:     "W" * n                                                       1300
+#:     ", ".join(f"CVE-2021-{i:05d}" for i in range(n))               1662
+#:     ", ".join("APT28_Sofacy_Downloader_Stage2" for _ in range(n))  1662
+#:     ", ".join(f"198.51.100.{i % 256}" for i in range(n))           2384
+#:     "THE QUICK BROWN FOX " * n                                    1820
+#:     "the quick brown fox " * n                                    2760
 #:
 #: A 3.8x spread against one crossing height, and independent bisects across
 #: 8 shapes x 5 geometries put the crossing at the same height every time
@@ -120,12 +131,15 @@ CELL_PADDING = 6
 #: large"). A row is its Paragraph plus reportlab's VERTICAL cell padding,
 #: which is 3 top and 3 bottom (Table.topPadding/bottomPadding), NOT the 6
 #: of CELL_PADDING above -- only left and right are 6. So the Paragraph
-#: budget is 636 - 6 = 630, confirmed by bisection: a 630pt row lays out and
-#: the next step, 654, does not. (624 stood here before, reached by
-#: subtracting 6 top and 6 bottom. It is the largest multiple of the 12pt
-#: leading below 630, so it is what a bisection observes -- right answer,
-#: wrong arithmetic, and it would mislead anyone re-deriving this after a
-#: style change.)
+#: budget is 636 - 6 = 630, confirmed by bisection: a 630pt row -- 52 lines
+#: of 12pt leading -- lays out, and the next step, 642, does not. (654 is
+#: the SECOND failing step. It appears above only because it is what one
+#: observed message happened to say; it is not where the crossing is.)
+#:
+#: (624 stood here before, reached by subtracting 6 top and 6 bottom. It is
+#: the largest multiple of the 12pt leading below 630, so it is what a
+#: bisection observes -- right answer, wrong arithmetic, and it would
+#: mislead anyone re-deriving this after a style change.)
 #:
 #: 600 keeps two lines of 12pt leading in hand against a style or margin
 #: change, and costs nothing real -- the largest detail today,
@@ -267,7 +281,7 @@ def _table(header: list[str], body, widths: list[int],
     """One style, one fitter, every table. The only cell factory in this module.
 
     It was copy-pasted per table once; then the height fit was added per
-    table, and three of the five got it. Fitting HERE is what makes the
+    table, and three of the six got it. Fitting HERE is what makes the
     module docstring's second rule true by construction rather than by
     everyone remembering: a table cannot be built without widths, and no
     body cell can reach a Table without having been measured against the

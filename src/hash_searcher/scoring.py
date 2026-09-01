@@ -64,14 +64,14 @@ SIGMA_CAP = 30
 # the arithmetic). Every payload is quoted, because a number whose input is
 # only described cannot be re-derived:
 #
-#     ("W" * 13 + " ") * n                          728
-#     ("W" * 10 + " ") * n                         1144
-#     "W" * n                                      1300
-#     ", ".join(f"CVE-2021-{i:05d}")               1662
-#     ", ".join("APT28_Sofacy_Downloader_Stage2")  1662
-#     ", ".join(f"198.51.100.{i % 256}")           2384
-#     "THE QUICK BROWN FOX " * n                   1820
-#     "the quick brown fox " * n                   2760
+#     ("W" * 13 + " ") * n                                           728
+#     ("W" * 10 + " ") * n                                          1144
+#     "W" * n                                                       1300
+#     ", ".join(f"CVE-2021-{i:05d}" for i in range(n))               1662
+#     ", ".join("APT28_Sofacy_Downloader_Stage2" for _ in range(n))  1662
+#     ", ".join(f"198.51.100.{i % 256}" for i in range(n))           2384
+#     "THE QUICK BROWN FOX " * n                                    1820
+#     "the quick brown fox " * n                                    2760
 #
 # So no character cap here can be the crash bound; render/pdf.py fits each
 # cell by measured height, which is a bound on the thing that overflows.
@@ -105,7 +105,7 @@ DETAIL_ITEM_LIMIT = 8
 #: gets the tightest cap of the three.
 THREATFOX_TARGET_LIMIT = 5
 
-#: And how long any ONE PROVIDER STRING may be. Real YARA rule names,
+#: And how long any ONE PROVIDER VALUE may be. Real YARA rule names,
 #: sandbox names and malware families run to about forty characters, so this
 #: leaves every string real input produces untouched -- it exists for the
 #: provider that returns a 400-character "rule name", where capping the
@@ -123,6 +123,21 @@ THREATFOX_TARGET_LIMIT = 5
 #: firing on an ordinary answer and cutting the confidence figure off the
 #: end. So that site caps each provider substring on its own and tells
 #: _capped_join not to measure the clause (cap_items=False).
+#:
+#: "Value", not "string", and the word is load-bearing. Three details
+#: interpolate a provider-supplied NUMBER -- ThreatFox's confidence,
+#: AbuseIPDB's worst confidence, OTX's recorded instances -- and none of the
+#: three is range-checked where it is extracted: analysis/threatfox.py only
+#: isinstance-checks `confidence_level`, analysis/ipdb.py and analysis/otx.py
+#: take theirs straight off the payload, and json.loads yields
+#: arbitrary-precision ints. The ThreatFox figure was bounded here
+#: incidentally, back when the whole composed clause was measured against
+#: this limit; when the clause stopped being measured it silently stopped
+#: being bounded, which is this failure class's exact signature. Every
+#: provider value a detail names goes through _capped_item now, numbers
+#: included. The PDF cell cannot crash on one either way --
+#: CELL_HEIGHT_LIMIT is a layer below and bounds the row by height -- but
+#: the TTY and the JSON report have no such backstop.
 ITEM_CHAR_LIMIT = 80
 
 
@@ -161,8 +176,8 @@ def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ",
     return f"{len(items)} {noun} (showing {limit}): {shown}"
 
 
-def _capped_item(item: str) -> str:
-    """One provider string, bounded, stating its own untruncated length.
+def _capped_item(item: object) -> str:
+    """One provider value, bounded, stating its own untruncated length.
 
     The count cap above says how many items are named; this says how long
     one of them may be. Without it a list of eight is still unbounded text,
@@ -170,7 +185,16 @@ def _capped_item(item: str) -> str:
     LayoutError. The suffix follows the same rule as the join itself: what
     was dropped is stated, not silently lost, and the full name is in the
     JSON report.
+
+    It takes an `object` and str()s it, because not every provider value a
+    detail names is a string: three of them are numbers that arrive as
+    whatever json.loads made of them, unchecked (see ITEM_CHAR_LIMIT). One
+    bound for every provider value rather than a second constant for the
+    numeric ones -- two limits drift apart, which is how this module got
+    here, and 80 characters of digits is already far enough past absurd to
+    be a bound no real answer meets.
     """
+    item = str(item)
     if len(item) <= ITEM_CHAR_LIMIT:
         return item
     return (f"{item[:ITEM_CHAR_LIMIT].rstrip()}..."
@@ -245,7 +269,8 @@ def _otx_signal(report: Report) -> Signal | None:
         return None
     return Signal(name="otx", points=W_OTX_PULSE,
                   detail=f"OTX pulses reference this indicator "
-                         f"({report.otx.recorded_instances} recorded instances)")
+                         f"({_capped_item(report.otx.recorded_instances)} "
+                         f"recorded instances)")
 
 
 def _abuseipdb_signal(report: Report) -> Signal | None:
@@ -253,7 +278,8 @@ def _abuseipdb_signal(report: Report) -> Signal | None:
     if worst < ABUSE_CONFIDENCE:
         return None
     return Signal(name="abuseipdb", points=W_ABUSEIPDB,
-                  detail=f"a contacted IP has {worst}% AbuseIPDB confidence")
+                  detail=f"a contacted IP has {_capped_item(worst)}% "
+                         f"AbuseIPDB confidence")
 
 
 def _signed_signal(report: Report) -> Signal | None:
@@ -333,17 +359,26 @@ def _threatfox_signal(report: Report) -> Signal | None:
     stated -- see _capped_join: this detail is rendered into a PDF table
     cell whose row cannot split across pages.
 
-    The two PROVIDER strings in each clause -- the address and the family --
-    are capped one at a time, and the join is told not to measure the clause
-    (cap_items=False). Measured against the clause, ITEM_CHAR_LIMIT spent 51
-    of its 80 characters on wording this function wrote; see the constant.
+    All three PROVIDER values in each clause -- the address, the family and
+    the confidence figure -- are capped one at a time, and the join is told
+    not to measure the clause (cap_items=False). Measured against the
+    clause, ITEM_CHAR_LIMIT spent 51 of its 80 characters on wording this
+    function wrote; see the constant. The confidence figure is the one that
+    was bounded only by that discarded clause measurement, and so stopped
+    being bounded at all when it went.
     """
     hits = []
     if report.threatfox.ok and report.threatfox.value.found:
         hits.append(("this indicator", report.threatfox.value))
-    # The address is a provider value too -- cli.py rebuilds threatfox_ips
-    # straight from a JSON file's keys -- so it gets its own ITEM_CHAR_LIMIT
-    # budget here rather than sharing one with the malware family below.
+    # The address is a provider value too, and nothing anywhere on its path
+    # checks that it looks like an IP: api/api_data_puller.py keys the dict
+    # with dict(zip(ips, threatfox_ip_results)), where `ips` is
+    # _merge_indicators(contacted_ips(vt_data), extra_ips) -- VT's
+    # contacted_ips relationship plus the IP-shaped strings the static pass
+    # harvested out of the sample -- and cli.py rebuilds report.threatfox_ips
+    # from raw["threatfox_ips"], those same keys. So it gets its own
+    # ITEM_CHAR_LIMIT budget here rather than sharing one with the malware
+    # family below.
     hits += [(f"the contacted IP {_capped_item(ip)}", result.value)
              for ip, result in report.threatfox_ips.items()
              if result.ok and result.value.found]
@@ -352,7 +387,8 @@ def _threatfox_signal(report: Report) -> Signal | None:
         return None
     detail = "ThreatFox names " + _capped_join(
         [f"{target} {_capped_item(value.malware or 'a known IOC')} "
-         f"({value.confidence}% confidence)" for target, value in hits],
+         f"({_capped_item(value.confidence)}% confidence)"
+         for target, value in hits],
         THREATFOX_TARGET_LIMIT, "targets", sep="; ", cap_items=False)
     return Signal(name="threatfox", points=W_THREATFOX, detail=detail)
 

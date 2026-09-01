@@ -822,8 +822,13 @@ def test_the_threatfox_item_cap_is_measured_against_the_provider_string():
 def test_an_unbounded_threatfox_target_is_still_capped():
     """Dropping the cap on the composed clause must not drop it on the parts.
 
-    The keys of `threatfox_ips` are provider-supplied too -- cli.py rebuilds
-    the dict straight from a JSON file's keys -- so the address half of the
+    The keys of `threatfox_ips` are provider-supplied too, and nothing on
+    their path checks that they look like IPs: api/api_data_puller.py keys
+    the dict with `dict(zip(ips, threatfox_ip_results))`, where `ips` is
+    `_merge_indicators(contacted_ips(vt_data), extra_ips)` -- VT's
+    contacted_ips relationship plus the IP-shaped strings the static pass
+    harvested out of the sample -- and cli.py rebuilds report.threatfox_ips
+    from `raw["threatfox_ips"]`, those same keys. So the address half of the
     clause gets its own budget rather than none.
     """
     from hash_searcher.models import SourceResult, ThreatFoxReport
@@ -841,3 +846,91 @@ def test_an_unbounded_threatfox_target_is_still_capped():
     # capped substrings, their two "(N of M chars)" suffixes, and this
     # module's own wording cannot reach a quarter of DETAIL_CHAR_LIMIT.
     assert len(detail) < 300
+
+
+def test_a_provider_supplied_number_in_a_detail_is_bounded_too():
+    """A confidence figure was bounded by accident, and then it was not.
+
+    Before each provider substring got its own budget, _capped_join measured
+    the whole composed clause -- "the contacted IP X Y (N% confidence)" --
+    against ITEM_CHAR_LIMIT, which bounded the confidence figure inside it
+    incidentally. Capping the substrings and telling the join to stop
+    measuring the clause (cap_items=False) was the right fix, and it dropped
+    that incidental bound without anyone noticing: analysis/threatfox.py
+    only isinstance-checks `confidence_level`, and json.loads yields
+    arbitrary-precision ints, so `{value.confidence}%` was a provider value
+    interpolated into a detail with no bound anywhere.
+
+    The PDF cannot crash on it -- DETAIL_CHAR_LIMIT and render/pdf.py's
+    height fit are a layer below and bound the cell either way. But "a
+    substring that used to be bounded incidentally and now is not" is this
+    failure class's exact signature, and the TTY and the JSON report have no
+    such backstop.
+
+    All three provider numbers a detail names are checked, not just the one
+    that regressed: AbuseIPDB's `abuseConfidenceScore` and OTX's pulse
+    `count` are taken off their payloads with no more validation than
+    ThreatFox's figure. Fixing the reported site and leaving its siblings is
+    the exact move five rounds of this failure have already made.
+    """
+    from hash_searcher.models import (
+        OTXReport, IPReport, SourceResult, ThreatFoxReport,
+    )
+    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+
+    huge = int("9" * 4000)
+    assert len(str(huge)) == 4000, "json.loads has no integer width limit"
+
+    report = _report(
+        otx=OTXReport(recorded_instances=huge, has_pulses=True,
+                      otx_responded=True),
+        ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=huge,
+                                       reports=1)})
+    report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="RedLine Stealer",
+                              confidence=huge),
+        queried=True)}
+
+    details = {s.name: s.detail for s in score(report).signals}
+    assert {"threatfox", "abuseipdb", "otx"} <= set(details), (
+        f"the fixture must reach every signal that names a number; got "
+        f"{sorted(details)}")
+
+    for name in ("threatfox", "abuseipdb", "otx"):
+        detail = details[name]
+        assert "9" * (ITEM_CHAR_LIMIT + 1) not in detail, (
+            f"the {name} detail carries an unbounded provider number")
+        assert f"of {len(str(huge))} chars" in detail, (
+            f"the {name} detail shortened a number without saying so")
+        # A hardcoded ceiling, not one computed from the limits it checks:
+        # one capped number, its "(N of M chars)" suffix, and this module's
+        # own wording cannot reach a quarter of DETAIL_CHAR_LIMIT.
+        assert len(detail) < 300, (
+            f"the {name} detail is {len(detail)} characters")
+
+
+def test_a_number_of_ordinary_size_is_printed_exactly():
+    """The bound above must be invisible for every figure real input
+    produces. A confidence score is 0-100 and a pulse count is a handful of
+    digits; a cap that touched those would be a bug, not a bound."""
+    from hash_searcher.models import (
+        OTXReport, IPReport, SourceResult, ThreatFoxReport,
+    )
+    from hash_searcher.scoring import score
+
+    report = _report(
+        otx=OTXReport(recorded_instances=7, has_pulses=True, otx_responded=True),
+        ips={"198.51.100.10": IPReport(ip="198.51.100.10", confidence=90,
+                                       reports=1)})
+    report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(found=True, malware="RedLine Stealer",
+                              confidence=95),
+        queried=True)}
+
+    details = {s.name: s.detail for s in score(report).signals}
+    assert details["otx"] == ("OTX pulses reference this indicator "
+                              "(7 recorded instances)")
+    assert details["abuseipdb"] == "a contacted IP has 90% AbuseIPDB confidence"
+    assert details["threatfox"] == ("ThreatFox names the contacted IP "
+                                    "198.51.100.10 RedLine Stealer "
+                                    "(95% confidence)")
