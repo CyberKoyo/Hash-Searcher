@@ -57,30 +57,31 @@ def test_by_name_raises_lookup_error_not_stop_iteration():
         by_name("nope", _providers())
 
 
-async def test_fetch_censys_names_a_missing_registry_entry(monkeypatch):
+def test_by_name_raises_against_the_global_registry_default(monkeypatch):
     """The reason by_name exists. A bare next() over an import-bound
-    PROVIDERS cannot even see this patch, and when it does run dry inside a
-    coroutine the interpreter rewrites the StopIteration into an opaque
-    'RuntimeError: coroutine raised StopIteration' that names nothing.
+    PROVIDERS cannot even see a patch to it, and when it does run dry the
+    interpreter rewrites the StopIteration into an opaque 'coroutine raised
+    StopIteration' (inside a coroutine caller) that names nothing.
 
-    Task A5 moved the by_name resolution out of fetch_censys/fetch_serial
-    and into their callers -- a caller-supplied pool must reach the code
-    that reads TTL and serial_delay, which meant fetch_censys could no
-    longer resolve its own provider from the global registry. This
-    reproduces the same failure at data_puller's actual call site: by_name
-    resolving "censys" against an emptied PROVIDERS, from inside a
-    coroutine, still surfaces a real LookupError rather than the opaque
-    StopIteration a bare next() would raise.
+    test_by_name_raises_lookup_error_not_stop_iteration pins this against
+    an explicit provider list; every real call site in this codebase
+    (data_puller resolving a provider from its own pool, or a bare
+    by_name(name) call with no override) instead falls through to the
+    default pool, PROVIDERS itself, which is import-bound and therefore
+    needs its own coverage rather than trusting the explicit-list case to
+    stand in for it.
+
+    This used to be async and call fetch_censys, when fetch_censys
+    resolved its own provider internally; Task A5 moved that resolution to
+    fetch_censys's caller (data_puller), so fetch_censys no longer calls
+    by_name at all and had nothing left to test here -- the two assertions
+    that mattered, that by_name(name) (no override) raises LookupError and
+    names "censys", are both still made below, directly, against the thing
+    that's actually responsible for them.
     """
-    from hash_searcher.api.api_data_puller import fetch_censys
-    from hash_searcher.api.registry import by_name
-    from hash_searcher.cache import ResponseCache
-
     monkeypatch.setattr("hash_searcher.api.registry.PROVIDERS", [])
-    with pytest.raises(LookupError, match="censys"):
-        provider = by_name("censys")
-        await fetch_censys(None, ["198.51.100.10"], ResponseCache(enabled=False),
-                           provider)
+    with pytest.raises(LookupError, match="no provider named 'censys'"):
+        by_name("censys")
 
 
 def test_available_sees_a_key_set_after_import(monkeypatch):

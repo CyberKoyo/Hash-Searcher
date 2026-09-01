@@ -6,6 +6,8 @@ or the network, so the tests are deterministic regardless of which API keys
 (if any) happen to be set on the machine running them.
 """
 
+import pytest
+
 from hash_searcher.api.api_data_puller import data_puller
 from hash_searcher.api.base_call import make_error
 from hash_searcher.api.registry import Provider, by_name
@@ -495,19 +497,20 @@ async def test_threatfox_is_asked_about_every_contacted_ip_not_just_the_sample(m
     assert result["threatfox"] == THREATFOX_HIT
 
 
-def _age_threatfox_rows(path, seconds: float) -> None:
-    """Backdate every cached ThreatFox row by `seconds`.
+def _backdate(path, provider: str, seconds: float) -> None:
+    """Push one provider's cached rows `seconds` into the past.
 
-    Reaching into the sqlite file rather than monkeypatching time.time:
-    the TTL is read inside _cached from the registry entry, and this proves
-    which number it read rather than restating the constant.
+    Reaching into the sqlite file rather than monkeypatching time.time: the
+    ttl is read inside _cached/fetch_serial from the Provider the caller
+    passed in, and this proves which number it actually read rather than
+    restating the constant.
     """
     import sqlite3
     import time
 
     conn = sqlite3.connect(path)
-    conn.execute("UPDATE responses SET stored_at = ? WHERE provider = 'threatfox'",
-                 (time.time() - seconds,))
+    conn.execute("UPDATE responses SET stored_at = ? WHERE provider = ?",
+                 (time.time() - seconds, provider))
     conn.commit()
     conn.close()
 
@@ -545,11 +548,11 @@ async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tm
     await run()
     assert sorted(calls) == sorted([file_hash, "198.51.100.10"])
 
-    _age_threatfox_rows(path, 1800)   # half an hour old
+    _backdate(path, "threatfox", 1800)   # half an hour old
     await run()
     assert len(calls) == 2, "a 30-minute-old ThreatFox answer is still fresh"
 
-    _age_threatfox_rows(path, 5400)   # ninety minutes old
+    _backdate(path, "threatfox", 5400)   # ninety minutes old
     await run()
     assert sorted(calls) == sorted(
         [file_hash, "198.51.100.10"] * 2), (
@@ -610,22 +613,35 @@ async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
     )
 
 
-def _backdate(path, provider: str, seconds: float) -> None:
-    """Push one provider's cached rows `seconds` into the past.
-
-    Reaching into the sqlite file rather than monkeypatching time.time, for
-    the same reason _age_threatfox_rows does: the ttl is read inside
-    _cached/fetch_serial, and this proves which number it read rather than
-    restating the constant.
+async def test_censys_is_reached_end_to_end_through_data_puller(monkeypatch):
+    """fetch_censys picked up a fourth argument (Task A5's `provider`), and
+    data_puller's censys_task line -- `fetch_censys(client, ips, cache,
+    by_name("censys", pool))` -- is the only place that constructs that
+    call. No other test puts "censys" in the patched pool, so that call
+    site went unexercised: a wrong arity there would only have surfaced as
+    a silently-swallowed extra argument to _Recorder.__call__(*args,
+    **kwargs) in the tests that do monkeypatch fetch_censys wholesale, or
+    not at all. This puts censys in the pool and lets it run for real (down
+    to the stubbed get_censys), so the 4-argument call is actually made.
     """
-    import sqlite3
-    import time
+    async def fake_vt(client, file_hash, **kwargs):
+        return FAKE_VT_DATA
 
-    conn = sqlite3.connect(path)
-    conn.execute("UPDATE responses SET stored_at = ? WHERE provider = ?",
-                 (time.time() - seconds, provider))
-    conn.commit()
-    conn.close()
+    calls = []
+
+    async def fake_censys(client, ip, **kwargs):
+        calls.append(ip)
+        return {"ip": ip, "services": []}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_censys", fake_censys)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal"), _provider("censys")])
+
+    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+
+    assert calls == ["198.51.100.10"]
+    assert result["censys"] == [{"ip": "198.51.100.10", "services": []}]
 
 
 async def test_fetch_serial_reads_ttl_from_the_passed_provider_not_the_registry(tmp_path):
@@ -671,8 +687,9 @@ async def test_cached_reads_ttl_from_the_passed_provider_not_the_registry(tmp_pa
     """Same defect, same fix, for _cached: ttl came from by_name(name)
     against PROVIDERS whenever the caller didn't pass one explicitly (only
     the CISA KEV catalog does, because it isn't a provider). A name absent
-    from PROVIDERS entirely proves _cached now reads cache_ttl off the
-    Provider object rather than looking one up itself.
+    from PROVIDERS entirely proves _cached now reads cache_ttl -- and the
+    cache namespace itself -- off the Provider object rather than looking
+    either up from a separately-passed name.
     """
     from hash_searcher.api.api_data_puller import _cached
 
@@ -687,13 +704,13 @@ async def test_cached_reads_ttl_from_the_passed_provider_not_the_registry(tmp_pa
 
     path = tmp_path / "c.db"
     cache = ResponseCache(path=path)
-    await _cached(cache, "fictional", "k", fetch, provider=provider)
+    await _cached(cache, "k", fetch, provider=provider)
     cache.close()
 
     _backdate(path, "fictional", 2)
 
     cache = ResponseCache(path=path)
-    await _cached(cache, "fictional", "k", fetch, provider=provider)
+    await _cached(cache, "k", fetch, provider=provider)
     cache.close()
 
     assert len(calls) == 2, (
@@ -747,3 +764,57 @@ async def test_data_puller_honors_the_patched_pools_cache_ttl_not_the_registrys(
         "the pool's 1s ttl had elapsed; the registry's 86400s default "
         "would have served this from cache instead"
     )
+
+
+async def test_fetch_serial_reads_serial_delay_from_the_passed_provider(monkeypatch):
+    """The brief's requirement names TTL *and* serial delay; every ttl test
+    above uses one indicator, so `called` never turns True before the loop
+    ends and the sleep branch never runs. Two indicators and a non-zero
+    serial_delay close that gap.
+
+    asyncio.sleep is stubbed rather than left real: fetch_serial's sleep is
+    NOT covered by conftest.py's no_backoff fixture, which only patches
+    base_call.asyncio.sleep -- a real non-zero serial_delay here would
+    really sleep in what is supposed to be an offline, fast suite.
+    """
+    from hash_searcher.api.api_data_puller import fetch_serial
+
+    provider = Provider(name="fictional", key_env=None, indicator_types=("ip",),
+                        fetch=None, cache_ttl=86400, serial_delay=5.0)
+
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.asyncio.sleep", fake_sleep)
+
+    async def fetch(client, indicator):
+        return {"ok": True}
+
+    cache = ResponseCache(enabled=False)
+    await fetch_serial(None, provider, fetch, ["203.0.113.1", "203.0.113.2"], cache)
+
+    assert slept == [5.0], (
+        "exactly one sleep, before the second call (never before the "
+        "first), at the passed provider's serial_delay -- not the "
+        "registry's, and not zero"
+    )
+
+
+async def test_cached_names_its_own_missing_argument():
+    """ALSO FIX: by_name exists specifically so a missing-provider bug
+    fails with a message that names the thing that's missing, rather than
+    an AttributeError three lines later that names neither the caller nor
+    the missing argument. _cached's own provider/namespace/ttl arguments
+    deserve the same treatment -- omitting all of the ways to supply a
+    namespace and a ttl must not silently fall through to a `None.cache_ttl`
+    crash.
+    """
+    from hash_searcher.api.api_data_puller import _cached
+
+    async def fetch():
+        return {"ok": True}
+
+    with pytest.raises(TypeError, match="_cached needs a `provider`"):
+        await _cached(ResponseCache(enabled=False), "k", fetch)
