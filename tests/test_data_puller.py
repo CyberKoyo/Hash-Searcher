@@ -19,15 +19,23 @@ FAKE_VT_DATA = {
 def _provider(name: str) -> Provider:
     """Keyless stand-in for a registered provider.
 
-    indicator_types comes from the real registry rather than an empty
-    tuple: data_puller selects by indicator type now, and a stub declaring
-    no types would be unreachable through for_indicator -- the exact
-    condition test_registry's
+    indicator_types, cache_ttl, and serial_delay all come from the real
+    registry entry rather than the Provider dataclass's defaults.
+    indicator_types, because data_puller selects by indicator type now,
+    and a stub declaring no types would be unreachable through
+    for_indicator -- the exact condition test_registry's
     test_every_registered_provider_declares_at_least_one_indicator_type
-    forbids in the registry itself.
+    forbids in the registry itself. cache_ttl and serial_delay, because
+    Task A5 made _cached/fetch_serial read those off the Provider a
+    caller's pool resolves rather than looking them up in the global
+    registry themselves -- before that fix this stub's un-set defaults
+    (86400s, 0.0s) went unnoticed only because the old code silently
+    ignored them and read the real registry entry instead.
     """
-    return Provider(name=name, key_env=None,
-                    indicator_types=by_name(name).indicator_types, fetch=None)
+    real = by_name(name)
+    return Provider(name=name, key_env=None, indicator_types=real.indicator_types,
+                    fetch=None, cache_ttl=real.cache_ttl,
+                    serial_delay=real.serial_delay)
 
 
 class _Recorder:
@@ -599,4 +607,143 @@ async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
     assert peak[0] == THREATFOX_CONCURRENCY, (
         f"{peak[0]} ThreatFox calls were in flight at once; an unbounded "
         f"gather peaks at {IOC_LIMIT}"
+    )
+
+
+def _backdate(path, provider: str, seconds: float) -> None:
+    """Push one provider's cached rows `seconds` into the past.
+
+    Reaching into the sqlite file rather than monkeypatching time.time, for
+    the same reason _age_threatfox_rows does: the ttl is read inside
+    _cached/fetch_serial, and this proves which number it read rather than
+    restating the constant.
+    """
+    import sqlite3
+    import time
+
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE responses SET stored_at = ? WHERE provider = ?",
+                 (time.time() - seconds, provider))
+    conn.commit()
+    conn.close()
+
+
+async def test_fetch_serial_reads_ttl_from_the_passed_provider_not_the_registry(tmp_path):
+    """Phase 4 review Minor #14: fetch_serial resolved its provider with
+    by_name(name) against the global PROVIDERS, so a caller-supplied pool's
+    cache_ttl was silently ignored -- every existing test hid this because
+    its stubs happened to reuse real provider names, which PROVIDERS also
+    has entries for. A provider named 'fictional', which PROVIDERS has no
+    entry for at all, proves the coupling is gone: fetch_serial must read
+    cache_ttl off the Provider object it is handed, not look one up.
+    """
+    from hash_searcher.api.api_data_puller import fetch_serial
+
+    provider = Provider(name="fictional", key_env=None, indicator_types=("ip",),
+                        fetch=None, cache_ttl=1)
+
+    calls = []
+
+    async def fetch(client, indicator):
+        calls.append(indicator)
+        return {"ok": True}
+
+    path = tmp_path / "c.db"
+    cache = ResponseCache(path=path)
+    await fetch_serial(None, provider, fetch, ["203.0.113.1"], cache)
+    cache.close()
+
+    # 2s past the stub's 1s ttl -- and nowhere near the 86400s default the
+    # registry would hand out for a name it actually recognized.
+    _backdate(path, "fictional", 2)
+
+    cache = ResponseCache(path=path)
+    await fetch_serial(None, provider, fetch, ["203.0.113.1"], cache)
+    cache.close()
+
+    assert calls == ["203.0.113.1", "203.0.113.1"], (
+        "the second call must have re-fetched -- the passed provider's 1s "
+        "ttl had elapsed"
+    )
+
+
+async def test_cached_reads_ttl_from_the_passed_provider_not_the_registry(tmp_path):
+    """Same defect, same fix, for _cached: ttl came from by_name(name)
+    against PROVIDERS whenever the caller didn't pass one explicitly (only
+    the CISA KEV catalog does, because it isn't a provider). A name absent
+    from PROVIDERS entirely proves _cached now reads cache_ttl off the
+    Provider object rather than looking one up itself.
+    """
+    from hash_searcher.api.api_data_puller import _cached
+
+    provider = Provider(name="fictional", key_env=None, indicator_types=("hash",),
+                        fetch=None, cache_ttl=1)
+
+    calls = []
+
+    async def fetch():
+        calls.append(True)
+        return {"ok": True}
+
+    path = tmp_path / "c.db"
+    cache = ResponseCache(path=path)
+    await _cached(cache, "fictional", "k", fetch, provider=provider)
+    cache.close()
+
+    _backdate(path, "fictional", 2)
+
+    cache = ResponseCache(path=path)
+    await _cached(cache, "fictional", "k", fetch, provider=provider)
+    cache.close()
+
+    assert len(calls) == 2, (
+        "the second call must have re-fetched -- the passed provider's 1s "
+        "ttl had elapsed"
+    )
+
+
+async def test_data_puller_honors_the_patched_pools_cache_ttl_not_the_registrys(monkeypatch, tmp_path):
+    """The binding requirement, exercised end to end: a caller's provider
+    pool must reach the code that reads cache TTL, not just the code that
+    decides whether a source runs at all.
+
+    data_puller's selection is still gated on the literal 'virustotal'
+    check (Task A5 doesn't touch that dispatch), so this stub has to reuse
+    that name -- but it overrides cache_ttl to 1s, far below the real
+    registry entry's 86400s default. If _cached ever fell back to
+    by_name('virustotal') against the global PROVIDERS instead of the
+    provider data_puller resolved from its own patched pool, a two-second-
+    old row would still read as fresh and the second call would never
+    happen.
+    """
+    calls = []
+
+    async def fake_vt(client, file_hash):
+        calls.append(file_hash)
+        return {"data": {"attributes": {}}}
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [Provider(name="virustotal", key_env=None,
+                          indicator_types=("hash",), fetch=None,
+                          cache_ttl=1)],
+    )
+
+    path = tmp_path / "c.db"
+    file_hash = "deadbeef" * 8
+
+    cache = ResponseCache(path=path)
+    await data_puller(file_hash, cache)
+    cache.close()
+
+    _backdate(path, "virustotal", 2)
+
+    cache = ResponseCache(path=path)
+    await data_puller(file_hash, cache)
+    cache.close()
+
+    assert calls == [file_hash, file_hash], (
+        "the pool's 1s ttl had elapsed; the registry's 86400s default "
+        "would have served this from cache instead"
     )

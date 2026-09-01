@@ -20,7 +20,7 @@ from .malwarebazaar import get_bazaar
 from .shodan_internetdb import get_shodan
 from .threatfox import THREATFOX_CONCURRENCY, get_threatfox
 from .base_call import is_error, make_error, tag_indicator
-from .registry import available, by_name, for_indicator
+from .registry import Provider, available, by_name, for_indicator
 from ..static.strings import IOC_LIMIT
 
 HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
@@ -73,17 +73,24 @@ async def _bounded_gather(limit: int, *coroutines):
     return list(await asyncio.gather(*(bounded(c) for c in coroutines)))
 
 
-async def _cached(cache, name: str, key: str, fetch, ttl: int | None = None):
+async def _cached(cache, name: str, key: str, fetch, ttl: int | None = None,
+                  provider: Provider | None = None):
     """Cache-through for a single-call provider.
 
     fetch is a zero-arg coroutine function so nothing is awaited on a hit --
     passing an already-created coroutine would fire the request regardless
     and leave an un-awaited coroutine warning behind.
 
-    ttl defaults to the registry entry's. It is passed explicitly only for
-    the CISA KEV catalog, which is cached like a provider but is not one.
+    ttl defaults to provider.cache_ttl -- the caller's own resolved
+    Provider, not a fresh by_name(name) lookup against the global registry,
+    so a pool a caller substituted for testing is honored here too, not
+    just for whether this call happens at all. name stays a separate
+    argument, and doesn't fall back to provider.name, because the one
+    caller that passes ttl explicitly -- the CISA KEV catalog -- is cached
+    like a provider but is not one, and has no Provider to pass.
     """
-    hit = cache.get(name, key, ttl=by_name(name).cache_ttl if ttl is None else ttl)
+    effective_ttl = provider.cache_ttl if ttl is None else ttl
+    hit = cache.get(name, key, ttl=effective_ttl)
     if hit is not None:
         print(f"Using cached {name} data for {key}")
         return hit
@@ -92,15 +99,22 @@ async def _cached(cache, name: str, key: str, fetch, ttl: int | None = None):
     return result
 
 
-async def fetch_serial(client, name, fetch, indicators, cache, label=None):
+async def fetch_serial(client, provider: Provider, fetch, indicators, cache, label=None):
     """One indicator at a time, with the provider's serial_delay between
     real requests; cache hits skip both the wait and the call.
 
     Censys, crt.sh, and GreyNoise all rate limit hard enough to need this.
     It was written for Censys alone and is now shared, because three copies
     of a sleep-between-requests loop is three chances to get it wrong.
+
+    Takes the resolved Provider itself, not its name -- every call site
+    has a real registry entry (unlike _cached's CISA KEV exception), so
+    there is nothing name alone would buy that provider.name doesn't, and
+    a second by_name(name) lookup against the global registry is exactly
+    the coupling that let a caller-supplied pool's ttl/serial_delay go
+    silently ignored.
     """
-    provider = by_name(name)
+    name = provider.name
     display = label or name
     results = []
     called = False
@@ -126,9 +140,9 @@ async def fetch_serial(client, name, fetch, indicators, cache, label=None):
     return results
 
 
-async def fetch_censys(client, ips, cache):
+async def fetch_censys(client, ips, cache, provider: Provider):
     """Serial with a gap between real requests; cache hits skip both."""
-    return await fetch_serial(client, "censys", get_censys, ips, cache,
+    return await fetch_serial(client, provider, get_censys, ips, cache,
                               label="Censys")
 
 
@@ -182,14 +196,16 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # same reason: all three need only the hash.
         otx_task = (
             asyncio.create_task(
-                _cached(cache, "otx", file_hash, lambda: get_otx(client, file_hash))
+                _cached(cache, "otx", file_hash, lambda: get_otx(client, file_hash),
+                       provider=by_name("otx", pool))
             )
             if "otx" in hash_sources else None
         )
         bazaar_task = (
             asyncio.create_task(
                 _cached(cache, "malwarebazaar", file_hash,
-                        lambda: get_bazaar(client, file_hash))
+                        lambda: get_bazaar(client, file_hash),
+                        provider=by_name("malwarebazaar", pool))
             )
             if "malwarebazaar" in hash_sources else None
         )
@@ -202,14 +218,16 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         threatfox_task = (
             asyncio.create_task(
                 _cached(cache, "threatfox", file_hash,
-                        lambda: get_threatfox(client, file_hash))
+                        lambda: get_threatfox(client, file_hash),
+                        provider=by_name("threatfox", pool))
             )
             if "threatfox" in hash_sources else None
         )
 
         if "virustotal" in hash_sources:
             vt_data = await _cached(
-                cache, "virustotal", file_hash, lambda: get_vt(client, file_hash)
+                cache, "virustotal", file_hash, lambda: get_vt(client, file_hash),
+                provider=by_name("virustotal", pool)
             )
             vt_ips = contacted_ips(vt_data)
         else:
@@ -219,7 +237,8 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
 
         ipdb_task = (
             asyncio.gather(*(
-                _cached(cache, "abuseipdb", ip, lambda ip=ip: get_ipdb(client, ip))
+                _cached(cache, "abuseipdb", ip, lambda ip=ip: get_ipdb(client, ip),
+                       provider=by_name("abuseipdb", pool))
                 for ip in ips
             ))
             if ips and "abuseipdb" in ip_sources else None
@@ -227,7 +246,8 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # create_task, not a bare coroutine: awaited last, an unscheduled
         # coroutine would not overlap OTX and AbuseIPDB the way gather did.
         censys_task = (
-            asyncio.create_task(fetch_censys(client, ips, cache))
+            asyncio.create_task(
+                fetch_censys(client, ips, cache, by_name("censys", pool)))
             if ips and "censys" in ip_sources else None
         )
         # Shodan InternetDB has no published per-minute limit, so it fans
@@ -235,15 +255,16 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # its declared serial_delay.
         shodan_task = (
             asyncio.gather(*(
-                _cached(cache, "shodan", ip, lambda ip=ip: get_shodan(client, ip))
+                _cached(cache, "shodan", ip, lambda ip=ip: get_shodan(client, ip),
+                       provider=by_name("shodan", pool))
                 for ip in ips
             ))
             if ips and "shodan" in ip_sources else None
         )
         greynoise_task = (
             asyncio.create_task(
-                fetch_serial(client, "greynoise", get_greynoise, ips, cache,
-                             label="GreyNoise")
+                fetch_serial(client, by_name("greynoise", pool), get_greynoise,
+                             ips, cache, label="GreyNoise")
             )
             if ips and "greynoise" in ip_sources else None
         )
@@ -256,7 +277,8 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         threatfox_ips_task = (
             asyncio.create_task(_bounded_gather(THREATFOX_CONCURRENCY, *(
                 _cached(cache, "threatfox", ip,
-                        lambda ip=ip: get_threatfox(client, ip))
+                        lambda ip=ip: get_threatfox(client, ip),
+                        provider=by_name("threatfox", pool))
                 for ip in ips
             )))
             if ips and "threatfox" in ip_sources else None
@@ -279,7 +301,8 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         rdap_results = (
             await _bounded_gather(RDAP_CONCURRENCY, *(
                 _cached(cache, "rdap", domain,
-                        lambda d=domain: get_rdap(client, d))
+                        lambda d=domain: get_rdap(client, d),
+                        provider=by_name("rdap", pool))
                 for domain in domains
             ))
             if domains and "rdap" in domain_sources else []
@@ -289,7 +312,7 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # CertReport, so domains past the first few add minutes of runtime
         # for names the report will not print.
         crtsh_results = (
-            await fetch_serial(client, "crtsh", get_crtsh,
+            await fetch_serial(client, by_name("crtsh", pool), get_crtsh,
                                domains[:CRTSH_DOMAIN_LIMIT], cache,
                                label="crt.sh")
             if domains and "crtsh" in domain_sources else []

@@ -61,13 +61,26 @@ async def test_fetch_censys_names_a_missing_registry_entry(monkeypatch):
     """The reason by_name exists. A bare next() over an import-bound
     PROVIDERS cannot even see this patch, and when it does run dry inside a
     coroutine the interpreter rewrites the StopIteration into an opaque
-    'RuntimeError: coroutine raised StopIteration' that names nothing."""
+    'RuntimeError: coroutine raised StopIteration' that names nothing.
+
+    Task A5 moved the by_name resolution out of fetch_censys/fetch_serial
+    and into their callers -- a caller-supplied pool must reach the code
+    that reads TTL and serial_delay, which meant fetch_censys could no
+    longer resolve its own provider from the global registry. This
+    reproduces the same failure at data_puller's actual call site: by_name
+    resolving "censys" against an emptied PROVIDERS, from inside a
+    coroutine, still surfaces a real LookupError rather than the opaque
+    StopIteration a bare next() would raise.
+    """
     from hash_searcher.api.api_data_puller import fetch_censys
+    from hash_searcher.api.registry import by_name
     from hash_searcher.cache import ResponseCache
 
     monkeypatch.setattr("hash_searcher.api.registry.PROVIDERS", [])
     with pytest.raises(LookupError, match="censys"):
-        await fetch_censys(None, ["198.51.100.10"], ResponseCache(enabled=False))
+        provider = by_name("censys")
+        await fetch_censys(None, ["198.51.100.10"], ResponseCache(enabled=False),
+                           provider)
 
 
 def test_available_sees_a_key_set_after_import(monkeypatch):
