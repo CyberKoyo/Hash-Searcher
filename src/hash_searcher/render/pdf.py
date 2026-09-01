@@ -2,9 +2,16 @@
 
 Two rules govern this module, and both were learned from a crash: every
 interpolated provider value goes through _x(), and every provider-supplied
-LIST that lands in a table cell is capped before it gets there. A table row
+STRING that lands in a table cell goes through _fitted(). A table row
 cannot split across pages, so an unbounded cell raises LayoutError after
 every provider has already succeeded.
+
+Rule 2 used to say "every provider-supplied LIST ... is capped", and that
+was the narrower half of it. Capping the list bounds how many items a cell
+names; it does not bound how long one of them is, and one 400-character
+"rule name" overflowed the row on its own. Nor is a character count the
+bound: what overflows is HEIGHT, and 624pt of it is 740 characters of one
+shape and 2669 of another (CELL_HEIGHT_LIMIT). _fitted measures instead.
 
 Neither rule can be checked by asserting on build_story's flowables. Only a
 real doc.build() raises either failure, and only a payload reportlab
@@ -46,45 +53,142 @@ def _x(value) -> str:
     return escape(str(value))
 
 
+#: The three tables' column widths, named because _fitted has to measure
+#: against exactly the number the Table lays out with. They drifted apart
+#: once already: the IP table's five columns sum to 460pt inside a 456pt
+#: frame.
+SIGNAL_WIDTHS = [50, 90, 250]
+IP_WIDTHS = [80, 55, 120, 95, 100]
+KEV_WIDTHS = [130, 200, 90]
+
+#: reportlab's default cell padding, 6pt per side. Subtracted from a column
+#: width to get the width its Paragraph actually wraps in, and from the
+#: frame height to get the height a cell may occupy.
+CELL_PADDING = 6
+
+#: The real bound on a table cell, in points of rendered height.
+#:
+#: A character count is not one. Bisected against a real write_pdf with the
+#: character backstop disabled, every content shape crossed the frame at the
+#: SAME wrapped height -- 624.0pt, to the point -- while the character count
+#: that reaches it varies by 3.6x:
+#:
+#:     ("W" * 13 + " ")            740      ", ".join CVE ids     1678
+#:     ("W" * 10 + " ")           1149      ", ".join YARA names  2128
+#:     "W" * n                    1301      ", ".join IPs         2389
+#:     ALL CAPS PROSE             1914      lowercase prose       2669
+#:
+#: That is why DETAIL_CHAR_LIMIT = 1200 was not a bound: against the first
+#: shape it truncated to ~1276 characters and the TRUNCATED string still
+#: raised LayoutError. Any single number of characters is either too small
+#: for prose or too large for wide capitals, because it is a proxy for a
+#: width the font decides.
+#:
+#: 624 is where the measurement puts the frame: letter is 792pt, the
+#: SimpleDocTemplate margins write_pdf accepts take 144, the frame's padding
+#: 12, and a cell's own padding 6 top and 6 bottom. 600 keeps two lines of
+#: 12pt leading in hand against a style or margin change, and costs nothing
+#: real -- the largest detail today, internet_noise at ~808 characters of
+#: IP list, wraps to about 210pt.
+CELL_HEIGHT_LIMIT = 600
+
 #: Hard ceiling on any one signal's detail before it becomes a table cell.
+#:
+#: Not the crash bound -- CELL_HEIGHT_LIMIT is, and it applies after this
+#: one. This is a READING bound: how much of a rationale a filed report asks
+#: an analyst to read before the rest becomes a JSON lookup. It also keeps
+#: the height fit's binary search off strings that are large for a reason
+#: nobody anticipated.
 #:
 #: The per-signal caps in scoring.py are the honest fix -- they truncate at
 #: an item boundary and state the total, so a shortened list still reads as
 #: a shortened list. All five joined details are capped there now
-#: (_capped_join): kev, yara, sandbox, yara_local and threatfox. This is the
-#: blunt last resort behind them, and it exists because the crash is a
-#: property of the CELL, not of any one signal -- a detail nobody
-#: anticipated, from a source added later, still cannot be allowed to take
-#: down `-o report.pdf` after every provider has succeeded.
+#: (_capped_join), in both dimensions: how many items, and how long one item
+#: may be. This is the blunt last resort behind them, and it exists because
+#: the crash is a property of the CELL, not of any one signal -- a detail
+#: nobody anticipated, from a source added later, still cannot be allowed to
+#: take down `-o report.pdf` after every provider has succeeded.
 #:
 #: It truncates mid-string, which is why it must stay a last resort. Before
 #: the source caps landed it was the ordinary rendering path for a KEV
 #: detail, which crosses this budget at 80 CVEs against the 120-137 for a
 #: single host that _cve_cell below calls realistic -- so an analyst read
 #: "...CVE-2021-00070, CVE ... (truncated)" on Tuesday input, and a fallback
-#: that fires routinely no longer signals that anything is wrong.
-#:
-#: The measured build threshold for this column is content-dependent, not
-#: one number. Bisected against a real write_pdf: 1664 characters of wide
-#: capitals, 1677 of CVE list, ~1770 of YARA rule names, ~2400-2500 of IP
-#: and threatfox text. 1677 is the figure that matters -- CVE content is the
-#: lowest of the shapes that actually occur, and it is what crosses first.
-#: 1200 plus the ~80-character truncation notice is 1280, a margin of 1.30x
-#: over that floor, not the ~2x the earlier "2445" figure implied. The
+#: that fires routinely no longer signals that anything is wrong. The
 #: largest detail real input produces today is internet_noise at ~808
 #: characters, which passes through untouched, and a truncated one says what
 #: it dropped rather than losing the tail silently. The full text is always
 #: in the JSON report.
 DETAIL_CHAR_LIMIT = 1200
 
+#: How many KEV entries the table below prints, out of a reachable 6850 --
+#: IOC_LIMIT contacted hosts at the 120-137 CVEs _cve_cell calls realistic.
+#:
+#: This one is not a crash bound either, and for the opposite reason to
+#: DETAIL_CHAR_LIMIT: a many-row table splits across pages perfectly well,
+#: so it never raised. It is a time and size bound. Layout cost grows
+#: superlinearly in the row count -- 200 entries 0.13s, 1000 0.65s, 3000
+#: 2.36s, 6850 6.82s for a 319 KiB PDF, and 11.4s on a slower machine --
+#: which is 130 pages of table nobody reads to the end of.
+#:
+#: 50 rather than the 12 of CVE_DISPLAY_LIMIT or the 8 of TAG_DISPLAY_LIMIT:
+#: those two are CELLS inside a row an eye has to take in at once, and this
+#: is a section of its own, where a page of rows is still usable. It is also
+#: IOC_LIMIT, one confirmed-exploited CVE per contacted host, which is
+#: already more than a triage report needs. The untruncated total is printed
+#: above the table and the full list is in the JSON report.
+KEV_ROW_LIMIT = 50
 
-def _detail_cell(detail: str) -> str:
-    """A signal's rationale, bounded. See DETAIL_CHAR_LIMIT."""
-    if len(detail) <= DETAIL_CHAR_LIMIT:
-        return detail
-    return (detail[:DETAIL_CHAR_LIMIT].rstrip()
-            + f" ... (truncated at {DETAIL_CHAR_LIMIT} "
-              f"of {len(detail)} characters; the full text is in the JSON report)")
+
+def _shortened(text: str, keep: int) -> str:
+    """`text` cut to `keep` characters, saying so and stating the total.
+
+    The same bargain scoring.py's _capped_join makes, one layer down and
+    without its item boundary: what was dropped is stated rather than
+    silently lost, and the reader recovers the rest without arithmetic.
+    """
+    if keep >= len(text):
+        return text
+    return (text[:keep].rstrip()
+            + f" ... (truncated at {keep} "
+              f"of {len(text)} characters; the full text is in the JSON report)")
+
+
+def _fitted(text: str, width: float, char_limit: int | None = None) -> Paragraph:
+    """A provider string as a table cell that cannot overflow the page.
+
+    This module's rule 2. A reportlab table row does not split across
+    pages, so a cell taller than the frame is a LayoutError raised after
+    every provider has already answered -- and neither the count caps in
+    scoring.py nor DETAIL_CHAR_LIMIT can prevent it, because the row
+    overflows by HEIGHT and both of those bound characters. See
+    CELL_HEIGHT_LIMIT for the measurements.
+
+    So the cell measures itself: wrap the text reportlab will actually
+    render, at the width the Table will actually give it, and if it is too
+    tall, binary-search the longest prefix that fits. Measuring the escaped
+    text is deliberate -- `&amp;` is five characters of markup and one
+    character of ink -- and truncating the RAW text before escaping is
+    equally deliberate, since cutting an escaped string can leave a
+    half-written entity for the parser.
+    """
+    keep = len(text) if char_limit is None else min(len(text), char_limit)
+    if _cell_height(_shortened(text, keep), width) <= CELL_HEIGHT_LIMIT:
+        return Paragraph(_x(_shortened(text, keep)))
+    low, high = 0, keep
+    while low < high:
+        mid = (low + high + 1) // 2
+        if _cell_height(_shortened(text, mid), width) <= CELL_HEIGHT_LIMIT:
+            low = mid
+        else:
+            high = mid - 1
+    return Paragraph(_x(_shortened(text, low)))
+
+
+def _cell_height(text: str, width: float) -> float:
+    """How tall this cell's Paragraph renders at this column width."""
+    return Paragraph(_x(text)).wrap(width - 2 * CELL_PADDING,
+                                    CELL_HEIGHT_LIMIT)[1]
 
 
 def _table(rows, widths=None) -> Table:
@@ -185,10 +289,10 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         if verdict.signals:
             story.append(_table(
                 [["Points", "Signal", "Why"]]
-                + [[f"{s.points:+d}", Paragraph(_x(s.name)),
-                    Paragraph(_x(_detail_cell(s.detail)))]
+                + [[f"{s.points:+d}", _fitted(s.name, SIGNAL_WIDTHS[1]),
+                    _fitted(s.detail, SIGNAL_WIDTHS[2], DETAIL_CHAR_LIMIT)]
                    for s in verdict.signals],
-                widths=[50, 90, 250],
+                widths=SIGNAL_WIDTHS,
             ))
         else:
             story.append(Paragraph("No signals fired.", styles['Normal']))
@@ -302,26 +406,38 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         story.append(Paragraph("IP Intelligence", styles['Heading1']))
         story.append(_table(
             [["IP", "Ports", "CVEs", "GreyNoise", "ThreatFox"]]
-            + [[Paragraph(_x(ip)),
-                Paragraph(_x(", ".join(str(p) for p in s.value.ports)
-                            if s and s.ok else "")),
-                Paragraph(_x(_cve_cell(s))),
-                Paragraph(_x(_greynoise_cell(report.greynoise.get(ip)))),
-                Paragraph(_x(_threatfox_cell(report.threatfox_ips.get(ip))))]
+            + [[_fitted(ip, IP_WIDTHS[0]),
+                _fitted(", ".join(str(p) for p in s.value.ports)
+                        if s and s.ok else "", IP_WIDTHS[1]),
+                _fitted(_cve_cell(s), IP_WIDTHS[2]),
+                _fitted(_greynoise_cell(report.greynoise.get(ip)), IP_WIDTHS[3]),
+                _fitted(_threatfox_cell(report.threatfox_ips.get(ip)),
+                        IP_WIDTHS[4])]
                for ip, s in ip_rows],
-            widths=[80, 55, 120, 95, 100],
+            widths=IP_WIDTHS,
         ))
         story.append(Spacer(1, 12))
 
     if report.kev.ok and report.kev.value.entries:
+        entries = report.kev.value.entries
         story.append(Paragraph("Known Exploited Vulnerabilities", styles['Heading1']))
+        if len(entries) > KEV_ROW_LIMIT:
+            # One row per entry was unbounded, and the reachable maximum is
+            # 6850 of them. See KEV_ROW_LIMIT: the total goes here so a
+            # shortened table never reads as the whole answer, the same
+            # bargain _cve_cell and _capped_join make.
+            story.append(Paragraph(
+                f"{len(entries)} known exploited vulnerabilities "
+                f"(showing {KEV_ROW_LIMIT}); the full list is in the JSON "
+                f"report.", styles['Normal']))
         story.append(_table(
             [["CVE", "Product", "Added"]]
-            + [[Paragraph(_x(e.cve)),
-                Paragraph(_x(" ".join(x for x in (e.vendor, e.product) if x))),
-                Paragraph(_x(e.date_added or "N/A"))]
-               for e in report.kev.value.entries],
-            widths=[130, 200, 90],
+            + [[_fitted(e.cve, KEV_WIDTHS[0]),
+                _fitted(" ".join(x for x in (e.vendor, e.product) if x),
+                        KEV_WIDTHS[1]),
+                _fitted(e.date_added or "N/A", KEV_WIDTHS[2])]
+               for e in entries[:KEV_ROW_LIMIT]],
+            widths=KEV_WIDTHS,
         ))
         story.append(Spacer(1, 12))
 

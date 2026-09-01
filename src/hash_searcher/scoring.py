@@ -58,18 +58,30 @@ SIGMA_CAP = 30
 # `-o report.pdf` after every provider has already succeeded (render/pdf.py's
 # module docstring, rule 2).
 #
-# The measured build threshold for that column is content-dependent, not one
-# number: 1664 characters of wide capitals, 1677 of CVE list, and up to ~2500
-# for narrower text. CVE content is the lowest of the shapes that actually
-# occur, so 1677 is the figure to design against -- and a KEV detail crosses
-# it at 80 CVEs, against the 120-137 for a single host that render/pdf.py's
-# _cve_cell calls realistic. Fifty contacted hosts at that rate is a detail
-# of 109,659 characters.
+# How much text that column holds is NOT a character count. Bisected against
+# a real write_pdf, every content shape crossed the frame at the same
+# wrapped height -- 624pt -- and the character count that reaches it varies
+# by 3.6x with the shape:
 #
-# render/pdf.py also enforces DETAIL_CHAR_LIMIT on every detail, but that is
-# a backstop: it truncates mid-identifier, which is the right answer for an
-# input nobody anticipated and the wrong answer for Tuesday. These caps are
-# what keep it a last resort.
+#     ("W" * 13 + " ")            740      ", ".join CVE ids     1678
+#     ("W" * 10 + " ")           1149      ", ".join YARA names  2128
+#     "W" * n                    1301      ", ".join IPs         2389
+#     ALL CAPS PROSE             1914      lowercase prose       2669
+#
+# So no character cap here can be the crash bound; render/pdf.py fits each
+# cell by measured height, which is a bound on the thing that overflows.
+# What these caps buy is honesty, and that is not a lesser job: the fit
+# truncates mid-string, and a KEV detail at the reachable maximum -- 50
+# contacted hosts at the 120-137 CVEs render/pdf.py's _cve_cell calls
+# realistic, 109,659 characters -- would otherwise reach the analyst as one
+# fragment. Capped here it names 12 CVEs and says there were 6850.
+#
+# Two dimensions need capping, because a list is bounded only when both are:
+# how MANY items a detail names (the three limits below) and how long ONE
+# item may be (ITEM_CHAR_LIMIT). Eight rule names -- exactly
+# DETAIL_ITEM_LIMIT, the count cap doing its job -- were 3409 characters
+# when the provider returned 400-character names, and that detail raised
+# LayoutError out of a real write_pdf.
 
 #: CVE identifiers are short and uniform, so more of them fit and more of
 #: them are worth reading. Deliberately the same 12 as
@@ -87,6 +99,15 @@ DETAIL_ITEM_LIMIT = 8
 #: RedLine Stealer (90% confidence)"), ~55 characters rather than ~14, so it
 #: gets the tightest cap of the three.
 THREATFOX_TARGET_LIMIT = 5
+
+#: And how long any ONE of those items may be. Real YARA rule names, sandbox
+#: names and malware families run to about forty characters, so this leaves
+#: every string real input produces untouched -- it exists for the provider
+#: that returns a 400-character "rule name", where capping the count alone
+#: bounds nothing. 80 rather than 40: the cap must not fire on the ordinary
+#: case, because an item shortened here is one the analyst cannot search
+#: for verbatim.
+ITEM_CHAR_LIMIT = 80
 
 
 STRONG_DETECTION = 5
@@ -110,10 +131,26 @@ def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ") -> st
     every limit here is at least 5, so the number is never 1 -- the
     remainder form produced "and 1 more contacted IPs" at exactly six hits.
     """
-    shown = sep.join(items[:limit])
+    shown = sep.join(_capped_item(item) for item in items[:limit])
     if len(items) <= limit:
         return shown
     return f"{len(items)} {noun} (showing {limit}): {shown}"
+
+
+def _capped_item(item: str) -> str:
+    """One provider string, bounded, stating its own untruncated length.
+
+    The count cap above says how many items are named; this says how long
+    one of them may be. Without it a list of eight is still unbounded text,
+    which is how eight YARA rule names became a 3409-character detail and a
+    LayoutError. The suffix follows the same rule as the join itself: what
+    was dropped is stated, not silently lost, and the full name is in the
+    JSON report.
+    """
+    if len(item) <= ITEM_CHAR_LIMIT:
+        return item
+    return (f"{item[:ITEM_CHAR_LIMIT].rstrip()}..."
+            f" ({ITEM_CHAR_LIMIT} of {len(item)} chars)")
 
 
 def _detection_signal(report: Report) -> Signal | None:

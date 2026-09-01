@@ -231,18 +231,21 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     # that the KEV SIGNAL DETAIL stays bounded, and that costs nothing to
     # check without building a PDF.
     #
-    # Building one is what makes it expensive, for a reason unrelated to
-    # this test: the "Known Exploited Vulnerabilities" table below emits one
-    # ROW PER ENTRY, uncapped. That is not the crash this file guards --
-    # a many-row table splits across pages perfectly well -- but layout time
-    # grows superlinearly with the row count. Measured: 200 entries 0.26s,
-    # 1000 1.0s, 3000 3.6s, 6850 16.1s. Paying 16 seconds on every suite run
-    # to re-prove a bound another test already proves is a bad trade; the
-    # row cap that table wants is its own change.
+    # Building one used to be what made it expensive, for a reason
+    # unrelated to this test: the "Known Exploited Vulnerabilities" table
+    # emitted one ROW PER ENTRY, uncapped. That is not the crash this file
+    # guards -- a many-row table splits across pages perfectly well -- but
+    # layout time grew superlinearly with the row count: 200 entries 0.26s,
+    # 1000 1.0s, 3000 3.6s, 6850 16.1s on the machine that first measured
+    # it. KEV_ROW_LIMIT is why the reachable maximum is affordable here
+    # now, and paying it is the point: 200 was a number chosen to keep the
+    # suite fast, and this fixture is supposed to be the worst input the
+    # puller can produce.
     sample_report.kev = SourceResult(value=KEVReport(entries=[
         KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache",
                 product="HTTP Server", name="Some Vulnerability",
-                date_added="2022-03-03") for n in range(200)]), queried=True)
+                date_added="2022-03-03") for n in range(IOC_LIMIT * 137)]),
+        queried=True)
     sample_report.certs = SourceResult(value=CertReport(
         siblings=[f"host{n}.evil.example" for n in range(100)], count=5000),
         queried=True)
@@ -367,12 +370,12 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
     threatfox. Capping the one signal this task introduced would leave the
     other four one large provider answer away from the same crash.
 
-    So the cell defends itself. The measured threshold for this column is
-    content-dependent rather than a single number -- bisected against a real
-    write_pdf, 1664 characters of wide capitals, 1677 of CVE list, up to
-    ~2500 of narrower text. 1677 is the one that matters, because CVE
-    content is what crosses first. The budget is under it, and the
-    truncation says what it did rather than dropping the tail silently.
+    So the cell defends itself, and this is the READING half of that: a
+    detail longer than DETAIL_CHAR_LIMIT is cut and says what it cut. The
+    CRASH half is CELL_HEIGHT_LIMIT and
+    test_one_provider_string_of_any_length_cannot_raise_a_layout_error --
+    no character count can do that job, because 624pt of frame is 740
+    characters of ("W" * 13 + " ") and 2669 of lowercase prose.
     """
     from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
 
@@ -388,11 +391,16 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
     )
     # A hardcoded ceiling rather than one derived from DETAIL_CHAR_LIMIT:
     # widening the budget would otherwise recompute this test's own
-    # expectation and pass. 1400, not 2000 -- 2000 is a CRASHING value, and
-    # a ceiling that sanctions it is not a ceiling. Bisected with this
-    # test's own 400-CVE detail against a real write_pdf: 1600 builds, 1700
-    # raises LayoutError, and 2000 gives "tallest row 774". 1400 leaves real
-    # headroom under that boundary.
+    # expectation and pass.
+    #
+    # 1400 was justified here as leaving "real headroom" under a 1677
+    # boundary, and that was true only of CVE content: this ceiling permits
+    # a 1476-character cell, and ALL-CAPS prose crosses at 1570 and
+    # ("W" * 13 + " ") at 740. It was a bound stated against the wrong
+    # content class. It is not a crash bound at all now -- _fitted measures
+    # the rendered height afterwards -- so what 1400 bounds is how much of
+    # one rationale a filed report asks an analyst to read: about a third
+    # of a page of the CVE list below, with the rest a JSON lookup.
     assert DETAIL_CHAR_LIMIT <= 1400
 
     # And it must actually build -- the assertion above is on the string,
@@ -414,3 +422,101 @@ def test_a_normal_signal_detail_is_left_exactly_alone(sample_report):
     verdict = Verdict(level="CLEAN", score=-10, signals=[
         Signal(name="internet_noise", points=-10, detail=detail)])
     assert detail in _texts(build_story(sample_report, verdict))
+
+
+def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
+        tmp_path, sample_report):
+    """A character count is not a bound on a table row's HEIGHT.
+
+    Bisected against a real write_pdf with the character backstop disabled,
+    the "Why" column crosses the frame at a wrapped height of exactly 624pt
+    -- the same 624.0 for every shape tried, while the character count that
+    reaches it varies by 3.6x:
+
+        ("W" * 13 + " ")            740      ", ".join CVE ids     1678
+        ("W" * 10 + " ")           1149      ", ".join YARA names  2128
+        "W" * n                    1301      ", ".join IPs         2389
+        ALL CAPS PROSE             1914      lowercase prose       2669
+
+    So DETAIL_CHAR_LIMIT = 1200 is not a crash bound at all: against the
+    first of those shapes it truncated to ~1276 characters and the
+    TRUNCATED string still raised
+    `LayoutError: ... (tallest row 1038) ... too large on page 2`.
+    The cell is fitted by measured height instead, which is a bound on the
+    thing that actually overflows.
+    """
+    from hash_searcher.render.pdf import CELL_HEIGHT_LIMIT, write_pdf
+
+    detail = ("W" * 13 + " ") * 300          # 4200 characters, 5.7x the 740
+    verdict = Verdict(level="MALICIOUS", score=10, signals=[
+        Signal(name="yara", points=10, detail=detail)])
+
+    # Hardcoded rather than derived from the frame: letter is 792pt tall,
+    # SimpleDocTemplate's default margins take 144, the frame's own padding
+    # 12, and a cell's padding 6 top and 6 bottom -- 624pt, which is exactly
+    # where every shape above crossed.
+    assert CELL_HEIGHT_LIMIT <= 624
+
+    path = write_pdf(sample_report, str(tmp_path / "wide.pdf"), verdict)
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+    cell = next(t for t in _texts(build_story(sample_report, verdict))
+                if t.startswith("WWW"))
+    assert f"of {len(detail)} characters" in cell, (
+        "a cell shortened to fit must say how much text there was")
+
+
+def test_a_provider_string_in_the_ip_table_is_fitted_too(tmp_path, sample_report):
+    """The signal detail is not the only provider string in a row that
+    cannot split across pages. GreyNoise's `name` and ThreatFox's `malware`
+    are unbounded strings straight from a provider, and nothing capped
+    them: a 2100-character GreyNoise name raised
+    `LayoutError: <Table 1 rows x 5 cols(tallest row 1962)>` from a real
+    write_pdf. Every table cell carrying provider text is fitted, not just
+    the one whose crash was reported."""
+    from hash_searcher.models import GreyNoiseReport, ShodanReport, SourceResult
+
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        value=ShodanReport(ports=[80], vulns=[]), queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(seen=True, classification="benign",
+                              name=("W" * 13 + " ") * 150), queried=True)}
+
+    path = write_pdf(sample_report, str(tmp_path / "wide_ip.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_the_kev_table_caps_its_rows_and_states_the_total(sample_report):
+    """One row per entry, uncapped, at a reachable 6850 entries.
+
+    That never raises -- a many-row table splits across pages -- but layout
+    time grows superlinearly with the row count: measured on this machine,
+    200 entries 0.13s, 1000 0.65s, 3000 2.36s, 6850 6.82s for a 319 KiB
+    PDF (a second machine measured the same shape at 11.4s). Capped like
+    every other display cap here, with the untruncated total stated so the
+    section never reads as the whole catalog.
+    """
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
+    from hash_searcher.render.pdf import KEV_ROW_LIMIT
+
+    sample_report.kev = SourceResult(value=KEVReport(entries=[
+        KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache", product="HTTP Server",
+                 name="Some Vulnerability", date_added="2022-03-03")
+        for n in range(60)]), queried=True)
+
+    story = build_story(sample_report)
+    kev_table = next(f for f in story
+                     if isinstance(f, Table) and f._cellvalues[0][0] == "CVE")
+    assert len(kev_table._cellvalues) == KEV_ROW_LIMIT + 1, "header plus the cap"
+
+    texts = _texts(story)
+    assert any("60 known exploited vulnerabilities (showing " in t for t in texts), (
+        "the untruncated total must be stated beside the shortened table")
+    assert any("CVE-2021-00000" in t for t in texts)
+    assert not any("CVE-2021-00059" in t for t in texts)
+
+    # A hardcoded ceiling, not one derived from KEV_ROW_LIMIT. 100 rows is
+    # 0.07s and about two pages of table; the uncapped 6850 is 6.8-11.4s and
+    # 130 pages, which no reader of a filed report can use. The full list
+    # stays in the JSON report either way.
+    assert KEV_ROW_LIMIT <= 100

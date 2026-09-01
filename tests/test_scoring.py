@@ -533,11 +533,13 @@ def test_a_long_threatfox_target_list_is_capped_with_the_total_kept():
     assert ips[THREATFOX_TARGET_LIMIT - 1] in detail
     assert ips[THREATFOX_TARGET_LIMIT] not in detail
     assert f"50 targets (showing {THREATFOX_TARGET_LIMIT})" in detail
-    # A hardcoded ceiling, not one derived from the constant under test: the
-    # cap exists to keep this string out of LayoutError territory, and the
-    # measured crash threshold for that cell is content-dependent -- 1664
-    # characters of wide capitals, 1677 of CVE list, up to ~2500 for
-    # narrower text.
+    # A hardcoded ceiling, not one derived from the constant under test.
+    # What it keeps this string clear of is not one number: the cell
+    # overflows by rendered HEIGHT, and the 624pt that crosses the frame is
+    # 740 characters of ("W" * 13 + " "), 1678 of ", ".join CVE ids and 2669
+    # of lowercase prose. render/pdf.py's _fitted measures that height; this
+    # cap is what keeps its mid-string truncation from being the ordinary
+    # rendering path for a threatfox detail.
     assert len(detail) < 1000
 
 
@@ -731,3 +733,51 @@ def test_the_pdf_backstop_never_fires_on_input_the_puller_can_produce():
         assert len(signal.detail) < 1000, (
             f"{signal.name} reaches {len(signal.detail)} characters, so the "
             f"blunt backstop is this signal's ordinary rendering path")
+
+
+def test_one_over_long_item_is_truncated_at_the_source_too():
+    """_capped_join bounded how MANY items a detail names and never how long
+    one item may be, so eight items -- exactly DETAIL_ITEM_LIMIT, the count
+    cap doing its job -- still produced a 3409-character detail from a
+    provider that returned 400-character rule names, and that detail raised
+    LayoutError out of a real write_pdf.
+
+    render/pdf.py fits the cell by measured height and so cannot crash on
+    it, but that fit truncates mid-string: it is the last resort, and a
+    provider string nobody sanitised must not be what routinely triggers
+    it. Capping the ITEM here keeps every one of the eight names on the
+    page, each stating its own true length, instead of one name and a
+    fragment.
+    """
+    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+
+    rules = [f"{'W' * 13 + ' ' * 1}" * 30 + f"_{n}" for n in range(8)]
+    assert len(rules[0]) > 400 and len(rules) == 8
+    report = _report(vt=VTReport(found=True,
+                                 yara=[YaraMatch(rule=r) for r in rules]))
+
+    detail = next(s for s in score(report).signals if s.name == "yara").detail
+    # Hardcoded, not derived from ITEM_CHAR_LIMIT: a ceiling computed from
+    # the constant it bounds moves when the constant moves and pins nothing.
+    assert len(detail) < 900, f"yara detail is {len(detail)} characters"
+    for rule in rules:
+        assert rule[:ITEM_CHAR_LIMIT] in detail, "every named rule is still named"
+        assert rule not in detail, "and none of them is named in full"
+    assert f"of {len(rules[0])} chars" in detail, (
+        "a shortened item must state its own untruncated length")
+
+
+def test_a_provider_string_of_ordinary_length_is_not_touched():
+    """The item cap must be invisible for every name real input produces.
+    The longest rule name in this suite's own fixtures is 39 characters
+    ("APT_Cobalt_Strike_Beacon_x64_variant_NN"); provider YARA and sandbox
+    names run to about forty. A cap that shortens those would be a bug, not
+    a bound."""
+    from hash_searcher.scoring import score
+
+    rules = [f"APT_Cobalt_Strike_Beacon_x64_variant_{n}" for n in range(3)]
+    report = _report(vt=VTReport(found=True,
+                                 yara=[YaraMatch(rule=r) for r in rules]))
+
+    detail = next(s for s in score(report).signals if s.name == "yara").detail
+    assert detail == "crowdsourced YARA matched: " + ", ".join(rules)
