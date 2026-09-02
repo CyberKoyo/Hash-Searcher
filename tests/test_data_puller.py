@@ -18,26 +18,47 @@ FAKE_VT_DATA = {
 }
 
 
-def _provider(name: str) -> Provider:
+# A stand-in provider's timing must be unmistakable for a registry entry's.
+# 42 seconds is nowhere near any real cache_ttl (3600 threatfox, 86400 most,
+# 604800 rdap), and 0.0 is unlike the 1.0-2.0 the three serial sources
+# declare. See _provider below for why that matters.
+STUB_CACHE_TTL = 42
+STUB_SERIAL_DELAY = 0.0
+
+
+def _provider(name: str, *, cache_ttl: int = STUB_CACHE_TTL,
+              serial_delay: float = STUB_SERIAL_DELAY) -> Provider:
     """Keyless stand-in for a registered provider.
 
-    indicator_types, cache_ttl, and serial_delay all come from the real
-    registry entry rather than the Provider dataclass's defaults.
-    indicator_types, because data_puller selects by indicator type now,
-    and a stub declaring no types would be unreachable through
-    for_indicator -- the exact condition test_registry's
+    indicator_types comes from the real registry entry, because data_puller
+    selects by indicator type and a stub declaring no types would be
+    unreachable through for_indicator -- the exact condition test_registry's
     test_every_registered_provider_declares_at_least_one_indicator_type
-    forbids in the registry itself. cache_ttl and serial_delay, because
-    Task A5 made _cached/fetch_serial read those off the Provider a
-    caller's pool resolves rather than looking them up in the global
-    registry themselves -- before that fix this stub's un-set defaults
-    (86400s, 0.0s) went unnoticed only because the old code silently
-    ignored them and read the real registry entry instead.
+    forbids in the registry itself.
+
+    cache_ttl and serial_delay deliberately do not. Copying them off
+    `by_name(name)`, which is what this helper did until fix round 2, made
+    the patched pool and the global registry identical by construction, so
+    no test built on this helper could tell a pool-sourced lookup from a
+    global one -- which is the single property Task A5 exists to establish.
+    Measured: reverting all eleven pool-aware lookups in data_puller to the
+    pre-A5 global form reddened exactly one test, and it was the one test
+    that did not use this helper.
+
+    So the defaults here match nothing in PROVIDERS, and a test that needs a
+    particular value states it as a literal at the call site rather than
+    reading it back out of the very symbol it is supposed to be
+    distinguishing itself from.
+
+    serial_delay=0.0 also keeps this suite fast without anyone having to
+    remember to stub sleep: a stub carrying censys's real 2.0 turns any test
+    that hands fetch_serial a second indicator into a real two-second
+    wall-clock sleep, and whether a test has one indicator or two is not the
+    kind of thing that should decide how long the suite takes.
     """
     real = by_name(name)
     return Provider(name=name, key_env=None, indicator_types=real.indicator_types,
-                    fetch=None, cache_ttl=real.cache_ttl,
-                    serial_delay=real.serial_delay)
+                    fetch=None, cache_ttl=cache_ttl, serial_delay=serial_delay)
 
 
 class _Recorder:
@@ -152,11 +173,13 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
 
 async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_path):
     """R27: the cache reached fetch_censys only. VT's free tier is 4/min and
-    500/day, so VT is the provider that most needs it."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.api.registry import Provider
-    from hash_searcher.cache import ResponseCache
+    500/day, so VT is the provider that most needs it.
 
+    _provider rather than a hand-built stand-in: the hand-built one left
+    cache_ttl at the Provider dataclass's 86400 default, which happens to be
+    exactly VirusTotal's registry value, so the pool and PROVIDERS agreed by
+    accident here too.
+    """
     calls = []
 
     async def fake_get_vt(client, file_hash):
@@ -164,11 +187,8 @@ async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_pa
         return {"data": {"attributes": {}}}
 
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
-        lambda: [Provider(name="virustotal", key_env=None,
-                          indicator_types=("hash",), fetch=None)],
-    )
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+                        lambda: [_provider("virustotal")])
 
     cache = ResponseCache(path=tmp_path / "c.db")
     await data_puller("deadbeef" * 8, cache)
@@ -520,7 +540,19 @@ async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tm
     entry sets cache_ttl=3600 rather than the day every other source gets.
     The per-IP fan-out must inherit that, not the 86400 default -- a stale
     C2 attribution is worse than none.
+
+    The 3600 is written out twice here on purpose, as two literals: once
+    asserted against the registry entry, and once handed to the stub pool
+    this run actually reads its ttl from. _provider's defaults deliberately
+    match nothing in PROVIDERS (see its docstring), so a stub that wants the
+    registry's number has to say the number -- and saying it is what keeps
+    this test pinning ThreatFox's hour rather than whatever the registry
+    happens to hold at the time.
     """
+    assert by_name("threatfox").cache_ttl == 3600, (
+        "Constraint 6: ThreatFox's registry entry must stay at an hour"
+    )
+
     async def fake_vt(client, file_hash, **kwargs):
         return {"data": {"relationships": {"contacted_ips": {
             "data": [{"id": "198.51.100.10"}]}}}}
@@ -535,7 +567,8 @@ async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tm
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
                         spy_threatfox)
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
-                        lambda: [_provider("virustotal"), _provider("threatfox")])
+                        lambda: [_provider("virustotal"),
+                                 _provider("threatfox", cache_ttl=3600)])
 
     file_hash = "a" * 64
     path = tmp_path / "c.db"
@@ -623,9 +656,18 @@ async def test_censys_is_reached_end_to_end_through_data_puller(monkeypatch):
     **kwargs) in the tests that do monkeypatch fetch_censys wholesale, or
     not at all. This puts censys in the pool and lets it run for real (down
     to the stubbed get_censys), so the 4-argument call is actually made.
+
+    Two IPs, not one. Until fix round 2 this test ran the real fetch_serial
+    against a stub carrying censys's registry serial_delay of 2.0, and was
+    fast only because FAKE_VT_DATA happens to yield exactly one contacted IP
+    and fetch_serial sleeps only *between* real requests: a second IP here
+    would have bought the offline suite a real two-second sleep. _provider
+    now declares serial_delay=0.0 (see its docstring), so the second
+    indicator costs nothing, and running two is what demonstrates it rather
+    than merely asserting it.
     """
     async def fake_vt(client, file_hash, **kwargs):
-        return FAKE_VT_DATA
+        return FAKE_VT_TWO_IPS
 
     calls = []
 
@@ -640,8 +682,138 @@ async def test_censys_is_reached_end_to_end_through_data_puller(monkeypatch):
 
     result = await data_puller("a" * 64, ResponseCache(enabled=False))
 
-    assert calls == ["198.51.100.10"]
-    assert result["censys"] == [{"ip": "198.51.100.10", "services": []}]
+    assert calls == ["198.51.100.10", "203.0.113.7"]
+    assert result["censys"] == [{"ip": ip, "services": []} for ip in calls]
+
+
+FAKE_VT_TWO_IPS_TWO_DOMAINS = {
+    "data": {"relationships": {
+        "contacted_ips": {"data": [{"id": "198.51.100.10"},
+                                   {"id": "203.0.113.7"}]},
+        "contacted_domains": {"data": [{"id": "bad.example"},
+                                       {"id": "worse.example"}]},
+    }}
+}
+
+# Every cache namespace data_puller resolves a Provider for out of its
+# caller's pool: (namespace, the coroutine data_puller calls it through, a
+# clean payload). threatfox is listed once and resolved twice -- once for
+# the sample, once for the per-IP fan-out -- and both resolutions are
+# covered, because the assertions below are per (namespace, indicator) pair
+# rather than per namespace. The CISA KEV catalog is deliberately absent: it
+# is cached like a provider but is not one, has no pool entry to resolve,
+# and passes its namespace and ttl as two literals.
+EVERY_POOL_SITE = (
+    ("virustotal",    "get_vt",        FAKE_VT_TWO_IPS_TWO_DOMAINS),
+    ("otx",           "get_otx",       {"pulse_info": {"count": 1, "pulses": []}}),
+    ("malwarebazaar", "get_bazaar",    {"query_status": "ok", "data": []}),
+    ("threatfox",     "get_threatfox", {"query_status": "no_result", "data": []}),
+    ("abuseipdb",     "get_ipdb",      {"data": {}}),
+    ("censys",        "get_censys",    {"result": {"resource": {}}}),
+    ("shodan",        "get_shodan",    {"ports": [80], "vulns": []}),
+    ("greynoise",     "get_greynoise", {"noise": False}),
+    ("rdap",          "get_rdap",      {"events": []}),
+    ("crtsh",         "get_crtsh",     []),
+)
+
+
+async def test_every_provider_site_reads_its_timing_from_the_pool_not_the_registry(
+        monkeypatch, tmp_path):
+    """Task A5's whole property, at every site rather than at one of them.
+
+    data_puller resolves eleven Providers out of the pool it was handed.
+    Until fix round 2 only one of those eleven was pinned: reverting all
+    eleven to the pre-A5 global form (`by_name(X, pool)` -> `by_name(X)`)
+    reddened exactly one test, covering virustotal, and reverting the censys
+    path all the way back to its three-argument pre-A5 shape reddened none
+    at all. The reason was in the fixture, not in the assertions: _provider
+    copied cache_ttl and serial_delay off the live registry entry, so the
+    patched pool and PROVIDERS held the same numbers and no test built on it
+    could tell which one had been read.
+
+    So: every site at once, with a pool whose timing matches nothing in the
+    registry. Each stub declares cache_ttl=42; every real entry is 3600 or
+    more. Run once to fill the cache, push every row 100 seconds into the
+    past -- comfortably past 42, nowhere near 3600 -- and run again. A site
+    reading its ttl from the pool must refetch. A site that resolved against
+    the global PROVIDERS instead reads a 100-second-old row as fresh and
+    skips its call, and the assertion names it.
+
+    The same run pins serial_delay for the three serial sites, from the
+    other direction: censys, greynoise and crtsh each get two indicators, so
+    fetch_serial's between-requests sleep runs, and the pool says 0.0 where
+    the registry says 2.0, 1.0 and 2.0. Recording sleeps rather than
+    incurring them keeps that free.
+    """
+    asked = []
+
+    def spy(namespace, payload):
+        async def fetch(client, indicator, **kwargs):
+            asked.append((namespace, indicator))
+            return payload
+        return fetch
+
+    for namespace, attribute, payload in EVERY_POOL_SITE:
+        monkeypatch.setattr(f"hash_searcher.api.api_data_puller.{attribute}",
+                            spy(namespace, payload))
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider(namespace) for namespace, _, _ in EVERY_POOL_SITE],
+    )
+
+    slept = []
+
+    async def record_sleep(seconds):
+        slept.append(seconds)
+
+    # Reads module-local, is process-wide -- see
+    # test_fetch_serial_reads_serial_delay_from_the_passed_provider. Here it
+    # is a measurement rather than a speed fix: the pool already declares
+    # 0.0, and what this records is which number fetch_serial actually read.
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.asyncio.sleep",
+                        record_sleep)
+
+    path = tmp_path / "c.db"
+    file_hash = "a" * 64
+
+    async def run():
+        cache = ResponseCache(path=path)
+        await data_puller(file_hash, cache)
+        cache.close()
+
+    await run()
+    first = list(asked)
+    assert {namespace for namespace, _ in first} == {
+        namespace for namespace, _, _ in EVERY_POOL_SITE}, (
+        "every site has to be reached for this to prove anything about it; "
+        f"reached {sorted({n for n, _ in first})}"
+    )
+
+    for namespace, _, _ in EVERY_POOL_SITE:
+        _backdate(path, namespace, 100)
+
+    asked.clear()
+    await run()
+
+    served_stale = sorted(set(first) - set(asked))
+    assert not served_stale, (
+        f"{served_stale} came back out of a cache row 100 seconds old. "
+        "Every provider in the patched pool declares cache_ttl=42, so a "
+        "100-second-old row can only read as fresh where the ttl came from "
+        "the global PROVIDERS -- whose smallest is threatfox's 3600 -- "
+        "instead of from the pool data_puller was actually handed."
+    )
+    assert sorted(asked) == sorted(first)
+
+    assert slept, (
+        "censys, greynoise and crtsh each take two indicators here, so "
+        "fetch_serial's between-requests sleep must have run"
+    )
+    assert set(slept) == {0.0}, (
+        f"fetch_serial slept for {sorted(set(slept))}; the patched pool "
+        "declares serial_delay=0.0 throughout, and only the global registry "
+        "declares 1.0 (greynoise) or 2.0 (censys, crtsh)"
+    )
 
 
 async def test_fetch_serial_reads_ttl_from_the_passed_provider_not_the_registry(tmp_path):
@@ -772,10 +944,21 @@ async def test_fetch_serial_reads_serial_delay_from_the_passed_provider(monkeypa
     ends and the sleep branch never runs. Two indicators and a non-zero
     serial_delay close that gap.
 
-    asyncio.sleep is stubbed rather than left real: fetch_serial's sleep is
-    NOT covered by conftest.py's no_backoff fixture, which only patches
-    base_call.asyncio.sleep -- a real non-zero serial_delay here would
-    really sleep in what is supposed to be an offline, fast suite.
+    asyncio.sleep is stubbed rather than left real, because a real 5.0s
+    serial_delay would really sleep in what is supposed to be a fast suite
+    and nothing else in scope prevents that: conftest.py's no_backoff
+    fixture is not autouse (only block_network is) and this test does not
+    request it.
+
+    Not, as this docstring claimed until fix round 2, because no_backoff is
+    scoped to base_call. It is not scoped to anything. Measured:
+    `base_call.asyncio is api_data_puller.asyncio is asyncio` is True, so
+    monkeypatching "hash_searcher.api.base_call.asyncio.sleep" resolves the
+    dotted path to the one shared asyncio module object and replaces
+    asyncio.sleep for the whole process, fetch_serial included. The same is
+    true of the patch below: it reads as module-local and is not. Both are
+    undone by monkeypatch at teardown, so the reach is a hazard for the next
+    reader's mental model rather than for this test.
     """
     from hash_searcher.api.api_data_puller import fetch_serial
 
@@ -802,19 +985,93 @@ async def test_fetch_serial_reads_serial_delay_from_the_passed_provider(monkeypa
     )
 
 
-async def test_cached_names_its_own_missing_argument():
-    """ALSO FIX: by_name exists specifically so a missing-provider bug
-    fails with a message that names the thing that's missing, rather than
-    an AttributeError three lines later that names neither the caller nor
-    the missing argument. _cached's own provider/namespace/ttl arguments
-    deserve the same treatment -- omitting all of the ways to supply a
-    namespace and a ttl must not silently fall through to a `None.cache_ttl`
-    crash.
+async def test_cached_accepts_exactly_two_of_its_eight_argument_combinations():
+    """A namespace and the ttl governing it must arrive from one place.
+
+    _cached has three optional arguments and therefore eight
+    supplied/omitted combinations. Exactly two are meaningful: a `provider`
+    alone (namespace and ttl both read off it), or `namespace` and `ttl`
+    together (the CISA KEV catalog, cached like a provider but not one).
+
+    The other six are enumerated here rather than sampled, because three of
+    them were accepted until fix round 2 and each was a live instance of the
+    bug this whole task exists to remove:
+
+    - provider + ttl  -- a namespace governed by a ttl that did not come
+      from the provider that owns the namespace. Exactly the Phase 4 Minor
+      #14 shape, back in the signature after being driven out of the call
+      sites.
+    - provider + namespace, with or without a ttl -- two namespaces offered
+      and `namespace` silently dropped, so a caller asking for "cisa_kev"
+      got a megabyte of catalog written into some provider's own rows under
+      the key "catalog", colliding on the cache's (provider, key) primary
+      key.
+
+    The remaining three (namespace alone, ttl alone, nothing at all) were
+    already rejected and stay rejected: by_name exists so a missing provider
+    fails with a message naming what is missing rather than an
+    AttributeError three lines later, and _cached's own arguments get the
+    same treatment.
     """
     from hash_searcher.api.api_data_puller import _cached
+
+    provider = _provider("otx")
 
     async def fetch():
         return {"ok": True}
 
-    with pytest.raises(TypeError, match="_cached needs a `provider`"):
-        await _cached(ResponseCache(enabled=False), "k", fetch)
+    accepted = [
+        {"provider": provider},
+        {"namespace": "cisa_kev", "ttl": 604800},
+    ]
+    rejected = [
+        {"provider": provider, "ttl": 7},
+        {"provider": provider, "namespace": "threatfox"},
+        {"provider": provider, "namespace": "threatfox", "ttl": 7},
+        {"namespace": "threatfox"},
+        {"ttl": 7},
+        {},
+    ]
+    assert len(accepted) + len(rejected) == 8, "every combination, not a sample"
+
+    for kwargs in accepted:
+        assert await _cached(ResponseCache(enabled=False), "k", fetch,
+                             **kwargs) == {"ok": True}, kwargs
+
+    for kwargs in rejected:
+        with pytest.raises(TypeError, match="never a mixture"):
+            await _cached(ResponseCache(enabled=False), "k", fetch, **kwargs)
+
+
+async def test_a_provider_name_is_rejected_where_a_provider_belongs():
+    """The pre-A5 convention passed a provider's *name* to these functions,
+    and `fetch_serial(client, "greynoise", get_greynoise, ips, cache)` is
+    still arity-compatible with today's signature -- so the stale form
+    copied out of git history, or out of any document written before this
+    task, reaches the callee and dies there as `'str' object has no
+    attribute 'name'`, naming neither the caller nor the argument.
+
+    That is verbatim the failure mode by_name was introduced to remove, and
+    the guard _cached grew in fix round 1 covers. All three functions that
+    take a resolved Provider get it, each naming itself, so no one has to
+    guess which of them was handed the wrong thing.
+    """
+    from hash_searcher.api.api_data_puller import (
+        _cached, fetch_censys, fetch_serial,
+    )
+
+    async def fetch():
+        return {"ok": True}
+
+    async def fetch_one(client, indicator):
+        return {"ok": True}
+
+    cache = ResponseCache(enabled=False)
+
+    for wrong in ("greynoise", 42, object()):
+        with pytest.raises(TypeError, match=r"fetch_serial needs the resolved Provider"):
+            await fetch_serial(None, wrong, fetch_one, ["203.0.113.1"], cache)
+        with pytest.raises(TypeError, match=r"fetch_censys needs the resolved Provider"):
+            await fetch_censys(None, ["203.0.113.1"], cache, wrong)
+        with pytest.raises(TypeError, match=r"_cached needs the resolved Provider"):
+            await _cached(cache, "k", fetch, provider=wrong)

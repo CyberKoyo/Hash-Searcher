@@ -73,6 +73,34 @@ async def _bounded_gather(limit: int, *coroutines):
     return list(await asyncio.gather(*(bounded(c) for c in coroutines)))
 
 
+def _require_provider(function: str, provider) -> None:
+    """Reject anything that is not a resolved Provider, naming the function
+    and the argument.
+
+    by_name exists so a missing provider fails loudly and names the thing
+    that is missing, rather than crashing on a None attribute access three
+    lines down. Every function that now takes the resolved Provider *itself*
+    needs the same courtesy, and for one extra reason: the pre-A5 convention
+    passed the provider's name, so `fetch_serial(client, "greynoise",
+    get_greynoise, ips, cache)` -- copied out of git history, or out of any
+    document written before this task -- is still arity-compatible with
+    today's signature. Unguarded it fails as `'str' object has no attribute
+    'name'` from inside the callee, naming neither the caller nor the
+    argument.
+
+    isinstance rather than a None check, because a None check catches only
+    half of that: the stale name-string form is the likelier mistake of the
+    two and is the one a None check waves straight through.
+    """
+    if not isinstance(provider, Provider):
+        raise TypeError(
+            f"{function} needs the resolved Provider itself as its "
+            "`provider` argument, not a provider name -- "
+            "by_name(name, pool) at the call site is what resolves one. "
+            f"Got {provider!r}"
+        )
+
+
 async def _cached(cache, key: str, fetch, *, provider: Provider | None = None,
                   namespace: str | None = None, ttl: int | None = None):
     """Cache-through for a single-call provider.
@@ -81,35 +109,45 @@ async def _cached(cache, key: str, fetch, *, provider: Provider | None = None,
     passing an already-created coroutine would fire the request regardless
     and leave an un-awaited coroutine warning behind.
 
-    The cache namespace and its ttl both come from `provider` -- the
-    Provider a caller resolved from its own pool -- so the two can never
-    silently disagree with each other. Writing the provider's name out a
-    second time at the call site, alongside the call that resolves it, was
-    exactly the kind of duplication that let this task's underlying bug
-    (registry-vs-pool disagreement) exist in the first place; deriving the
-    namespace from provider.name removes that duplication rather than
-    re-parameterising around it.
+    Exactly one of two argument forms is accepted, and nothing in between:
 
-    The one caller with no Provider to pass -- the CISA KEV catalog, cached
-    like a provider but not one -- supplies `namespace` and `ttl`
-    explicitly instead. That is the only path that accepts either without
-    the other; every other caller passes a `provider` and nothing else.
+    - `provider` alone. The cache namespace and its ttl then both come from
+      that single Provider -- the one a caller resolved from its own pool --
+      so the two cannot disagree. Writing the provider's name out a second
+      time at the call site, alongside the call that resolves it, was
+      exactly the kind of duplication that let this task's underlying bug
+      (registry-vs-pool disagreement) exist in the first place; deriving the
+      namespace from provider.name removes that duplication rather than
+      re-parameterising around it.
+    - `namespace` and `ttl` together, for the one caller with no Provider to
+      pass: the CISA KEV catalog, cached like a provider but not one.
+
+    A mixture is rejected rather than silently resolved, and that rejection
+    is the point of the shape. `provider=X, ttl=Y` is precisely the hazard
+    this task exists to remove -- a namespace governed by a ttl that did not
+    come from the provider owning that namespace -- and it would be the more
+    dangerous for looking deliberate. `provider=X, namespace=Y` hands the
+    function two namespaces and no way to choose; the earlier version
+    answered by discarding `namespace` without a word, which would have
+    written the CISA KEV catalog into some provider's own rows under the key
+    "catalog", colliding on the cache's (provider, key) primary key.
     """
-    if provider is not None:
-        name = provider.name
-        effective_ttl = provider.cache_ttl if ttl is None else ttl
-    elif namespace is not None and ttl is not None:
-        name = namespace
-        effective_ttl = ttl
+    supplied = (provider is not None, namespace is not None, ttl is not None)
+    if supplied == (True, False, False):
+        _require_provider("_cached", provider)
+        name, effective_ttl = provider.name, provider.cache_ttl
+    elif supplied == (False, True, True):
+        name, effective_ttl = namespace, ttl
     else:
-        # by_name exists so a missing-provider bug fails loudly and names
-        # the thing that's missing rather than crashing on a None
-        # attribute access three lines down; this guard does the same for
-        # _cached's own arguments.
+        shown = provider.name if isinstance(provider, Provider) else provider
         raise TypeError(
-            "_cached needs a `provider`, or both `namespace` and `ttl` "
-            "explicitly (the CISA KEV exception) -- got "
-            f"provider=None, namespace={namespace!r}, ttl={ttl!r}"
+            "_cached takes a `provider` alone, or `namespace` and `ttl` "
+            "together (the CISA KEV exception) -- never a mixture of the "
+            "two forms, and never neither. A `provider` beside a `ttl` is a "
+            "cache namespace governed by a ttl its own provider did not "
+            "set; a `provider` beside a `namespace` is two namespaces and "
+            "no way to pick one. Got "
+            f"provider={shown!r}, namespace={namespace!r}, ttl={ttl!r}"
         )
     hit = cache.get(name, key, ttl=effective_ttl)
     if hit is not None:
@@ -135,6 +173,7 @@ async def fetch_serial(client, provider: Provider, fetch, indicators, cache, lab
     the coupling that let a caller-supplied pool's ttl/serial_delay go
     silently ignored.
     """
+    _require_provider("fetch_serial", provider)
     name = provider.name
     display = label or name
     results = []
@@ -162,7 +201,12 @@ async def fetch_serial(client, provider: Provider, fetch, indicators, cache, lab
 
 
 async def fetch_censys(client, ips, cache, provider: Provider):
-    """Serial with a gap between real requests; cache hits skip both."""
+    """Serial with a gap between real requests; cache hits skip both.
+
+    Guarded here as well as in fetch_serial, one line down, so that the
+    message names the function the caller actually called.
+    """
+    _require_provider("fetch_censys", provider)
     return await fetch_serial(client, provider, get_censys, ips, cache,
                               label="Censys")
 
