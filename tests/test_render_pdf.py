@@ -1068,7 +1068,7 @@ def _all_sources_failed(report):
     return report
 
 
-def test_every_failed_source_says_so_in_the_pdf(sample_report):
+def test_every_failed_source_says_so_in_the_pdf(tmp_path, sample_report):
     """The surface an analyst files was the one that said nothing.
 
     Measured before this round: for bazaar, threatfox, certs, shodan and kev
@@ -1082,9 +1082,15 @@ def test_every_failed_source_says_so_in_the_pdf(sample_report):
     while fixing the TTY is the same renderer asymmetry that produced the
     Phase 4 KEV bug." It was carried out for the VT caveat and nothing else.
     """
-    texts = " ".join(_texts(build_story(_all_sources_failed(sample_report), None)))
+    report = _all_sources_failed(sample_report)
+    texts = " ".join(_texts(build_story(report, None)))
     for source, error in FAILED_SOURCE_ERRORS.items():
         assert error in texts, f"the PDF drops {source}'s error"
+    # build_story assertions cannot catch a layout failure; only doc.build
+    # can, and five of these nine errors land in a table row that cannot
+    # split across pages.
+    path = write_pdf(report, str(tmp_path / "all-failed.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
 
 
 def test_a_failed_source_is_not_the_same_pdf_as_one_that_never_ran(sample_report):
