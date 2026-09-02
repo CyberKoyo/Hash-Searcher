@@ -185,3 +185,75 @@ def test_a_key_shared_by_two_providers_is_named_once(monkeypatch):
     warning line listed it twice before missing_keys de-duplicated."""
     monkeypatch.delenv("ABUSECH_KEY", raising=False)
     assert missing_keys().count("ABUSECH_KEY") == 1
+
+
+#: Every timing the registry declares, as literals written here rather than
+#: read from the thing under test.
+#:
+#: The rule this pins is "a declared timing that carries a written
+#: justification gets a test", and the reason it is a TABLE rather than the
+#: three assertions the finding named is that the rule has been applied to a
+#: subset twice already: round 2 pinned threatfox's 3600 because that was the
+#: constant it happened to be looking at, and left rdap's 604800 and all three
+#: serial delays free to be zeroed with the suite green. Every serial source
+#: could be silently converted to a parallel one against a registry docstring
+#: that says Censys, crt.sh and GreyNoise "all rate limit hard enough to need
+#: this".
+#:
+#: So the whole table is here, defaults included. A zero is a decision too --
+#: it is what makes a source's fan-out parallel -- and pinning only the
+#: non-zero entries would leave the same hole one row over.
+DECLARED_TIMINGS = {
+    # name             serial_delay, cache_ttl
+    "virustotal":      (0.0, 86400),
+    "otx":             (0.0, 86400),
+    "abuseipdb":       (0.0, 86400),
+    "censys":          (2.0, 86400),
+    "malwarebazaar":   (0.0, 86400),
+    "rdap":            (0.0, 604800),
+    "shodan":          (0.0, 86400),
+    "crtsh":           (2.0, 86400),
+    "threatfox":       (0.0, 3600),
+    "greynoise":       (1.0, 86400),
+}
+
+
+def test_the_registry_declares_the_timings_it_says_it_declares():
+    """The values, not just the plumbing that reads them.
+
+    A5 pinned that every call site reads serial_delay and cache_ttl off the
+    caller's provider pool, at all eleven sites. Nothing pinned what the real
+    registry actually puts there, so `serial_delay=2.0 -> 0.0` on Censys,
+    crt.sh and GreyNoise together left 431 tests green -- the three sources
+    the module docstring names as rate limiting hard enough to need a gap.
+
+    Exact dict equality, so a provider added without a timing decision
+    reddens here too; that is the same promise
+    test_real_registry_covers_every_current_source makes about names.
+    """
+    from hash_searcher.api.registry import PROVIDERS
+
+    assert {p.name: (p.serial_delay, p.cache_ttl) for p in PROVIDERS} \
+        == DECLARED_TIMINGS
+
+
+def test_the_three_rate_limited_sources_are_the_serial_ones():
+    """Named separately from the table above because the registry docstring
+    makes this claim in prose -- "Censys, crt.sh and GreyNoise all rate limit
+    hard enough to need this" -- and a table equality would still pass if the
+    set of serial sources changed and the table were updated to match.
+    """
+    from hash_searcher.api.registry import PROVIDERS
+
+    assert {p.name for p in PROVIDERS if p.serial_delay > 0} \
+        == {"censys", "crtsh", "greynoise"}
+
+
+def test_cache_ttl_defaults_to_a_day():
+    """The sibling of test_serial_delay_defaults_to_zero. The registry
+    docstring says cache_ttl is "chosen per source, never defaulted by
+    accident", and six of the ten entries take this default -- so what the
+    default IS is part of six sources' declared behaviour.
+    """
+    assert Provider(name="x", key_env=None,
+                    indicator_types=("hash",), fetch=None).cache_ttl == 86400
