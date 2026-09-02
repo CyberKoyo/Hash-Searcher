@@ -1020,3 +1020,331 @@ def test_fitting_a_huge_string_never_measures_more_than_the_ceiling(
         f"{pdf_module.FIT_CHAR_CEILING}")
     assert "of 200000 characters" in cell.text, (
         "a cell cut by the ceiling must still state the untruncated total")
+
+
+#: Every source whose failure the PDF is supposed to show, and the error
+#: string this test gives it. Nine, not the five a finding named: the two
+#: per-IP columns A4 added already worked and are pinned here so they cannot
+#: regress into the majority, and the Censys and WHOIS tables carry an
+#: `error` field of their own rather than a SourceResult.
+#:
+#: Each string is distinct, so a test that reads the wrong section cannot
+#: pass by coincidence.
+FAILED_SOURCE_ERRORS = {
+    "bazaar":        "MalwareBazaar API Error 502",
+    "threatfox":     "ThreatFox API Error 502",
+    "certs":         "crt.sh API Error 502",
+    "kev":           "CISA KEV API Error 503",
+    "shodan":        "Shodan API Error 403",
+    "greynoise":     "GreyNoise API Error 429",
+    "threatfox_ips": "ThreatFox per-IP API Error 500",
+    "censys":        "Censys API Error 403",
+    "whois":         "RDAP API Error 404",
+}
+
+
+def _all_sources_failed(report):
+    """A report in which every source that can fail, did."""
+    from hash_searcher.models import (
+        CensysHost, KEVReport, SourceResult, WhoisRecord,
+    )
+
+    ip = "198.51.100.10"
+    report.bazaar = SourceResult(error=FAILED_SOURCE_ERRORS["bazaar"], queried=True)
+    report.threatfox = SourceResult(error=FAILED_SOURCE_ERRORS["threatfox"],
+                                    queried=True)
+    report.certs = SourceResult(error=FAILED_SOURCE_ERRORS["certs"], queried=True)
+    report.kev = SourceResult(value=KEVReport(unchecked=3),
+                              error=FAILED_SOURCE_ERRORS["kev"], queried=True)
+    report.shodan = {ip: SourceResult(error=FAILED_SOURCE_ERRORS["shodan"],
+                                      queried=True)}
+    report.greynoise = {ip: SourceResult(error=FAILED_SOURCE_ERRORS["greynoise"],
+                                         queried=True)}
+    report.threatfox_ips = {ip: SourceResult(
+        error=FAILED_SOURCE_ERRORS["threatfox_ips"], queried=True)}
+    report.hosts = [CensysHost(ip=ip, error=FAILED_SOURCE_ERRORS["censys"])]
+    report.whois = [WhoisRecord(domain="bad.example",
+                                error=FAILED_SOURCE_ERRORS["whois"])]
+    return report
+
+
+def test_every_failed_source_says_so_in_the_pdf(sample_report):
+    """The surface an analyst files was the one that said nothing.
+
+    Measured before this round: for bazaar, threatfox, certs, shodan and kev
+    a FAILED source rendered byte-identically to one that NEVER RAN, while
+    the TTY printed the error and the JSON carried it. WHOIS was worse -- an
+    errored record was dropped from the table by `if not w.error`, so a
+    domain whose lookup failed was absent rather than merely blank.
+
+    A3's Ruling 6 made the argument for this renderer by name: "the PDF is
+    the deliverable an analyst actually files; leaving a bare UNKNOWN there
+    while fixing the TTY is the same renderer asymmetry that produced the
+    Phase 4 KEV bug." It was carried out for the VT caveat and nothing else.
+    """
+    texts = " ".join(_texts(build_story(_all_sources_failed(sample_report), None)))
+    for source, error in FAILED_SOURCE_ERRORS.items():
+        assert error in texts, f"the PDF drops {source}'s error"
+
+
+def test_a_failed_source_is_not_the_same_pdf_as_one_that_never_ran(sample_report):
+    """The three states, on the third surface.
+
+    Asserting the error string alone would still pass if a failed source
+    rendered its error AND a never-asked one rendered something equally
+    loud. The property is that the two states differ -- which is what
+    SourceResult exists for, and what the PDF was the one surface not to
+    honour.
+    """
+    never = _texts(build_story(sample_report, None))
+    failed = _texts(build_story(_all_sources_failed(sample_report), None))
+    assert failed != never
+    for source, error in FAILED_SOURCE_ERRORS.items():
+        assert error not in " ".join(never), \
+            f"{source}'s error text appears in a report where nothing failed"
+
+
+def test_an_errored_shodan_lookup_does_not_dereference_a_missing_report(
+        tmp_path, sample_report):
+    """_cve_cell's `.ok` gate, on its own.
+
+    Reverting it to the pre-A2 `if shodan is None:` left 431 tests green and
+    crashed a real write_pdf with `AttributeError: 'NoneType' object has no
+    attribute 'vulns'` -- A2's Important 1 verbatim, in the other renderer.
+    The suite never put a non-ok Shodan into a RENDERED row: one test pinned
+    Shodan healthy, the other made the table not build at all.
+    """
+    from hash_searcher.models import GreyNoiseReport, SourceResult
+
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        error="Shodan API Error 403", queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(seen=True, classification="malicious"),
+        queried=True)}
+
+    texts = _texts(build_story(sample_report, None))
+    assert "IP Intelligence" in texts, "the row must still be rendered"
+    assert "Shodan API Error 403" in texts
+    path = write_pdf(sample_report, str(tmp_path / "shodan-error.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_a_never_asked_shodan_does_not_dereference_a_missing_report(
+        tmp_path, sample_report):
+    """_ports_cell's `.queried` gate, on its own.
+
+    A SourceResult has no __bool__, so `if s and s.ok` was two gates where
+    only the second did anything; `.queried` is what tells "nobody asked"
+    from "asked and failed", and dropping it dereferences `.value` (None) on
+    a never-asked result. GreyNoise is answered here so the row exists at
+    all -- queried_ips builds the table from any per-IP source that ran.
+    """
+    from hash_searcher.models import GreyNoiseReport, SourceResult
+
+    sample_report.shodan = {"198.51.100.10": SourceResult()}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(seen=True, classification="malicious"),
+        queried=True)}
+
+    texts = _texts(build_story(sample_report, None))
+    assert "IP Intelligence" in texts
+    assert "malicious" in " ".join(texts)
+    path = write_pdf(sample_report, str(tmp_path / "shodan-never.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_the_two_surfaces_share_one_unreachable_kev_sentence(capsys, sample_report):
+    """VT_UNAVAILABLE_NOTE's precedent, for the other note that matters.
+
+    The count is the load-bearing half -- it is what keeps an unreachable
+    catalog from reading as "nothing is known-exploited" -- so the TTY and
+    the PDF must not drift about it. Pinned against the literal wording as
+    well as against both surfaces: formatting the template on both sides and
+    comparing would recompute the expected value from the constant under
+    test, which is the tautology this branch produced four times.
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+    from hash_searcher.render.tty import KEV_UNREACHABLE_NOTE, render_kev
+
+    assert KEV_UNREACHABLE_NOTE == (
+        "CISA KEV was unreachable ({error}) -- {unchecked} CVEs on "
+        "contacted hosts went unchecked."
+    )
+    sample_report.kev = SourceResult(value=KEVReport(unchecked=3),
+                                     error="CISA KEV API Error 503", queried=True)
+
+    render_kev(sample_report)
+    assert ("CISA KEV was unreachable (CISA KEV API Error 503) -- 3 CVEs on "
+            "contacted hosts went unchecked." in capsys.readouterr().out)
+    assert ("CISA KEV was unreachable (CISA KEV API Error 503) -- 3 CVEs on "
+            "contacted hosts went unchecked."
+            in _texts(build_story(sample_report, None)))
+
+
+def test_an_unreachable_kev_with_no_report_body_does_not_crash_either_surface(
+        capsys, sample_report):
+    """`SourceResult.value` is Optional on the type even for the one source
+    whose value survives an error. json_out already guarded it
+    (`kev.value.unchecked if kev.value else 0`); the TTY did not, and the PDF
+    had no copy at all. Guarding two of the three would have been the subset
+    one more time."""
+    from hash_searcher.models import SourceResult
+    from hash_searcher.render.tty import render_kev
+
+    sample_report.kev = SourceResult(error="CISA KEV API Error 503", queried=True)
+    render_kev(sample_report)
+    assert "0 CVEs on contacted hosts went unchecked." in capsys.readouterr().out
+    assert any("0 CVEs on contacted hosts went unchecked." in t
+               for t in _texts(build_story(sample_report, None)))
+
+
+def test_an_unbounded_provider_error_is_capped_before_it_reaches_the_pdf(
+        tmp_path, sample_report):
+    """Provider error strings are attacker-influenced and unbounded.
+
+    Two different bounds apply, and both are the ones this module already
+    had. A section error is a Paragraph, which splits across pages and
+    therefore cannot raise LayoutError -- but it can be megabytes of someone
+    else's text in a filed report, so it goes through _shortened at
+    DETAIL_CHAR_LIMIT and states what it dropped. A table-cell error is the
+    dangerous one: a row cannot split, so it goes through _table, which fits
+    every body cell against CELL_HEIGHT_LIMIT.
+    """
+    from hash_searcher.models import GreyNoiseReport, SourceResult
+    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+
+    huge = "MalwareBazaar said: " + "W" * 200000
+    sample_report.bazaar = SourceResult(error=huge, queried=True)
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        error="Shodan said: " + "the quick brown fox " * 20000, queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(seen=True), queried=True)}
+
+    texts = _texts(build_story(sample_report, None))
+    note = next(t for t in texts if t.startswith("MalwareBazaar: "))
+    assert f"truncated at {DETAIL_CHAR_LIMIT} of {len(huge)} characters" in note
+    assert len(note) < 2 * DETAIL_CHAR_LIMIT
+
+    # The real bound: only doc.build() raises LayoutError, and only on the
+    # table cell.
+    path = write_pdf(sample_report, str(tmp_path / "huge-error.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"
+
+
+#: Rule 1's allowlist: every interpolation in render/pdf.py that does NOT go
+#: through _x() and does NOT reach its Paragraph through the cell factory,
+#: with the reason each one is safe.
+#:
+#: A4c pinned rule 2 from the source on the argument that "a property of six
+#: call sites is not a property of the signature". Rule 1, stated in the same
+#: docstring paragraph, had no equivalent, and it had live exceptions: VT's
+#: `suspicious` and `undetected` were interpolated raw beside an ESCAPED
+#: `ratio`, off analysis/vt.py's unvalidated `stats.get(...)`.
+#:
+#: Exact set equality, so a new raw interpolation reddens here and has to be
+#: justified in this dict rather than merged on the strength of nobody
+#: noticing. Nothing here is a provider value.
+MODULE_OWN_INTERPOLATIONS = {
+    "keep":              "_shortened's own argument, an int",
+    "len(text)":         "_shortened's own arithmetic",
+    "verdict.score":     "scoring.py's int, computed in this repo",
+    "state":             "one of two string literals written above it",
+    "tactic":            "composed here; the provider half is already _x()'d",
+    "len(entries)":      "a count",
+    "KEV_ROW_LIMIT":     "this module's own constant",
+    "len(report.certs.value.siblings)": "a count",
+    "path":              "write_pdf's own argument, printed to the terminal "
+                         "rather than rendered into the document",
+    "VT_UNAVAILABLE_NOTE.format(error=_x(report.vt.error))":
+                         "the template is this module's own text and the one "
+                         "provider value inside it is escaped at the call",
+}
+
+
+def test_no_provider_value_reaches_a_paragraph_unescaped():
+    """Rule 1, read out of the source rather than out of a run.
+
+    Escaping is not testable end-to-end for most of these values any more:
+    analysis/vt.py and analysis/ipdb.py now coerce their payload numbers, so
+    a hostile `suspicious` cannot be constructed through the extractor, and
+    constructing a Detection with one directly raises out of `.ratio` --
+    which is exactly the masking that hid this rule's two live exceptions in
+    the first place. A source-level enumeration is what is left, and it is
+    the stronger guard anyway: it reddens for an interpolation nobody has
+    written a payload for yet.
+
+    Two ways an interpolation can be safe, and this asserts both sets
+    exactly rather than either alone:
+
+      1. it goes through _x(), or
+      2. it is inside a _*_cell helper or a _table(...) call, so the string
+         reaches its Paragraph through _fitted, which escapes it -- rule 2's
+         factory doing rule 1's work, and the reason those provider values
+         are allowed to look raw here.
+
+    Anything else is on MODULE_OWN_INTERPOLATIONS above, with a reason.
+    """
+    import ast
+    import inspect
+
+    from hash_searcher.render import pdf as pdf_module
+
+    tree = ast.parse(inspect.getsource(pdf_module))
+
+    escapers = [n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "_x"]
+    assert len(escapers) == 1, (
+        "render/pdf.py defines no single _x escaper -- rule 1 has no subject")
+
+    through_the_factory = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name.endswith("_cell"):
+            through_the_factory |= {id(n) for n in ast.walk(node)}
+        if (isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "_table"):
+            through_the_factory |= {id(n) for n in ast.walk(node)}
+    assert through_the_factory, (
+        "no _*_cell helper and no _table call found -- the query matched "
+        "nothing, which would let every raw interpolation below through")
+
+    interpolations = [n for n in ast.walk(tree)
+                      if isinstance(n, ast.FormattedValue)]
+    assert len(interpolations) >= 40, (
+        f"only {len(interpolations)} interpolations found in render/pdf.py; "
+        f"the ast query has stopped seeing the module it is checking")
+
+    escaped, fitted, bare = [], [], []
+    for node in interpolations:
+        expression = ast.unparse(node.value)
+        if (isinstance(node.value, ast.Call)
+                and getattr(node.value.func, "id", None) == "_x"):
+            escaped.append(expression)
+        elif id(node) in through_the_factory:
+            fitted.append(expression)
+        else:
+            bare.append(expression)
+
+    assert len(escaped) >= 20, (
+        f"only {len(escaped)} interpolations go through _x(); rule 1 covers "
+        f"every provider value this module writes into a Paragraph")
+    assert set(bare) == set(MODULE_OWN_INTERPOLATIONS), (
+        f"render/pdf.py interpolates {sorted(set(bare) - set(MODULE_OWN_INTERPOLATIONS))} "
+        f"raw, outside the cell factory. Either escape it with _x() or add "
+        f"it to MODULE_OWN_INTERPOLATIONS with the reason it is not a "
+        f"provider value.\n"
+        f"(gone from the allowlist: "
+        f"{sorted(set(MODULE_OWN_INTERPOLATIONS) - set(bare))})")
+    assert set(fitted) == {
+        # _cve_cell
+        "len(vulns)", "CVE_DISPLAY_LIMIT",
+        # _threatfox_cell
+        "result.value.malware or 'unnamed'", "result.value.confidence",
+        "tags", "f' -- {tags}' if tags else ''",
+        # the AbuseIPDB table body, built inline in build_story
+        "i.confidence",
+        # the verdict signals table body, likewise -- scoring.py's own int,
+        # but it reaches its Paragraph through the factory all the same
+        "s.points",
+    }, (
+        f"the set of interpolations relying on the cell factory to escape "
+        f"them changed: {sorted(set(fitted))}")

@@ -46,7 +46,10 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..models import Report, Verdict
-from .tty import CVE_DISPLAY_LIMIT, VT_UNAVAILABLE_NOTE, queried_ips, tag_text
+from .tty import (
+    CVE_DISPLAY_LIMIT, KEV_UNREACHABLE_NOTE, VT_UNAVAILABLE_NOTE, queried_ips,
+    tag_text,
+)
 
 TABLE_STYLE = TableStyle([
     ('BACKGROUND',      (0, 0), (-1, 0), colors.grey),
@@ -338,6 +341,72 @@ def _cve_cell(shodan) -> str:
             + ", ".join(shown))
 
 
+def _ports_cell(shodan) -> str:
+    """Shodan's open ports for one address -- or why there are none.
+
+    This was `", ".join(...) if s and s.ok else ""` inline in the table
+    body, which rendered an errored lookup as an empty Ports cell: byte
+    identical to a host Shodan HAD scanned and found nothing open on. The
+    TTY prints `Shodan:  <error>` and the JSON emits `"error": "..."` for
+    that state; this column swallowed it, on the surface an analyst files.
+
+    Same three-way split as _greynoise_cell and _threatfox_cell below --
+    silence for a source nobody asked, the error when the lookup failed,
+    the answer otherwise -- because a SourceResult has no __bool__ and a
+    never-asked one is truthy, so `.queried` is the only honest gate.
+
+    The error goes in this cell and not in _cve_cell's: one error per
+    source per row, the way render_ip_intel prints one `Shodan:` line. The
+    string is unbounded and attacker-influenced, and it needs no cap here
+    because it is a table cell -- _table fits every body cell to its column
+    against CELL_HEIGHT_LIMIT, which is this module's rule 2 and the reason
+    the fit lives in the factory rather than at call sites.
+    """
+    if shodan is None or not shodan.queried:
+        return ""
+    if shodan.error:
+        return shodan.error
+    return ", ".join(str(p) for p in shodan.value.ports)
+
+
+def _error_flowables(styles, heading: str, source: str, error: str) -> list:
+    """A section saying this source was asked and could not answer.
+
+    The PDF used to print NOTHING for a failed bazaar, threatfox, certs or
+    kev -- every one of those sections is gated on `.ok`, so a failed source
+    was byte-identical to one that never ran, while the TTY printed the
+    error and the JSON carried it. A3's Ruling 6 made the argument for this
+    renderer by name ("the PDF is the deliverable an analyst actually
+    files") and it was carried out for the VT caveat and nothing else.
+
+    One helper rather than four copies: a section added later gets the same
+    shape, and the cap below cannot be forgotten at one of the sites the way
+    the height fit was before it moved into _table.
+
+    The cap is DETAIL_CHAR_LIMIT, not a table fit. These are Paragraph
+    flowables, which split across pages, so an unbounded error string cannot
+    raise LayoutError the way an unbounded table cell can -- but it can
+    still be megabytes of provider-supplied text in a filed report, and
+    _shortened states what it dropped rather than losing the tail silently.
+    _fitted is deliberately NOT used: it belongs to _table, and
+    test_no_table_can_be_built_outside_the_cell_factory asserts it has
+    exactly one call site.
+
+    `heading` and `source` are this module's own text at all three call
+    sites. `source` goes through _x() anyway because it is INTERPOLATED, and
+    rule 1 is a property of the interpolation, not of who happens to be
+    calling today -- the same argument that moved the height fit into
+    _table. `heading` is passed whole to Paragraph rather than interpolated,
+    which is how this module has always written its own headings.
+    """
+    return [
+        Paragraph(heading, styles['Heading1']),
+        Paragraph(f"{_x(source)}: {_x(_shortened(error, DETAIL_CHAR_LIMIT))}",
+                  styles['Normal']),
+        Spacer(1, 12),
+    ]
+
+
 def _greynoise_cell(noise) -> str:
     """Blank when nobody asked -- never "not observed".
 
@@ -419,8 +488,9 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         story.append(Paragraph("Detections", styles['Heading1']))
         story.append(Paragraph(
             f"{_x(report.vt.detection.ratio)} engines flagged this file "
-            f"(suspicious {report.vt.detection.suspicious}, "
-            f"undetected {report.vt.detection.undetected})", styles['Normal']))
+            f"(suspicious {_x(report.vt.detection.suspicious)}, "
+            f"undetected {_x(report.vt.detection.undetected)})",
+            styles['Normal']))
         story.append(Spacer(1, 12))
 
     story.append(Paragraph("OTX Intelligence", styles['Heading1']))
@@ -466,8 +536,15 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
     story.append(Paragraph("WHOIS Data", styles['Heading1']))
     story.append(_table(
         ["Domain", "Created", "Expires", "Registrar"],
-        [[w.domain, w.created, w.expires, w.registrar]
-         for w in report.whois if not w.error],
+        # `if not w.error` DROPPED the row: a domain whose RDAP lookup failed
+        # was absent from the table, indistinguishable from a domain nobody
+        # looked up. The TTY prints `<domain>  Error` and the JSON emits
+        # {"domain", "error"} -- this was the third surface disagreeing, and
+        # the same collapse the Censys table above already fixed. Say which,
+        # exactly as that block does.
+        [[w.domain, w.error, "", ""] if w.error
+         else [w.domain, w.created, w.expires, w.registrar]
+         for w in report.whois],
         WHOIS_WIDTHS,
     ))
     story.append(Spacer(1, 12))
@@ -492,7 +569,7 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             story.append(Paragraph(f"YARA: {_x(match.rule)}", styles['Normal']))
         if vt.pe:
             story.append(Paragraph(
-                f"PE: {vt.pe.sections} sections, "
+                f"PE: {_x(vt.pe.sections)} sections, "
                 f"imphash {_x(vt.pe.imphash or 'N/A')}, "
                 f"compiled {_x(vt.pe.compiled or 'N/A')}", styles['Normal']))
         for technique in vt.techniques:
@@ -501,7 +578,10 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
                 f"ATT&amp;CK: {_x(technique.id)} {_x(technique.name)}{tactic}", styles['Normal']))
         story.append(Spacer(1, 12))
 
-    if report.bazaar.ok and report.bazaar.value.found:
+    if report.bazaar.queried and report.bazaar.error:
+        story += _error_flowables(styles, "MalwareBazaar", "MalwareBazaar",
+                                  report.bazaar.error)
+    elif report.bazaar.ok and report.bazaar.value.found:
         story.append(Paragraph("MalwareBazaar", styles['Heading1']))
         story.append(Paragraph(
             f"Family: {_x(report.bazaar.value.family or 'unnamed')}", styles['Normal']))
@@ -510,11 +590,15 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
                 f"Tags: {_x(', '.join(report.bazaar.value.tags))}", styles['Normal']))
         story.append(Spacer(1, 12))
 
-    if report.threatfox.ok and report.threatfox.value.found:
+    if report.threatfox.queried and report.threatfox.error:
+        story += _error_flowables(styles, "ThreatFox", "ThreatFox",
+                                  report.threatfox.error)
+    elif report.threatfox.ok and report.threatfox.value.found:
         story.append(Paragraph("ThreatFox", styles['Heading1']))
         story.append(Paragraph(
             f"Malware: {_x(report.threatfox.value.malware or 'unnamed')} "
-            f"({report.threatfox.value.confidence}% confidence)", styles['Normal']))
+            f"({_x(report.threatfox.value.confidence)}% confidence)",
+            styles['Normal']))
         story.append(Spacer(1, 12))
 
     ip_rows = _ip_rows(report)
@@ -523,7 +607,7 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         story.append(_table(
             ["IP", "Ports", "CVEs", "GreyNoise", "ThreatFox"],
             [[ip,
-              ", ".join(str(p) for p in s.value.ports) if s and s.ok else "",
+              _ports_cell(s),
               _cve_cell(s),
               _greynoise_cell(report.greynoise.get(ip)),
               _threatfox_cell(report.threatfox_ips.get(ip))]
@@ -532,7 +616,22 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         ))
         story.append(Spacer(1, 12))
 
-    if report.kev.ok and report.kev.value.entries:
+    if report.kev.queried and report.kev.error:
+        # The sharpest of the five. An unreachable CISA with CVEs still to
+        # check printed a full sentence on the TTY, set kev_error in the
+        # JSON, and left no mark at all here -- the Phase 4 KEV bug, in the
+        # renderer A3's Ruling 6 named. Shares the TTY's exact wording
+        # through KEV_UNREACHABLE_NOTE so the two surfaces cannot drift
+        # about the count, the way VT_UNAVAILABLE_NOTE is shared above.
+        kev = report.kev
+        story.append(Paragraph("Known Exploited Vulnerabilities",
+                               styles['Heading1']))
+        story.append(Paragraph(KEV_UNREACHABLE_NOTE.format(
+            error=_x(_shortened(kev.error, DETAIL_CHAR_LIMIT)),
+            unchecked=_x(kev.value.unchecked if kev.value else 0)),
+            styles['Normal']))
+        story.append(Spacer(1, 12))
+    elif report.kev.ok and report.kev.value.entries:
         entries = report.kev.value.entries
         story.append(Paragraph("Known Exploited Vulnerabilities", styles['Heading1']))
         if len(entries) > KEV_ROW_LIMIT:
@@ -553,10 +652,13 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
         ))
         story.append(Spacer(1, 12))
 
-    if report.certs.ok and report.certs.value.siblings:
+    if report.certs.queried and report.certs.error:
+        story += _error_flowables(styles, "Certificate Transparency", "crt.sh",
+                                  report.certs.error)
+    elif report.certs.ok and report.certs.value.siblings:
         story.append(Paragraph("Certificate Transparency", styles['Heading1']))
         story.append(Paragraph(
-            f"{report.certs.value.count} sibling domains on shared certificates "
+            f"{_x(report.certs.value.count)} sibling domains on shared certificates "
             f"(showing {len(report.certs.value.siblings)}): "
             f"{_x(', '.join(report.certs.value.siblings))}", styles['Normal']))
         story.append(Spacer(1, 12))

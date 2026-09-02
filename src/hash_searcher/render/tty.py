@@ -111,6 +111,16 @@ def render_otx(report: Report) -> None:
         print(technique)
 
 
+#: The sentence both render_kev (here) and pdf.py's build_story print when
+#: the CISA catalog could not be fetched. One template, for the reason
+#: VT_UNAVAILABLE_NOTE below has one: the load-bearing half is the unchecked
+#: count -- the single fact that keeps an unreachable catalog from reading as
+#: "nothing is known-exploited" -- and two independently written copies of
+#: the same sentence eventually disagree about it. The PDF had no copy at
+#: all until this round, which is the same asymmetry stated the other way.
+KEV_UNREACHABLE_NOTE = ("CISA KEV was unreachable ({error}) -- {unchecked} "
+                        "CVEs on contacted hosts went unchecked.")
+
 SIGNAL_NAME_WIDTH = 11
 
 #: The caveat both render_verdict (here) and pdf.py's build_story print for
@@ -416,8 +426,12 @@ def render_kev(report: Report) -> None:
         return
     if kev.error:
         _header("KNOWN EXPLOITED VULNERABILITIES")
-        print(f"CISA KEV was unreachable ({kev.error}) -- "
-              f"{kev.value.unchecked} CVEs on contacted hosts went unchecked.")
+        # `value` survives an error on this one source (models.py), but it
+        # is still Optional on the type, and json_out already guards it the
+        # same way -- guarding here and not there was the subset again.
+        print(KEV_UNREACHABLE_NOTE.format(
+            error=kev.error,
+            unchecked=kev.value.unchecked if kev.value else 0))
         return
     if not kev.value.entries:
         return
