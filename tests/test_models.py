@@ -61,3 +61,30 @@ def test_sigma_by_level_partitions_rules():
     ])
     assert [r.title for r in vt.by_level("high")] == ["a", "c"]
     assert [r.title for r in vt.by_level("medium")] == []
+
+
+def test_as_count_takes_a_number_and_refuses_anything_else():
+    """The coercion every payload-populated int field now goes through.
+
+    Hardcoded expectations, one per input shape. A JSON number can arrive as
+    a float, so a finite float is a count; bool is an int in Python and is
+    not one here, because {"malicious": true} is not a verdict tally; NaN and
+    the infinities are floats that are not counts either.
+    """
+    from hash_searcher.models import as_count
+
+    assert as_count(7) == 7
+    assert as_count(0) == 0
+    assert as_count(-3) == -3
+    assert as_count(7.9) == 7
+    assert as_count(True) == 0
+    assert as_count(False) == 0
+    assert as_count("<script>") == 0
+    assert as_count("7") == 0
+    assert as_count(None) == 0
+    assert as_count([1, 2]) == 0
+    assert as_count({"a": 1}) == 0
+    assert as_count(float("nan")) == 0
+    assert as_count(float("inf")) == 0
+    assert as_count(float("-inf")) == 0
+    assert as_count("<script>", 5) == 5

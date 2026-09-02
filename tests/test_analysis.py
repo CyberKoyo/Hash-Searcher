@@ -371,3 +371,150 @@ def test_vt_techniques_are_resolved_and_attached(fixture_json):
     assert injection.name == "Process Injection"
     assert injection.tactic == "defense-evasion"
     assert injection.url and injection.url.endswith("T1055")
+
+
+#: Every numeric an extractor takes straight off a provider payload, and
+#: where it lands. Enumerated rather than sampled: the finding named VT's
+#: five detection buckets and deferred minor #9 named AbuseIPDB's
+#: abuseConfidenceScore, and applying the fix to those two would have been
+#: the branch's meta-pattern for the eighth time.
+#:
+#: The three that reach arithmetic RAISED TypeError from provider input,
+#: unhandled, on every surface. The other three never do -- they are
+#: coerced anyway, because "the sites that happen to crash today" is not a
+#: rule anyone can apply to the next extractor.
+HOSTILE = "<script>"
+
+
+def _vt_payload(**attributes):
+    return {"data": {"attributes": attributes}}
+
+
+def test_a_non_numeric_vt_detection_bucket_cannot_take_the_run_down():
+    """MINOR 2. Detection.total sums the five buckets, so one string among
+    them raised `TypeError: unsupported operand type(s) for +: 'int' and
+    'str'` out of score(), tty.render(), write_pdf() and to_dict() alike.
+    Each bucket separately: one shared coercion is still five call sites.
+    """
+    for bucket in ("malicious", "suspicious", "harmless", "undetected", "timeout"):
+        stats = {name: 3 for name in
+                 ("malicious", "suspicious", "harmless", "undetected", "timeout")}
+        stats[bucket] = HOSTILE
+        detection = extract_vt(_vt_payload(last_analysis_stats=stats)).detection
+        assert getattr(detection, bucket) == 0, bucket
+        # 3 x 4 surviving buckets; the hostile one contributes nothing.
+        assert detection.total == 12, bucket
+        assert isinstance(detection.ratio, str)
+
+
+def test_a_non_numeric_vt_threat_count_cannot_take_the_run_down():
+    """The same defect one expression over: _by_count's sort key is
+    `-e.get("count", 0)`, and unary minus on a string raises before any
+    Detection bucket is built."""
+    vt = extract_vt(_vt_payload(popular_threat_classification={
+        "suggested_threat_label": "trojan.emotet",
+        "popular_threat_name": [{"value": "quiet", "count": HOSTILE},
+                                {"value": "loud", "count": 9}],
+        "popular_threat_category": [{"value": "trojan", "count": None}],
+    }))
+    assert vt.threat.family == "loud"
+    assert vt.threat.categories == ["trojan"]
+
+
+def test_a_non_numeric_vt_submission_count_is_zero_not_a_string():
+    """Never reaches arithmetic -- only truthiness and interpolation -- and
+    is coerced anyway. Same bare `.get(name, 0)` into the same int field."""
+    vt = extract_vt(_vt_payload(times_submitted=HOSTILE, names=["a.exe"]))
+    assert vt.submission.times_submitted == 0
+
+
+def test_a_non_numeric_abuseipdb_confidence_cannot_take_the_run_down():
+    """Deferred minor #9, fixed in the same round as its VT sibling.
+
+    scoring.py's _abuseipdb_signal does `max(i.confidence ...)` and then
+    `worst < ABUSE_CONFIDENCE`, so one string confidence raised
+    `TypeError: '<' not supported between instances of 'str' and 'int'`
+    out of score() -- and therefore out of every surface that takes a
+    verdict.
+    """
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                 "abuseConfidenceScore": HOSTILE,
+                                 "reports": HOSTILE}}])
+    assert ips["198.51.100.10"].confidence == 0
+    assert ips["198.51.100.10"].reports == 0
+
+
+def test_a_hostile_payload_number_reaches_every_surface_without_raising():
+    """The claim the fix is actually about, measured rather than argued.
+
+    Before this, each of these four calls raised TypeError from provider
+    input on an otherwise successful run. `score` is listed first because
+    the other three take a verdict.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    from hash_searcher import scoring
+    from hash_searcher.models import OTXReport, Report
+    from hash_searcher.render import json_out, pdf, tty
+
+    report = Report(
+        indicator="a" * 64, generated_at="2026-09-02 00:00:00",
+        vt=extract_vt(_vt_payload(
+            last_analysis_stats={"malicious": 3, "suspicious": HOSTILE},
+            times_submitted=HOSTILE,
+            popular_threat_classification={
+                "suggested_threat_label": "trojan",
+                "popular_threat_name": [{"value": "x", "count": HOSTILE}]},
+        )),
+        otx=OTXReport(recorded_instances="N/A"),
+        ips=extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                   "abuseConfidenceScore": HOSTILE}}]),
+        hosts=[], whois=[],
+    )
+    verdict = scoring.score(report)
+    with contextlib.redirect_stdout(io.StringIO()):
+        tty.render(report, verdict)
+        pdf.write_pdf(report, tempfile.mktemp(suffix=".pdf"), verdict)
+    assert json_out.to_dict(report, verdict)["report"]["vt"]["detection"] == {
+        "malicious": 3, "suspicious": 0, "harmless": 0, "undetected": 0,
+        "timeout": 0, "total": 3, "ratio": "3/3",
+    }
+
+
+def test_the_two_optional_payload_numbers_left_uncoerced_are_inert():
+    """Stated so the exclusion is checkable rather than a claim in a report.
+
+    `CensysHost.asn` and `PEInfo.entry_point` are the only other numbers an
+    extractor takes off a payload with no type check. Both are declared
+    `int | None`, neither enters arithmetic or an ordering comparison
+    anywhere in the tree, and both reach output only through `str()` or
+    `asdict`. Coercing them would DELETE provider data -- an `asn` of
+    "AS15169" would render as blank -- to prevent a crash that cannot
+    happen. This is what makes that true.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    from hash_searcher import scoring
+    from hash_searcher.models import CensysHost, OTXReport, Report
+    from hash_searcher.render import json_out, pdf, tty
+
+    hosts = extract_hosts([{"result": {"resource": {
+        "ip": "198.51.100.10",
+        "autonomous_system": {"name": "Example AS", "asn": HOSTILE}}}}], {})[1]
+    assert hosts[0].asn == HOSTILE, "asn is carried through, not coerced"
+
+    vt = extract_vt(_vt_payload(pe_info={"entry_point": HOSTILE, "sections": []}))
+    assert vt.pe.entry_point == HOSTILE
+
+    report = Report(indicator="a" * 64, generated_at="t", vt=vt,
+                    otx=OTXReport(recorded_instances="N/A"), ips={},
+                    hosts=hosts, whois=[])
+    verdict = scoring.score(report)
+    with contextlib.redirect_stdout(io.StringIO()):
+        tty.render(report, verdict)
+        pdf.write_pdf(report, tempfile.mktemp(suffix=".pdf"), verdict)
+    assert json_out.to_dict(report, verdict)["report"]["censys"][0]["asn"] == HOSTILE

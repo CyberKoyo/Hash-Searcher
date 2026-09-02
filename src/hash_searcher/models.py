@@ -4,10 +4,45 @@ analysis/ produces these, render/ consumes them. Nothing here does I/O or
 formatting -- that is the whole point of the split.
 """
 
+import math
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 T = TypeVar("T")
+
+
+def as_count(value, default: int = 0) -> int:
+    """A provider-supplied number, or `default` when it is not one.
+
+    Every int field below that an extractor populates from a payload was
+    read with a bare `.get(name, 0)`. The 0 covers an ABSENT key and nothing
+    else, so a present-but-non-numeric value -- `{"suspicious": "<script>"}`
+    -- travelled into an int field and raised the first time anything did
+    arithmetic on it: Detection.total sums five of them, and scoring.py
+    compares AbuseIPDB's confidence with `max(...)` and `<`. Both raise
+    TypeError from provider input, unhandled, on EVERY surface (score, the
+    TTY, the PDF and the JSON report), which takes down a run in which every
+    provider succeeded.
+
+    Coercing to `default` rather than raising or carrying the string is the
+    same bargain the `.get(name, 0)` already made: a value that is not a
+    count is not a count, whether it is missing or unusable. json.loads can
+    yield a float for a JSON number, so a finite float is a count; `bool` is
+    an int in Python and is not one here, because `{"malicious": true}` is
+    not a verdict tally.
+
+    Lives in models.py, beside the `malicious: int` declarations it exists
+    to make true, rather than in one extractor that the next extractor then
+    has to remember about -- the argument A4c made for moving the height fit
+    into pdf.py's cell factory.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return int(value)
+    return default
 
 
 @dataclass(frozen=True)

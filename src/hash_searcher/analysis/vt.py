@@ -3,7 +3,7 @@ import datetime
 from ..api.base_call import error_message, error_status, is_error
 from ..models import (
     Detection, PEInfo, SandboxVerdict, Signature, SigmaRule, Submission,
-    ThreatClass, VTReport, YaraMatch,
+    ThreatClass, VTReport, YaraMatch, as_count,
 )
 from .attack import resolve, technique_ids_from_vt
 
@@ -35,21 +35,29 @@ def _detection(attributes: dict) -> Detection | None:
     stats = attributes.get("last_analysis_stats")
     if not stats:
         return None
+    # as_count, not a bare .get(name, 0): the 0 default covers an absent
+    # key and says nothing about a present one. Detection.total sums these
+    # five, so one non-numeric bucket raised TypeError out of `score`, the
+    # TTY, the PDF and the JSON alike -- from provider input, on a run in
+    # which every provider answered.
     return Detection(
-        malicious=stats.get("malicious", 0),
-        suspicious=stats.get("suspicious", 0),
-        harmless=stats.get("harmless", 0),
-        undetected=stats.get("undetected", 0),
-        timeout=stats.get("timeout", 0),
+        malicious=as_count(stats.get("malicious")),
+        suspicious=as_count(stats.get("suspicious")),
+        harmless=as_count(stats.get("harmless")),
+        undetected=as_count(stats.get("undetected")),
+        timeout=as_count(stats.get("timeout")),
     )
 
 
 def _by_count(entries: list[dict]) -> list[str]:
     """VT's popular_threat_* lists carry a count per value and are not
     pre-sorted. Highest count first, ties in payload order."""
+    # The sort key is the same defect one expression over: `-"<script>"`
+    # raises TypeError before any of the five Detection buckets are even
+    # built, so a hostile `count` here took the run down first.
     return [
         entry["value"]
-        for entry in sorted(entries or [], key=lambda e: -e.get("count", 0))
+        for entry in sorted(entries or [], key=lambda e: -as_count(e.get("count")))
         if entry.get("value")
     ]
 
@@ -74,7 +82,10 @@ def _submission(attributes: dict) -> Submission:
     )
     return Submission(
         first_seen=first_seen,
-        times_submitted=attributes.get("times_submitted", 0),
+        # Not arithmetic today -- only truthiness and interpolation reach
+        # it -- but it is the same bare `.get(name, 0)` into the same int
+        # declaration, and "the sites that happen to crash" is not the rule.
+        times_submitted=as_count(attributes.get("times_submitted")),
         names=list(attributes.get("names", []) or [])[:NAME_LIMIT],
     )
 
