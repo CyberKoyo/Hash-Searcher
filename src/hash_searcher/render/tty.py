@@ -398,11 +398,18 @@ def render_ip_intel(report: Report) -> None:
 
 
 def render_kev(report: Report) -> None:
-    """Silent only when there was nothing to check.
+    """Silent when nothing was checked, AND when the check found nothing.
 
     An unreachable CISA is not the same answer as "none of these CVEs are
     known-exploited", and it suppresses the strongest signal the tool has,
     so it gets a line of its own rather than an absent section.
+
+    The two silent cases are the ones with nothing to say: nobody asked
+    (`queried is False`), and the catalog answered with no hits. This
+    docstring used to claim the first was the ONLY silent case, which was
+    false of the second and had been since the section was written -- a
+    false claim in a docstring is the same defect as a false claim in a
+    comment, and the shape here is right, so the docstring is what changes.
     """
     kev = report.kev
     if not kev.queried:

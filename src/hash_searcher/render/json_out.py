@@ -150,7 +150,12 @@ def _phase4_dict(report: Report) -> dict:
     """The Phase 4 sources, each present-but-null when it never ran.
 
     Same rule as _vt_dict and _static_dict above: a consumer can then tell
-    "the source had nothing" from "this tool never asked it". certs carries
+    "the source had nothing" from "this tool never asked it" -- with one
+    stated exception, `kev`, which shipped on main as a list and therefore
+    collapses those two states into `[]` both times. Global Constraint 7
+    forbids changing it to null, so the exception is named here rather than
+    fixed: `kev_error` and `kev_unchecked` beside it are what a consumer
+    reads to tell an unreachable catalog from an empty one. certs carries
     the untruncated `count` alongside the capped `siblings` list, so a JSON
     consumer is not misled by the cap either. kev_error/kev_unchecked stay
     their own top-level keys -- both already shipped on main, and Global

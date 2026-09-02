@@ -1031,3 +1031,45 @@ def test_a_long_threatfox_tag_list_is_capped_with_the_total_kept(capsys):
     assert tags[TAG_DISPLAY_LIMIT] not in out
     assert tags[TAG_DISPLAY_LIMIT - 1] in out
     assert f"40 tags (showing {TAG_DISPLAY_LIMIT})" in out
+
+
+def test_an_unreachable_kev_says_how_many_cves_went_unchecked(capsys):
+    """The count models.py singles out as the one field that survives an error.
+
+    `KEVReport.unchecked` is set correctly and pinned there; no CONSUMER's use
+    of it was pinned on either surface, so
+    `f"{kev.value.unchecked} CVEs ..."` -> `f"0 CVEs ..."` left 431 tests
+    green -- an unreachable catalog reporting that nothing went unchecked,
+    which is the Phase 4 KEV bug wearing the words of the fix for it.
+
+    Two different counts, and the whole line as a literal: one count would
+    also pass against a hardcoded number in the renderer.
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+    from hash_searcher.render.tty import render_kev
+
+    for unchecked in (3, 17):
+        render_kev(_phase4_report(kev=SourceResult(
+            value=KEVReport(unchecked=unchecked),
+            error="CISA KEV API Error 503", queried=True)))
+        out = capsys.readouterr().out
+        assert "KNOWN EXPLOITED VULNERABILITIES" in out
+        assert (f"CISA KEV was unreachable (CISA KEV API Error 503) -- "
+                f"{unchecked} CVEs on contacted hosts went unchecked."
+                in out.splitlines())
+
+
+def test_render_kev_is_silent_when_the_catalog_answered_with_no_hits(capsys):
+    """The property render_kev's docstring now claims.
+
+    It used to say "silent only when there was nothing to check", which was
+    false: a catalog that ran and matched nothing is silent too. The shape is
+    right -- an empty KEV section is not news -- so the docstring was the
+    thing that was wrong, and this pins what it says now.
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+    from hash_searcher.render.tty import render_kev
+
+    render_kev(_phase4_report(kev=SourceResult(
+        value=KEVReport(entries=[], unchecked=0), queried=True)))
+    assert capsys.readouterr().out == ""

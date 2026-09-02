@@ -360,3 +360,157 @@ def test_the_sample_level_threatfox_key_still_means_the_sample(sample_report):
     sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
         value=ThreatFoxReport(found=True, malware="Emotet"), queried=True)}
     assert to_dict(sample_report)["report"]["threatfox"] is None
+
+
+#: The six sources _source_dict wraps, each with a distinct error string so a
+#: test that reads the wrong block cannot pass by coincidence.
+#:
+#: Six, not the two or three a finding happens to name. `error` could be
+#: deleted from _source_dict outright -- `"error": result.error` ->
+#: `"error": None` -- with 431 tests green, which collapses a FAILED source
+#: into a successful one for every source below at once. The only `error`
+#: assertion that reached a _source_dict block before this pinned `None` on a
+#: SUCCESSFUL entry, which is exactly what that mutant produces.
+def _errored_phase4(report):
+    """Every _source_dict-wrapped source in the queried-and-failed state."""
+    from hash_searcher.models import SourceResult
+
+    report.bazaar = SourceResult(error="MalwareBazaar API Error 502", queried=True)
+    report.threatfox = SourceResult(error="ThreatFox API Error 502", queried=True)
+    report.certs = SourceResult(error="crt.sh API Error 502", queried=True)
+    report.shodan = {"198.51.100.10": SourceResult(
+        error="Shodan API Error 403", queried=True)}
+    report.greynoise = {"198.51.100.10": SourceResult(
+        error="GreyNoise API Error 429", queried=True)}
+    report.threatfox_ips = {"198.51.100.10": SourceResult(
+        error="ThreatFox API Error 500", queried=True)}
+    return report
+
+
+def test_a_failed_phase_4_source_carries_its_error_into_the_json(sample_report):
+    """The JSON is the only machine-readable record that a source failed.
+
+    The whole expected dict, not just the `error` key: _source_dict's
+    documented bargain is that a failed source keeps the shape its wrapped
+    report had -- every field present at its zero value, `error` set -- so a
+    consumer reading `ports` off a failed Shodan block gets `[]` and an
+    `error` beside it rather than a missing key. The error branch of that
+    promise was pinned by nothing.
+    """
+    body = to_dict(_errored_phase4(sample_report))["report"]
+
+    assert body["bazaar"] == {
+        "found": False, "family": None, "tags": [], "file_type": None,
+        "first_seen": None, "yara": [],
+        "error": "MalwareBazaar API Error 502",
+    }
+    assert body["threatfox"] == {
+        "found": False, "malware": None, "confidence": 0, "tags": [],
+        "error": "ThreatFox API Error 502",
+    }
+    assert body["certs"] == {
+        "siblings": [], "count": 0,
+        "error": "crt.sh API Error 502",
+    }
+    assert body["shodan"]["198.51.100.10"] == {
+        "ports": [], "cpes": [], "vulns": [], "hostnames": [],
+        "error": "Shodan API Error 403",
+    }
+    assert body["greynoise"]["198.51.100.10"] == {
+        "seen": False, "classification": None, "name": None, "last_seen": None,
+        "error": "GreyNoise API Error 429",
+    }
+    assert body["threatfox_ips"]["198.51.100.10"] == {
+        "found": False, "malware": None, "confidence": 0, "tags": [],
+        "error": "ThreatFox API Error 500",
+    }
+
+
+def test_the_three_source_states_stay_distinguishable_in_the_json(sample_report):
+    """never-asked / asked-and-failed / answered, for all six sources.
+
+    Pinning only the error dict would leave `_source_dict` free to return the
+    error shape for a healthy source, or `None` for a failed one -- the
+    collapse SourceResult exists to prevent, one surface over. The three
+    states must be three different JSON values for every source, not for the
+    one a finding happened to name.
+    """
+    from hash_searcher.models import (
+        BazaarReport, CertReport, GreyNoiseReport, ShodanReport, SourceResult,
+        ThreatFoxReport,
+    )
+
+    names = ("bazaar", "threatfox", "certs")
+    per_ip = ("shodan", "greynoise", "threatfox_ips")
+
+    never = to_dict(sample_report)["report"]
+    for name in names:
+        assert never[name] is None, f"{name} never-asked is not null"
+    for name in per_ip:
+        setattr(sample_report, name, {"198.51.100.10": SourceResult()})
+    never = to_dict(sample_report)["report"]
+    for name in per_ip:
+        assert never[name]["198.51.100.10"] is None, \
+            f"{name} never-asked is not null"
+
+    failed = to_dict(_errored_phase4(sample_report))["report"]
+
+    sample_report.bazaar = SourceResult(value=BazaarReport(), queried=True)
+    sample_report.threatfox = SourceResult(value=ThreatFoxReport(), queried=True)
+    sample_report.certs = SourceResult(value=CertReport(), queried=True)
+    sample_report.shodan = {"198.51.100.10": SourceResult(
+        value=ShodanReport(), queried=True)}
+    sample_report.greynoise = {"198.51.100.10": SourceResult(
+        value=GreyNoiseReport(), queried=True)}
+    sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
+        value=ThreatFoxReport(), queried=True)}
+    answered = to_dict(sample_report)["report"]
+
+    for name in names:
+        assert failed[name] != answered[name], f"{name} error == answered"
+        assert failed[name] is not None and answered[name] is not None
+        assert answered[name]["error"] is None, f"{name} answered carries an error"
+    for name in per_ip:
+        got_failed = failed[name]["198.51.100.10"]
+        got_ok = answered[name]["198.51.100.10"]
+        assert got_failed != got_ok, f"{name} error == answered"
+        assert got_failed is not None and got_ok is not None
+        assert got_ok["error"] is None, f"{name} answered carries an error"
+
+
+def test_an_unreachable_kev_catalog_says_so_and_says_how_much_went_unchecked(
+        sample_report):
+    """The two keys Constraint 5 and Ruling 2 were written about.
+
+    `kev_error` and `kev_unchecked` could both be replaced with constants --
+    `kev.error -> None`, `kev.value.unchecked if kev.value else 0 -> 0` --
+    with the suite green. test_schema_keys_are_preserved proves the keys
+    exist; nothing proved either still meant anything.
+
+    `unchecked` is the one field models.py says survives an error, and an
+    empty `kev` list beside a null `kev_error` is exactly the Phase 4 bug:
+    "nobody could ask" reading as "nothing is exploited".
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+
+    sample_report.kev = SourceResult(value=KEVReport(unchecked=3),
+                                     error="CISA KEV API Error 503", queried=True)
+    body = to_dict(sample_report)["report"]
+    assert body["kev_error"] == "CISA KEV API Error 503"
+    assert body["kev_unchecked"] == 3
+    assert body["kev"] == []
+
+
+def test_a_healthy_kev_catalog_reports_nothing_unchecked(sample_report):
+    """The other side of the same two keys: a successful catalog fetch leaves
+    `kev_error` null and `kev_unchecked` at zero, so the assertion above is
+    pinning the failure state rather than a constant."""
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
+
+    sample_report.kev = SourceResult(
+        value=KEVReport(entries=[KEVEntry(cve="CVE-2021-41617")], unchecked=0),
+        queried=True)
+    body = to_dict(sample_report)["report"]
+    assert body["kev_error"] is None
+    assert body["kev_unchecked"] == 0
+    assert [e["cve"] for e in body["kev"]] == ["CVE-2021-41617"]
