@@ -801,6 +801,11 @@ class Report:
     hosts: list[CensysHost]
     whois: list[WhoisRecord]
     source_file: str | None = None
+    #: Which kind of thing `indicator` is -- one of indicators.KINDS. Defaults
+    #: to "hash" because that is what every indicator was until Part B: a
+    #: Report built without this field means exactly what it always meant.
+    #: The renderers read it so they stop labelling an address "Hash".
+    indicator_kind: str = "hash"
     #: None when static analysis was skipped (--no-static, a bare hash
     #: argument with no file, or an analyzer-fan-out failure) -- never a
     #: half-built StaticReport standing in for "we didn't run it".

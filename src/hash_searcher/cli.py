@@ -15,7 +15,7 @@ from .analysis.threatfox import extract_threatfox
 from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
-from .api.api_data_puller import data_puller, resolve_hash
+from .api.api_data_puller import data_puller, resolve_indicator
 from .api.base_call import error_status, make_error
 from .cache import ResponseCache
 from .hashing import check_env
@@ -48,10 +48,14 @@ def exit_code(verdict: Verdict) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hash-searcher",
-        description="Check a file or hash against VirusTotal, AbuseIPDB, "
-                    "Censys, OTX, RDAP, and several keyless sources.",
+        description="Check a file, hash, IP, domain, or URL against "
+                    "VirusTotal, AbuseIPDB, Censys, OTX, RDAP, and "
+                    "several keyless sources.",
     )
-    parser.add_argument("indicator", help="a file path, or an MD5/SHA-1/SHA-256 digest")
+    parser.add_argument(
+        "indicator",
+        help="a file path, an MD5/SHA-1/SHA-256 digest, an IP, a domain, "
+             "or a URL -- defanged forms (hxxp://, 1[.]2[.]3[.]4) accepted")
     parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
@@ -115,7 +119,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
         extra_ips = static_report.strings.iocs.ips
 
     try:
-        resolved = resolve_hash(args.indicator, args.zip_password)
+        resolved = resolve_indicator(args.indicator, args.zip_password)
     except FileNotFoundError as e:
         # The exception is constructed with a perfectly good user-facing
         # string and was simply never caught, so `hash-searcher notahash`
@@ -125,11 +129,12 @@ async def run_cli(argv: list[str] | None = None) -> int:
     if not resolved:
         return EXIT_NO_DATA
 
-    file_hash = resolved[0]
+    indicator = resolved[0]
     if len(resolved) > 1:
-        print(f"\n[!] Archive holds {len(resolved)} files. Analyzing the first: {file_hash}")
+        print(f"\n[!] Archive holds {len(resolved)} files. "
+              f"Analyzing the first: {indicator.value}")
         for skipped in resolved[1:]:
-            print(f"    not analyzed: {skipped}")
+            print(f"    not analyzed: {skipped.value}")
 
     if not check_env():
         if static_report is None:
@@ -145,7 +150,8 @@ async def run_cli(argv: list[str] | None = None) -> int:
         print("Continuing with local static analysis results only.")
         offline = make_error("no API key configured")
         report = Report(
-            indicator=file_hash,
+            indicator=indicator.value,
+            indicator_kind=indicator.kind,
             generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             vt=extract_vt(offline), otx=extract_otx(offline),
             ips={}, hosts=[], whois=[],
@@ -158,10 +164,11 @@ async def run_cli(argv: list[str] | None = None) -> int:
             write_report(report, args.output, verdict)
         return exit_code(verdict)
 
-    print("Pulling data from VirusTotal, IPDB, OTX, Censys, and RDAP...")
+    print("Pulling data from every source that answers for "
+          f"{indicator.kind} indicators...")
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
-        raw = await data_puller(file_hash, cache, extra_ips=extra_ips)
+        raw = await data_puller(indicator, cache, extra_ips=extra_ips)
     finally:
         cache.close()
     if not raw:
@@ -171,8 +178,8 @@ async def run_cli(argv: list[str] | None = None) -> int:
     vt = extract_vt(raw["vt"])
     otx = extract_otx(raw["otx"])
     if error_status(raw["vt"]) == 404:
-        # Not an error, and never a reason to stop: resolve_hash already
-        # proved this is a well-formed digest or a real file, and the
+        # Not an error, and never a reason to stop: resolve_indicator
+        # already proved this is a well-formed digest or a real file, and the
         # keyless sources answer for hashes VT has never recorded. The old
         # "Invalid hash" bail discarded a MalwareBazaar family match and a
         # ThreatFox attribution that had already been fetched.
@@ -196,7 +203,8 @@ async def run_cli(argv: list[str] | None = None) -> int:
     cves = observed_cves(r.value for r in shodan.values() if r.ok)
 
     report = Report(
-        indicator=file_hash,
+        indicator=indicator.value,
+        indicator_kind=indicator.kind,
         generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
         source_file=args.indicator,

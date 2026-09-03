@@ -23,7 +23,10 @@ from .registry import Provider, available, by_name, for_indicator
 from ..static.strings import IOC_LIMIT
 # Re-exported: the definition moved to indicators.py, where classify()
 # needs it too, and this module's callers keep importing it from here.
-from ..indicators import HASH_LENGTHS, looks_like_hash  # noqa: F401
+from ..indicators import (  # noqa: F401  (looks_like_hash re-exported)
+    HASH_LENGTHS, Indicator, classify, domain_of, looks_like_hash,
+    unsupported_reason,
+)
 
 
 def resolve_hash(user_input: str, password: str | None = None) -> list[str] | None:
@@ -50,6 +53,75 @@ def resolve_hash(user_input: str, password: str | None = None) -> list[str] | No
         print("Could not hash that file. Nothing to look up.")
         return None
     return hashes
+
+
+def resolve_indicator(user_input: str,
+                      password: str | None = None) -> list[Indicator] | None:
+    """Turn the CLI argument into the indicators to look up, or None.
+
+    A list for the same reason resolve_hash returns one: a ZIP holds
+    several members, and each becomes its own hash indicator.
+
+    Unclassifiable input falls through to resolve_hash rather than being
+    reported here. That is deliberate -- `hash-searcher notahash` has
+    printed "This file either doesn't exist or isn't in an accessible
+    directory" since Phase 0, and an argument that is not any recognizable
+    indicator is, overwhelmingly, a path that is not where the user thought
+    it was. resolve_hash raises FileNotFoundError carrying that message and
+    cli.py catches it, exactly as before.
+    """
+    indicator = classify(user_input)
+
+    if indicator is not None and indicator.kind != "file":
+        reason = unsupported_reason(indicator)
+        if reason:
+            print(reason)
+            return None
+        return [indicator]
+
+    # A file, or nothing we recognize: both are resolve_hash's job. It
+    # hashes the one and raises the long-standing message for the other.
+    hashes = resolve_hash(user_input, password)
+    if not hashes:
+        return None
+    return [Indicator("hash", digest) for digest in hashes]
+
+
+def _require_indicator(indicator) -> None:
+    """Reject anything that is not a classified Indicator.
+
+    The same courtesy _require_provider extends, for the same reason: the
+    pre-B2 call -- data_puller("deadbeef" * 8, cache) -- is still
+    arity-compatible with this signature, and a bare string reaching the
+    kind switch below fails as `'str' object has no attribute 'kind'` from
+    inside it, naming neither the caller nor the argument.
+    """
+    if not isinstance(indicator, Indicator):
+        raise TypeError(
+            "data_puller takes a classified Indicator, not a bare string -- "
+            "indicators.classify(value), or resolve_indicator(...) at the "
+            f"CLI boundary, is what produces one. Got {indicator!r}"
+        )
+
+
+#: OTX is one endpoint per indicator type, so it is the one provider whose
+#: fetch needs to be told which kind it is being handed. Asking the `file`
+#: endpoint about an address answers 404, which reads as "OTX has never
+#: seen it" rather than as "that was the wrong question".
+_OTX_TYPES = {"hash": "file", "domain": "domain", "url": "url"}
+
+
+def _otx_type(indicator: Indicator) -> str:
+    if indicator.kind == "ip":
+        return "IPv6" if ":" in indicator.value else "IPv4"
+    return _OTX_TYPES[indicator.kind]
+
+
+#: What data_puller says when VirusTotal is configured and simply cannot
+#: answer. Not "key not set", which would send a user to check a key that
+#: is perfectly fine: VT's file endpoint takes a digest, and an address or
+#: a domain is not one.
+VT_HASH_ONLY = "VirusTotal answers for file hashes only"
 
 
 async def _bounded_gather(limit: int, *coroutines):
@@ -239,7 +311,20 @@ def _domains(vt_data, ipdb_data: list, censys_results: list) -> list[str]:
     return _merge_indicators(contacted_domains(vt_data), censys_domains)
 
 
-async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None):
+async def data_puller(indicator: Indicator, cache,
+                      extra_ips: list[str] | None = None):
+    """Every source that can answer for `indicator`, fanned out once.
+
+    The entry is keyed by the indicator's kind rather than assuming a hash
+    and deriving everything else from VirusTotal. A hash still seeds the IP
+    fan-out from VT's contacted_ips; an `ip` seeds it directly with its own
+    value and never calls VT at all; a `domain` or a `url` seeds the domain
+    fan-out. The two fan-outs themselves are unchanged and shared -- which
+    is the point: `for_indicator()` has selected providers by type since
+    Phase 4, and the ip and domain providers were simply unreachable from
+    the command line.
+    """
+    _require_indicator(indicator)
     # Selection is by indicator type, not by a hand-written branch per name:
     # indicator_types has been declared since Phase 1 and read by nothing,
     # and with seven more sources across three types the branches stop
@@ -249,6 +334,10 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
     hash_sources = {p.name for p in for_indicator("hash", pool)}
     ip_sources = {p.name for p in for_indicator("ip", pool)}
     domain_sources = {p.name for p in for_indicator("domain", pool)}
+    # A url is looked up by the domain-typed sources: they are the ones that
+    # answer for a host, and `domain_of` is what hands them one.
+    kind_sources = {"hash": hash_sources, "ip": ip_sources,
+                    "domain": domain_sources, "url": domain_sources}[indicator.kind]
 
     async with httpx.AsyncClient() as client:
         # OTX doesn't depend on the VT result, so start it before awaiting VT
@@ -256,17 +345,22 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # same reason: all three need only the hash.
         otx_task = (
             asyncio.create_task(
-                _cached(cache, file_hash, lambda: get_otx(client, file_hash),
+                _cached(cache, indicator.value,
+                        lambda: get_otx(client, indicator.value,
+                                        indicator_type=_otx_type(indicator)),
                         provider=by_name("otx", pool))
             )
-            if "otx" in hash_sources else None
+            if "otx" in kind_sources else None
         )
+        # MalwareBazaar is a sample database: it is in hash_sources and in
+        # no other, so this is gated on the kind as well as on the key.
         bazaar_task = (
             asyncio.create_task(
-                _cached(cache, file_hash, lambda: get_bazaar(client, file_hash),
+                _cached(cache, indicator.value,
+                        lambda: get_bazaar(client, indicator.value),
                         provider=by_name("malwarebazaar", pool))
             )
-            if "malwarebazaar" in hash_sources else None
+            if indicator.kind == "hash" and "malwarebazaar" in hash_sources else None
         )
         # ThreatFox answers for the sample AND for every contacted IP; this
         # is the sample half. The per-IP fan-out is below, beside Shodan,
@@ -274,24 +368,41 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         # GreyNoise gives noise-vs-targeted, and neither names the C2
         # family, which is ThreatFox's whole value and what its dataset is
         # overwhelmingly made of.
+        #
+        # Skipped for an `ip` indicator, and only for that one: the per-IP
+        # fan-out below asks ThreatFox exactly this question about exactly
+        # this address, and a second identical lookup would land the same
+        # answer in two Report fields for scoring to count twice.
         threatfox_task = (
             asyncio.create_task(
-                _cached(cache, file_hash, lambda: get_threatfox(client, file_hash),
+                _cached(cache, indicator.value,
+                        lambda: get_threatfox(client, indicator.value),
                         provider=by_name("threatfox", pool))
             )
-            if "threatfox" in hash_sources else None
+            if indicator.kind != "ip" and "threatfox" in kind_sources else None
         )
 
-        if "virustotal" in hash_sources:
+        if indicator.kind != "hash":
+            # VT's file endpoint takes a digest. Calling it with an address
+            # spends a 4-per-minute quota on a guaranteed 404, and reports
+            # it as "VirusTotal has no record" -- which is true of every
+            # address there has ever been.
+            vt_data, vt_ips = make_error(VT_HASH_ONLY), []
+        elif "virustotal" in hash_sources:
             vt_data = await _cached(
-                cache, file_hash, lambda: get_vt(client, file_hash),
+                cache, indicator.value,
+                lambda: get_vt(client, indicator.value),
                 provider=by_name("virustotal", pool)
             )
             vt_ips = contacted_ips(vt_data)
         else:
             vt_data, vt_ips = make_error("VirusTotal key not set"), []
 
-        ips = _merge_indicators(vt_ips, extra_ips)
+        # An `ip` indicator seeds the fan-out with itself; a hash seeds it
+        # with the addresses VT says the sample contacted. Everything below
+        # this line is the same fan-out either way.
+        seed_ips = [indicator.value] if indicator.kind == "ip" else vt_ips
+        ips = _merge_indicators(seed_ips, extra_ips)
 
         # Each provider is resolved once per fan-out here, not once per
         # indicator inside the comprehension below it -- by_name is a
@@ -362,7 +473,15 @@ async def data_puller(file_hash: str, cache, extra_ips: list[str] | None = None)
         threatfox_ip_results = (
             await threatfox_ips_task if threatfox_ips_task else [])
 
-        domains = _domains(vt_data, list(ipdb_data), censys_results)
+        # Same shape on the domain side: a domain or a url seeds the
+        # fan-out with its own host, a hash with what VT and the IP sources
+        # turned up. _merge_indicators keeps VT's order, de-duplicates, and
+        # re-applies IOC_LIMIT to the union.
+        primary_domain = domain_of(indicator)
+        domains = _merge_indicators(
+            [primary_domain] if primary_domain else [],
+            _domains(vt_data, list(ipdb_data), censys_results),
+        )
         if domains and "rdap" in domain_sources:
             rdap_provider = by_name("rdap", pool)
             rdap_results = await _bounded_gather(RDAP_CONCURRENCY, *(

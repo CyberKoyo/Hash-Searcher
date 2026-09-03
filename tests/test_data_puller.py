@@ -9,9 +9,10 @@ or the network, so the tests are deterministic regardless of which API keys
 import pytest
 
 from hash_searcher.api.api_data_puller import data_puller
-from hash_searcher.api.base_call import make_error
+from hash_searcher.api.base_call import error_message, is_error, make_error
 from hash_searcher.api.registry import Provider, by_name
 from hash_searcher.cache import ResponseCache
+from hash_searcher.indicators import Indicator
 
 FAKE_VT_DATA = {
     "data": {"relationships": {"contacted_ips": {"data": [{"id": "198.51.100.10"}]}}}
@@ -96,7 +97,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
     monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
 
-    result = await data_puller("deadbeef", ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "deadbeef"), ResponseCache(enabled=False))
 
     # The disabled providers' fetches were never invoked -- not just absent
     # from the result.
@@ -146,7 +147,7 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
     monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
     monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
 
-    result = await data_puller("deadbeef", ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "deadbeef"), ResponseCache(enabled=False))
 
     assert vt_stub.calls == []
     assert otx_stub.calls == []
@@ -191,8 +192,8 @@ async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_pa
                         lambda: [_provider("virustotal")])
 
     cache = ResponseCache(path=tmp_path / "c.db")
-    await data_puller("deadbeef" * 8, cache)
-    await data_puller("deadbeef" * 8, cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
     cache.close()
 
     assert calls == ["deadbeef" * 8], "the second run should have hit the cache"
@@ -204,7 +205,7 @@ async def test_otx_and_abuseipdb_are_cached_too(monkeypatch, tmp_path):
     async def fake_get_vt(client, file_hash):
         return FAKE_VT_DATA
 
-    async def fake_get_otx(client, file_hash):
+    async def fake_get_otx(client, file_hash, indicator_type="file"):
         otx_calls.append(file_hash)
         return {"pulse_info": {"count": 1, "pulses": []}}
 
@@ -221,8 +222,8 @@ async def test_otx_and_abuseipdb_are_cached_too(monkeypatch, tmp_path):
     )
 
     cache = ResponseCache(path=tmp_path / "c.db")
-    await data_puller("deadbeef" * 8, cache)
-    await data_puller("deadbeef" * 8, cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
     cache.close()
 
     assert otx_calls == ["deadbeef" * 8]
@@ -244,11 +245,11 @@ async def test_refresh_bypasses_the_cache_for_every_provider(monkeypatch, tmp_pa
 
     path = tmp_path / "c.db"
     warm = ResponseCache(path=path)
-    await data_puller("deadbeef" * 8, warm)
+    await data_puller(Indicator("hash", "deadbeef" * 8), warm)
     warm.close()
 
     refreshing = ResponseCache(path=path, refresh=True)
-    await data_puller("deadbeef" * 8, refreshing)
+    await data_puller(Indicator("hash", "deadbeef" * 8), refreshing)
     refreshing.close()
 
     assert len(calls) == 2
@@ -271,7 +272,7 @@ async def test_no_cache_disables_caching_entirely(monkeypatch, tmp_path):
 
     for _ in range(2):
         cache = ResponseCache(enabled=False)
-        await data_puller("deadbeef" * 8, cache)
+        await data_puller(Indicator("hash", "deadbeef" * 8), cache)
         cache.close()
 
     assert len(calls) == 2
@@ -293,7 +294,7 @@ async def test_ips_harvested_from_strings_reach_abuseipdb(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
                         lambda: [_provider("abuseipdb")])
 
-    await data_puller("a" * 64, ResponseCache(enabled=False),
+    await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False),
                       extra_ips=["198.51.100.10"])
     assert seen == ["198.51.100.10"]
 
@@ -320,7 +321,7 @@ async def test_extra_ips_merge_with_vts_own_without_duplicating(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("abuseipdb")])
 
-    await data_puller("a" * 64, ResponseCache(enabled=False),
+    await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False),
                       extra_ips=["198.51.100.10", "203.0.113.7"])
     assert seen == ["198.51.100.10", "203.0.113.7"]
 
@@ -351,7 +352,7 @@ async def test_extra_ips_merge_is_capped_at_ioc_limit(monkeypatch):
                         lambda: [_provider("virustotal"), _provider("abuseipdb")])
 
     extra = [f"203.0.113.{i}" for i in range(IOC_LIMIT)]  # already at the cap
-    await data_puller("a" * 64, ResponseCache(enabled=False), extra_ips=extra)
+    await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False), extra_ips=extra)
 
     assert len(seen) == IOC_LIMIT
     # VT's own IPs come first and must not be pushed out by the cap.
@@ -373,8 +374,8 @@ async def test_a_failed_virustotal_call_is_not_cached(monkeypatch, tmp_path):
                         lambda: [_provider("virustotal")])
 
     cache = ResponseCache(path=tmp_path / "c.db")
-    await data_puller("deadbeef" * 8, cache)
-    await data_puller("deadbeef" * 8, cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
+    await data_puller(Indicator("hash", "deadbeef" * 8), cache)
     cache.close()
 
     assert len(calls) == 2
@@ -405,7 +406,7 @@ async def test_only_providers_for_the_indicator_type_are_called(monkeypatch):
         Provider("crtsh", None, ("domain",), spy_crtsh),
     ])
 
-    await data_puller("a" * 64, ResponseCache(enabled=False))
+    await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
     assert called == []
 
 
@@ -438,7 +439,7 @@ async def test_the_kev_catalog_is_not_fetched_when_shodan_found_no_cves(monkeypa
         Provider("shodan", None, ("ip",), fake_shodan),
     ])
 
-    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
     assert fetched == []
     assert result["kev"] == {}
 
@@ -469,7 +470,7 @@ async def test_the_kev_catalog_is_fetched_once_when_a_cve_turns_up(monkeypatch):
         Provider("shodan", None, ("ip",), fake_shodan),
     ])
 
-    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
     # Two IPs, both reporting the same CVE: still one catalog download.
     assert len(fetched) == 1
     assert result["kev"]["vulnerabilities"] == [{"cveID": "CVE-2021-41617"}]
@@ -507,7 +508,7 @@ async def test_threatfox_is_asked_about_every_contacted_ip_not_just_the_sample(m
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("threatfox")])
 
-    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
 
     assert sorted(asked) == sorted(["a" * 64, "198.51.100.10", "203.0.113.7"])
     # Keyed by IP, the way shodan and greynoise are.
@@ -575,7 +576,7 @@ async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tm
 
     async def run():
         cache = ResponseCache(path=path)
-        await data_puller(file_hash, cache)
+        await data_puller(Indicator("hash", file_hash), cache)
         cache.close()
 
     await run()
@@ -630,7 +631,7 @@ async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("threatfox")])
 
-    result = await data_puller(file_hash, ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", file_hash), ResponseCache(enabled=False))
 
     assert len(result["threatfox_ips"]) == IOC_LIMIT
     # A hardcoded ceiling, not one derived from THREATFOX_CONCURRENCY: the
@@ -680,7 +681,7 @@ async def test_censys_is_reached_end_to_end_through_data_puller(monkeypatch):
     monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("censys")])
 
-    result = await data_puller("a" * 64, ResponseCache(enabled=False))
+    result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
 
     assert calls == ["198.51.100.10", "203.0.113.7"]
     assert result["censys"] == [{"ip": ip, "services": []} for ip in calls]
@@ -778,7 +779,7 @@ async def test_every_provider_site_reads_its_timing_from_the_pool_not_the_regist
 
     async def run():
         cache = ResponseCache(path=path)
-        await data_puller(file_hash, cache)
+        await data_puller(Indicator("hash", file_hash), cache)
         cache.close()
 
     await run()
@@ -923,13 +924,13 @@ async def test_data_puller_honors_the_patched_pools_cache_ttl_not_the_registrys(
     file_hash = "deadbeef" * 8
 
     cache = ResponseCache(path=path)
-    await data_puller(file_hash, cache)
+    await data_puller(Indicator("hash", file_hash), cache)
     cache.close()
 
     _backdate(path, "virustotal", 2)
 
     cache = ResponseCache(path=path)
-    await data_puller(file_hash, cache)
+    await data_puller(Indicator("hash", file_hash), cache)
     cache.close()
 
     assert calls == [file_hash, file_hash], (
@@ -1075,3 +1076,162 @@ async def test_a_provider_name_is_rejected_where_a_provider_belongs():
             await fetch_censys(None, ["203.0.113.1"], cache, wrong)
         with pytest.raises(TypeError, match=r"_cached needs the resolved Provider"):
             await _cached(cache, "k", fetch, provider=wrong)
+
+
+# --- Task B2: the entry is keyed by indicator kind ---------------------------
+#
+# `for_indicator()` has selected providers by type since Phase 4, but the ip
+# and domain providers only ever saw indicators VirusTotal handed them. These
+# pin that an ip or a domain typed on the command line reaches exactly the
+# same providers, without a VT-by-hash call standing in front of them.
+
+
+async def test_an_ip_indicator_reaches_every_ip_source_and_never_virustotal(
+        monkeypatch):
+    """`hash-searcher 198.51.100.10`. VT answers for file hashes only, so
+    calling it here would spend a 4-per-minute quota on a guaranteed 404."""
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider(name) for name in
+                 ("virustotal", "abuseipdb", "censys", "shodan", "greynoise",
+                  "threatfox", "otx")],
+    )
+
+    vt_stub = _Recorder(FAKE_VT_DATA)
+    ipdb_stub = _Recorder({"data": {}})
+    censys_stub = _Recorder([{"ip": "198.51.100.10"}])
+    shodan_stub = _Recorder({"ip": "198.51.100.10"})
+    greynoise_stub = _Recorder({"noise": True})
+    threatfox_stub = _Recorder({"query_status": "ok"})
+    otx_stub = _Recorder({})
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", shodan_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_greynoise", greynoise_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+
+    result = await data_puller(Indicator("ip", "198.51.100.10"),
+                               ResponseCache(enabled=False))
+
+    assert vt_stub.calls == []
+    assert result["ips"] == ["198.51.100.10"]
+    for stub in (ipdb_stub, shodan_stub, greynoise_stub):
+        assert [call[0][1] for call in stub.calls] == ["198.51.100.10"]
+    assert censys_stub.calls  # fetch_censys(client, ips, cache, provider)
+    assert censys_stub.calls[0][0][1] == ["198.51.100.10"]
+    assert otx_stub.calls[0][0][1] == "198.51.100.10"
+    # ThreatFox answered for the address through the per-IP fan-out, which is
+    # the same question the sample-level slot would have asked -- so it is
+    # asked once, not twice, and the answer lands where an IP's answer lives.
+    assert result["threatfox_ips"] == {"198.51.100.10": {"query_status": "ok"}}
+    assert result["threatfox"] is None
+    assert len(threatfox_stub.calls) == 1
+
+
+async def test_an_ip_indicator_types_its_otx_lookup(monkeypatch):
+    """OTX is one endpoint per indicator type. Asking the `file` endpoint
+    about an address returns a 404 that reads as "OTX has never seen it"."""
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider("otx")],
+    )
+    otx_stub = _Recorder({})
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+
+    await data_puller(Indicator("ip", "198.51.100.10"), ResponseCache(enabled=False))
+    assert otx_stub.calls[0][1]["indicator_type"] == "IPv4"
+
+    otx_stub.calls.clear()
+    await data_puller(Indicator("ip", "2001:db8::1"), ResponseCache(enabled=False))
+    assert otx_stub.calls[0][1]["indicator_type"] == "IPv6"
+
+    otx_stub.calls.clear()
+    await data_puller(Indicator("domain", "evil.example"), ResponseCache(enabled=False))
+    assert otx_stub.calls[0][1]["indicator_type"] == "domain"
+
+    otx_stub.calls.clear()
+    await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
+    assert otx_stub.calls[0][1]["indicator_type"] == "file"
+
+
+async def test_a_domain_indicator_reaches_the_domain_sources(monkeypatch):
+    """`hash-searcher evil.example`: RDAP, crt.sh, and ThreatFox."""
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider(name) for name in
+                 ("virustotal", "rdap", "crtsh", "threatfox", "abuseipdb")],
+    )
+
+    vt_stub = _Recorder(FAKE_VT_DATA)
+    rdap_stub = _Recorder({"handle": "x"})
+    crtsh_stub = _Recorder([{"name_value": "evil.example"}])
+    threatfox_stub = _Recorder({"query_status": "ok"})
+    ipdb_stub = _Recorder({"data": {}})
+
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_rdap", rdap_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_crtsh", crtsh_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
+
+    result = await data_puller(Indicator("domain", "evil.example"),
+                               ResponseCache(enabled=False))
+
+    assert vt_stub.calls == []
+    assert ipdb_stub.calls == []          # no IP to fan out over
+    assert result["domains"] == ["evil.example"]
+    assert [call[0][1] for call in rdap_stub.calls] == ["evil.example"]
+    assert [call[0][1] for call in crtsh_stub.calls] == ["evil.example"]
+    # The sample-level slot, because for a domain "what is this indicator"
+    # IS the domain question.
+    assert result["threatfox"] == {"query_status": "ok"}
+    assert threatfox_stub.calls[0][0][1] == "evil.example"
+
+
+async def test_a_url_indicator_runs_the_domain_sources_over_its_host(monkeypatch):
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider(name) for name in ("rdap", "threatfox")],
+    )
+    rdap_stub = _Recorder({"handle": "x"})
+    threatfox_stub = _Recorder({"query_status": "ok"})
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_rdap", rdap_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
+
+    result = await data_puller(Indicator("url", "https://evil.example/a"),
+                               ResponseCache(enabled=False))
+
+    assert result["domains"] == ["evil.example"]
+    assert [call[0][1] for call in rdap_stub.calls] == ["evil.example"]
+    # ThreatFox is asked about the URL itself, not its host: it carries URL
+    # IOCs, and the host is a strictly weaker question.
+    assert threatfox_stub.calls[0][0][1] == "https://evil.example/a"
+
+
+async def test_a_non_hash_indicator_says_why_virustotal_has_no_answer(monkeypatch):
+    """Not "VirusTotal key not set" -- the key may be perfectly fine. VT's
+    file endpoint simply does not answer for an address."""
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [_provider("virustotal")],
+    )
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt",
+                        _Recorder(FAKE_VT_DATA))
+
+    result = await data_puller(Indicator("ip", "198.51.100.10"),
+                               ResponseCache(enabled=False))
+    assert is_error(result["vt"])
+    assert "file hash" in error_message(result["vt"])
+
+
+async def test_data_puller_rejects_a_bare_string(monkeypatch):
+    """The pre-B2 form -- data_puller(Indicator("hash", "deadbeef"), cache) -- is still
+    arity-compatible with today's signature, and a bare hash string reaching
+    the kind switch would raise `'str' object has no attribute 'kind'` from
+    somewhere inside it, naming neither the caller nor the argument. The
+    same courtesy _require_provider extends, for the same reason."""
+    with pytest.raises(TypeError, match="classified Indicator"):
+        await data_puller("deadbeef" * 8, ResponseCache(enabled=False))
