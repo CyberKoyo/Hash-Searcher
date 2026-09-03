@@ -552,3 +552,44 @@ def test_a_null_tag_is_absent_from_the_json_report_rather_than_named_None():
          "data": [{"tags": ["trojan", None, {"a": 1}, 7]}]})
     assert result.value.tags == ["trojan"]
     assert "None" not in result.value.tags
+
+
+def test_as_counts_drops_a_negative_the_way_as_count_floors_one():
+    """The floor as_count got a docstring, an opt-out and a test for.
+
+    `if number >= 0:` in as_counts had none of the three for a round, and
+    the two functions have to agree: a negative is not a tally and not a
+    port, whichever container it arrives in. Literal expectations, so this
+    reddens on the floor being removed and on it being widened.
+
+    The asymmetry that remains is deliberate and recorded here as well as
+    in the docstring: as_counts has no `floor=None` opt-out because no
+    `list[int]` field in the module admits a negative -- both are port
+    lists -- while two `int` fields genuinely do. Which fields those are is
+    enumerated by test_only_the_two_scoring_fields_carry_a_negative rather
+    than described, so a signed list field added later shows up there.
+    """
+    from hash_searcher.models import as_count, as_counts
+
+    assert as_counts([443, -1, 0, -10 ** 40]) == [443, 0]
+    assert as_counts([-5]) == []
+    assert as_count(-5) == 0
+    assert as_count(-5, floor=None) == -5
+
+    # No list[int] field is signed, so no opt-out exists to be tested.
+    signed_list_fields = [
+        (cls.__name__, spec.name)
+        for cls in _models_dataclasses()
+        for spec in dataclasses.fields(cls)
+        if spec.type == list[int]
+        and cls(**{f.name: ([-5] if f.name == spec.name else None)
+                   for f in dataclasses.fields(cls)
+                   if f.name == spec.name
+                   or (f.default is dataclasses.MISSING
+                       and f.default_factory is dataclasses.MISSING)}
+                ).__getattribute__(spec.name) == [-5]
+    ]
+    assert signed_list_fields == [], (
+        f"{signed_list_fields} keeps a negative, so as_counts' floor is no "
+        f"longer a property of every list[int] field and needs the opt-out "
+        f"as_count has")

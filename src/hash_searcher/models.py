@@ -97,6 +97,25 @@ def as_counts(value) -> list[int]:
     443}` yields [], not [443] -- because the field says `list[int]` and
     guessing at a caller's intent is how the shapes below stopped matching
     their declarations in the first place.
+
+    A NEGATIVE member is dropped for the same reason as_count floors one at
+    0: -5 is no more a tally or a port number than "<script>" is. That
+    sentence went unwritten for a round while as_count's identical floor
+    got five lines, an opt-out and a test of its own, which is how a
+    reviewer found it by reading `if number >= 0:` rather than by reading
+    this.
+
+    There is deliberately NO `floor=None` opt-out to match as_count's.
+    as_count needs one because two int fields in this module genuinely
+    admit a negative -- scoring.py's W_SIGNED is -20 and W_INTERNET_NOISE
+    is -10, so Signal.points and the Verdict.score summed from them argue
+    AGAINST a verdict. No `list[int]` field is like that: both of them are
+    port lists, and a negative port is not a port. An unused opt-out would
+    be machinery that says a field somewhere needs it, and none does.
+    test_only_the_two_scoring_fields_carry_a_negative is what enumerates
+    which fields admit a negative, so if a signed `list[int]` field is ever
+    declared it will be visible there rather than depending on this
+    paragraph staying true.
     """
     if not isinstance(value, list):
         return []
