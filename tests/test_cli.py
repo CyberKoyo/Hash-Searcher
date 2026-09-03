@@ -52,6 +52,10 @@ def test_short_and_long_output_flags_agree():
     ("report.md", "markdown"),
     ("report.markdown", "markdown"),
     ("REPORT.MD", "markdown"),
+    # Both are JSON documents, and both need an extension of their own:
+    # `.json` already means this tool's report.
+    ("report.stix", "stix"),
+    ("report.misp", "misp"),
 ])
 def test_output_format_is_chosen_by_extension(name, expected):
     assert output_format(name) == expected
@@ -294,7 +298,7 @@ def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, c
     # than one that happens: this is the only thing a user gets back when
     # `-o` is wrong.
     assert ("Unrecognized output extension: report.txt "
-            "(use .json, .pdf, .csv, .md, or .markdown)") in printed
+            "(use .json, .pdf, .csv, .md, .markdown, .stix, or .misp)") in printed
     # And a coverage check on top of it: a format added to OUTPUT_FORMATS
     # but left out of the sentence a user reads is the drift that made this
     # message worth deriving in the first place.
@@ -337,7 +341,8 @@ def test_every_declared_output_format_has_a_writer(tmp_path, monkeypatch, capsys
 
     monkeypatch.chdir(tmp_path)
     called = []
-    for name in ("write_json", "write_pdf", "write_csv", "write_markdown"):
+    for name in ("write_json", "write_pdf", "write_csv", "write_markdown",
+                 "write_stix", "write_misp"):
         monkeypatch.setattr(
             cli, name,
             lambda report, path, verdict=None, name=name: called.append(name))
@@ -351,7 +356,7 @@ def test_every_declared_output_format_has_a_writer(tmp_path, monkeypatch, capsys
     # branch" case as the wrong names.
     assert len(called) == len(cli.OUTPUT_FORMATS)
     assert set(called) == {"write_json", "write_pdf", "write_csv",
-                           "write_markdown"}
+                           "write_markdown", "write_stix", "write_misp"}
 
 
 async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(

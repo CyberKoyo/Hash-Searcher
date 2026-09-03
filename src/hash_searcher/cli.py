@@ -25,7 +25,9 @@ from .models import Report, Verdict
 from .render.csv_out import write_csv
 from .render.json_out import write_json
 from .render.markdown import write_markdown
+from .render.misp import write_misp
 from .render.pdf import write_pdf
+from .render.stix import write_stix
 from .render.tty import render
 from .scoring import score
 from .static.runner import analyze
@@ -166,6 +168,12 @@ OUTPUT_FORMATS = {
     ".csv": "csv",
     ".md": "markdown",
     ".markdown": "markdown",
+    # A STIX bundle is JSON, and so is a MISP event -- but `.json` already
+    # means this tool's own report, and silently writing a different schema
+    # under it would break every consumer keyed on the existing one. Each
+    # gets an extension that says which document it is.
+    ".stix": "stix",
+    ".misp": "misp",
 }
 
 
@@ -209,6 +217,10 @@ def write_report(report: Report, output: str,
         write_csv(report, path, verdict)
     elif fmt == "markdown":
         write_markdown(report, path, verdict)
+    elif fmt == "stix":
+        write_stix(report, path, verdict)
+    elif fmt == "misp":
+        write_misp(report, path, verdict)
     else:
         print(unrecognized_output_message(output))
 

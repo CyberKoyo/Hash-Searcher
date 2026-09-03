@@ -84,6 +84,15 @@ actually found.
 | `.pdf` | PDF report | The document you attach to a case. |
 | `.csv` | One spreadsheet row | A triage queue: N indicators sorted by score, filtered by source. |
 | `.md`, `.markdown` | Markdown | A pasteable ticket or chat comment. |
+| `.stix` | STIX 2.1 bundle | Ingest into a TIP: the sample, the infrastructure it contacted, and the relationships between them. |
+| `.misp` | MISP event JSON | `POST /events` into MISP. Unpublished — fanning it out to connected instances is your call, not the tool's. |
+
+Both `.stix` and `.misp` are JSON documents, and both get an extension of
+their own because `.json` already means this tool's own report. Neither adds
+a dependency: they are built with `json` and `uuid`. STIX ids are UUIDv5
+rather than random, so re-running the same indicator produces a bundle that
+diffs against the last one instead of importing as a second, unrelated set
+of objects.
 
 An extension nothing writes is refused with the list above rather than
 written as some default — and in a batch it is refused **before** the first
