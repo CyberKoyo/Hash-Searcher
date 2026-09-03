@@ -2,16 +2,26 @@
 
 analysis/ produces these, render/ consumes them. Nothing here does I/O or
 formatting -- that is the whole point of the split.
+
+What this module does own is the one guarantee the split makes possible: a
+field here holds the type it declares. `as_count` used to be a function nine
+extractor call sites had to remember to call, and the tenth -- CensysHost.ports
+at analysis/censys.py -- was written without anyone noticing, which is what an
+invariant maintained by memory always eventually does. `@coerced` moves it into
+the type: constructing the dataclass is what makes the declaration true, and a
+new extractor cannot get it wrong because there is nothing left for it to do.
 """
 
+import functools
 import math
-from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from dataclasses import dataclass, field, fields
+from types import UnionType
+from typing import Generic, TypeVar, Union, get_args, get_origin
 
 T = TypeVar("T")
 
 
-def as_count(value, default: int = 0) -> int:
+def as_count(value, default: int = 0, floor: int | None = 0) -> int:
     """A provider-supplied number, or `default` when it is not one.
 
     Every int field below that an extractor populates from a payload was
@@ -31,20 +41,201 @@ def as_count(value, default: int = 0) -> int:
     an int in Python and is not one here, because `{"malicious": true}` is
     not a verdict tally.
 
+    `floor` applies that same sentence to a NEGATIVE, which round 1 left
+    through: -3 is no more a tally of engines than "<script>" is. It is not
+    an academic case. scoring.py::_detection_signal branches on
+    `detection.malicious == 0` first, so a negative takes neither the zero
+    path nor an honest non-zero one -- `{"malicious": -5}` with matching
+    buckets was measured end to end as `ratio='-5/-25' verdict=SUSPICIOUS
+    score=20`. `floor=None` is the opt-out, for the two fields in this module
+    that are genuinely signed: scoring.py's W_SIGNED is -20 and
+    W_INTERNET_NOISE is -10, so Signal.points and the Verdict.score summed
+    from them admit a negative by design. A blanket `max(0, ...)` would have
+    silently deleted the only two signals in the tree that argue AGAINST a
+    verdict.
+
     Lives in models.py, beside the `malicious: int` declarations it exists
     to make true, rather than in one extractor that the next extractor then
     has to remember about -- the argument A4c made for moving the height fit
-    into pdf.py's cell factory.
+    into pdf.py's cell factory. `@coerced` below finishes that argument: no
+    extractor calls this at all any more.
     """
     if isinstance(value, bool):
-        return default
-    if isinstance(value, int):
+        coerced = default
+    elif isinstance(value, int):
+        coerced = value
+    elif isinstance(value, float) and math.isfinite(value):
+        coerced = int(value)
+    else:
+        coerced = default
+    return coerced if floor is None else max(floor, coerced)
+
+
+def as_counts(value) -> list[int]:
+    """The counts in a provider-supplied list, for a `list[int]` field.
+
+    DROPS what is not a count rather than coercing it to `as_count`'s
+    default, which is the difference between a list field and a scalar one:
+    a scalar must hold something and 0 is the honest nothing, while a list
+    can simply be shorter. Coercing would invent a port 0 that no scanner
+    reported. This is exactly what analysis/shodan.py already did by hand
+    with `if isinstance(p, int)`; CensysHost.ports, declared the same
+    `list[int]`, did not, and shipped `['8080/tcp', 443]` into a JSON
+    document whose schema says these are integers.
+
+    A value that is not a list at all is not a list of counts -- `{"ports":
+    443}` yields [], not [443] -- because the field says `list[int]` and
+    guessing at a caller's intent is how the shapes below stopped matching
+    their declarations in the first place.
+    """
+    if not isinstance(value, list):
+        return []
+    counts = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            continue
+        if isinstance(item, float) and not math.isfinite(item):
+            continue
+        number = int(item)
+        if number >= 0:
+            counts.append(number)
+    return counts
+
+
+def as_texts(value) -> list[str]:
+    """The strings in a provider-supplied list, for a `list[str]` field.
+
+    Same shape rule as as_counts and a different coercion, because str() is
+    total where int() is not: a member that is not a string BECOMES one
+    rather than being dropped, so nothing is deleted from the report.
+
+    The crash this closes is not hypothetical and is not in this layer.
+    render/tty.py and render/pdf.py join these lists -- `', '.join(
+    bazaar.value.tags)`, `', '.join(vt.submission.names)`, sixteen sites --
+    and str.join raises TypeError on a non-string member. Measured at HEAD
+    against `{"data": [{"tags": [1, 2]}]}`: TTY and PDF both raised
+    `sequence item 0: expected str instance, int found`, unhandled, while
+    the JSON surface printed it happily. Same failure shape as the numbers
+    above, one declared type over.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item if isinstance(item, str) else str(item) for item in value]
+
+
+def _as_declared_text(value):
+    """A `str` / `str | None` field's value, at the type it declares.
+
+    None is left alone deliberately. A `str` field holding None is this
+    repo's own bug rather than provider data, and turning it into the string
+    "None" would hide it while changing what the JSON report emits for that
+    key. Every consumer that could raise on a non-string -- the str.join
+    sites in render/ -- already skips a None with `if x`.
+    """
+    if value is None or isinstance(value, str):
         return value
-    if isinstance(value, float) and math.isfinite(value):
-        return int(value)
-    return default
+    return str(value)
 
 
+#: field annotation -> the one total coercion for it. A field whose
+#: annotation is NOT a key here is opted out, and the annotation IS the
+#: opt-out: `int | None` (CensysHost.asn, PEInfo.entry_point) and `int | str`
+#: (OTXReport.recorded_instances) are declared as unions precisely because
+#: they carry a provider value that is not a plain count -- an `asn` of
+#: "AS15169" is data, and coercing it to 0 would delete it. That is a
+#: property of the source now, not a sentence in a test docstring; round 1's
+#: docstring claimed a two-item exclusion list and the third item was two
+#: lines from the field it read.
+_COERCIONS = {
+    "int": lambda v, floor: as_count(v, floor=floor),
+    "list[int]": lambda v, floor: as_counts(v),
+    "str": lambda v, floor: _as_declared_text(v),
+    "list[str]": lambda v, floor: as_texts(v),
+}
+
+
+def _declared(annotation) -> str | None:
+    """Which coercion an annotation asks for, or None for an opt-out."""
+    if annotation is int:
+        return "int"
+    if annotation is str:
+        return "str"
+    if annotation == list[int]:
+        return "list[int]"
+    if annotation == list[str]:
+        return "list[str]"
+    if get_origin(annotation) in (Union, UnionType):
+        if set(get_args(annotation)) == {str, type(None)}:
+            return "str"
+    return None
+
+
+def coerced(cls=None, *, signed: tuple[str, ...] = ()):
+    """Class decorator: after construction, every field holds its declared type.
+
+    The alternative -- and what this branch did for nine rounds -- is a rule
+    applied at call sites. `test_the_two_optional_payload_numbers_left_
+    uncoerced_are_inert` is the proof that does not work: it asserted an
+    exclusion list of two, in a docstring, while the third exclusion sat two
+    lines below the field the test read, uncoerced, wrong on the JSON surface
+    and crashing on the Censys one.
+
+    The reviewer's objection to doing this was that it would make a hostile
+    value unconstructible and so make the pdf escaping untestable. It does
+    make `Detection(suspicious="<script>")` impossible -- that is the point --
+    but escaping is exercised through `str` fields (test_render_pdf.py:95,
+    :141, :346) which no coercion here touches, and rule 1 is pinned from the
+    source besides. Nothing was traded away.
+
+    `signed` names the `int` fields that legitimately admit a negative; see
+    as_count. Passing a name that is not an `int` field on this class raises
+    at import, so a renamed field cannot silently leave a floor on.
+
+    Applied only to the classes that declare a coercible field -- on any
+    other it would be a no-op decoration nobody could justify. What stops the
+    next dataclass being forgotten is not this list but
+    test_every_models_field_holds_the_type_it_declares, which enumerates the
+    module rather than naming classes.
+    """
+    def decorate(target):
+        coercions = []
+        for spec in fields(target):
+            kind = _declared(spec.type)
+            if kind is not None:
+                coercions.append((spec.name, _COERCIONS[kind],
+                                  None if spec.name in signed else 0))
+        names = {name for name, _, _ in coercions}
+        unknown = set(signed) - names
+        if unknown:
+            raise TypeError(
+                f"{target.__name__} declares no coercible field(s) "
+                f"{sorted(unknown)} to mark signed")
+        if not coercions:
+            raise TypeError(
+                f"{target.__name__} declares no coercible field; @coerced on "
+                f"it says something about the class that is not true")
+
+        # __init__ rather than __post_init__: @dataclass has already run by
+        # the time this decorator does (decorators apply bottom-up), and
+        # @dataclass decides whether to emit a __post_init__ call while it
+        # builds __init__ -- so a __post_init__ installed afterwards is
+        # never called. Wrapping __init__ also covers dataclasses.replace().
+        built = target.__init__
+
+        @functools.wraps(built)
+        def __init__(self, *args, **kwargs):
+            built(self, *args, **kwargs)
+            for name, coerce, floor in coercions:
+                # object.__setattr__ because most of these are frozen; the
+                # invariant has to hold for them too.
+                object.__setattr__(self, name, coerce(getattr(self, name), floor))
+
+        target.__init__ = __init__
+        return target
+
+    return decorate if cls is None else decorate(cls)
+
+@coerced
 @dataclass(frozen=True)
 class SourceResult(Generic[T]):
     """One shape for every source that can fail: never asked, asked and
@@ -68,6 +259,7 @@ class SourceResult(Generic[T]):
         return self.queried and self.error is None
 
 
+@coerced
 @dataclass
 class KEVReport:
     """CISA KEV's answer for the CVEs observed on contacted hosts.
@@ -81,6 +273,7 @@ class KEVReport:
     unchecked: int = 0
 
 
+@coerced
 @dataclass(frozen=True)
 class SigmaRule:
     title: str
@@ -88,6 +281,7 @@ class SigmaRule:
     level: str
 
 
+@coerced
 @dataclass(frozen=True)
 class AttackTechnique:
     id: str
@@ -96,6 +290,7 @@ class AttackTechnique:
     url: str | None = None
 
 
+@coerced
 @dataclass(frozen=True)
 class Detection:
     """VT's last_analysis_stats, reduced to the five verdict buckets.
@@ -120,6 +315,7 @@ class Detection:
         return f"{self.malicious}/{self.total}"
 
 
+@coerced
 @dataclass(frozen=True)
 class ThreatClass:
     label: str
@@ -127,6 +323,7 @@ class ThreatClass:
     categories: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class Submission:
     first_seen: str | None = None
@@ -134,6 +331,7 @@ class Submission:
     names: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class Signature:
     verified: bool = False
@@ -141,6 +339,7 @@ class Signature:
     product: str | None = None
 
 
+@coerced
 @dataclass(frozen=True)
 class SandboxVerdict:
     sandbox: str
@@ -148,6 +347,7 @@ class SandboxVerdict:
     malware_names: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class YaraMatch:
     rule: str
@@ -155,6 +355,7 @@ class YaraMatch:
     description: str | None = None
 
 
+@coerced
 @dataclass(frozen=True)
 class PEInfo:
     imphash: str | None = None
@@ -163,6 +364,7 @@ class PEInfo:
     compiled: str | None = None
 
 
+@coerced
 @dataclass
 class VTReport:
     found: bool
@@ -187,6 +389,7 @@ class VTReport:
         return [r for r in self.sigma if r.level == level]
 
 
+@coerced
 @dataclass
 class OTXReport:
     """Two flags, two genuinely different questions.
@@ -211,6 +414,7 @@ class OTXReport:
     techniques: list[AttackTechnique] = field(default_factory=list)
 
 
+@coerced
 @dataclass
 class IPReport:
     ip: str
@@ -220,6 +424,7 @@ class IPReport:
     domain: str | None = None
 
 
+@coerced
 @dataclass
 class CensysHost:
     ip: str
@@ -232,6 +437,7 @@ class CensysHost:
     error: str | None = None
 
 
+@coerced
 @dataclass
 class WhoisRecord:
     domain: str
@@ -241,6 +447,7 @@ class WhoisRecord:
     error: str | None = None
 
 
+@coerced
 @dataclass
 class BazaarReport:
     """MalwareBazaar's answer for one hash.
@@ -260,6 +467,7 @@ class BazaarReport:
     yara: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass
 class ShodanReport:
     """Shodan InternetDB's answer for one IP.
@@ -274,6 +482,7 @@ class ShodanReport:
     hostnames: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass
 class GreyNoiseReport:
     """Whether an IP is internet background noise or was aimed at you."""
@@ -283,6 +492,7 @@ class GreyNoiseReport:
     last_seen: str | None = None
 
 
+@coerced
 @dataclass
 class CertReport:
     """Sibling domains from certificate transparency.
@@ -295,6 +505,7 @@ class CertReport:
     count: int = 0
 
 
+@coerced
 @dataclass
 class ThreatFoxReport:
     """ThreatFox's family attribution for one indicator."""
@@ -304,6 +515,7 @@ class ThreatFoxReport:
     tags: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class KEVEntry:
     """One CVE CISA has confirmed is exploited in the wild."""
@@ -315,6 +527,7 @@ class KEVEntry:
     ransomware: bool = False
 
 
+@coerced(signed=("points",))
 @dataclass(frozen=True)
 class Signal:
     name: str
@@ -322,6 +535,7 @@ class Signal:
     detail: str
 
 
+@coerced(signed=("score",))
 @dataclass(frozen=True)
 class Verdict:
     level: str
@@ -329,6 +543,7 @@ class Verdict:
     signals: list[Signal] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class EntropyReport:
     overall: float = 0.0
@@ -336,6 +551,7 @@ class EntropyReport:
     note: str = ""
 
 
+@coerced
 @dataclass(frozen=True)
 class FileTypeReport:
     detected: str | None = None
@@ -344,6 +560,7 @@ class FileTypeReport:
     note: str = ""
 
 
+@coerced
 @dataclass(frozen=True)
 class PESection:
     name: str
@@ -352,6 +569,7 @@ class PESection:
     executable: bool = False
 
 
+@coerced
 @dataclass(frozen=True)
 class PEStaticReport:
     imports: dict[str, list[str]] = field(default_factory=dict)
@@ -371,6 +589,7 @@ class PEStaticReport:
     section_entropy_note: str = ""
 
 
+@coerced
 @dataclass(frozen=True)
 class YaraHit:
     rule: str
@@ -378,6 +597,7 @@ class YaraHit:
     tags: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class IOCSet:
     ips: list[str] = field(default_factory=list)
@@ -385,12 +605,14 @@ class IOCSet:
     urls: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass(frozen=True)
 class StringsReport:
     count: int = 0
     iocs: IOCSet = field(default_factory=IOCSet)
 
 
+@coerced
 @dataclass
 class StaticReport:
     """One assembly point for every local static analyzer.
@@ -421,6 +643,7 @@ class StaticReport:
     failed: list[str] = field(default_factory=list)
 
 
+@coerced
 @dataclass
 class Report:
     indicator: str
