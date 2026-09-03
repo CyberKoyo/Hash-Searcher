@@ -1502,9 +1502,11 @@ def _paragraph_texts(tree):
     Not "the first positional argument". Round 2's guard read `node.args[0]`
     and skipped the call entirely when there was none, so reportlab's
     documented `Paragraph(text=..., style=...)` form was never counted and
-    never checked. This takes every argument EXCEPT the style -- positional
-    index 1, or the `style` keyword -- so an argument in a position this
-    test did not anticipate is examined rather than ignored.
+    never checked. This takes every argument EXCEPT a provable style --
+    positional index 1 when no expansion makes indexes uncertain, or the
+    explicit `style` keyword. Expanded positional and keyword arguments are
+    therefore examined in full: if their contents cannot be proven safe,
+    the guard fails closed.
     """
     import ast
 
@@ -1512,12 +1514,14 @@ def _paragraph_texts(tree):
         if not (isinstance(node, ast.Call)
                 and getattr(node.func, "id", None) == "Paragraph"):
             continue
+        expanded = any(isinstance(argument, ast.Starred)
+                       for argument in node.args)
         for index, argument in enumerate(node.args):
-            if index == 1 or isinstance(argument, ast.Starred):
+            if index == 1 and not expanded:
                 continue
             yield node, argument
         for keyword in node.keywords:
-            if keyword.arg in (None, "style"):
+            if keyword.arg == "style":
                 continue
             yield node, keyword.value
 
@@ -1631,6 +1635,10 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
             "    story.append(Paragraph(report.indicator + report.generated_at, s))\n",
         "reportlab's documented keyword form":
             "    story.append(Paragraph(text=report.indicator, style=s))\n",
+        "starred positional expansion":
+            "    story.append(Paragraph(*[report.indicator, s]))\n",
+        "expanded keyword mapping":
+            "    story.append(Paragraph(**{'text': report.indicator, 'style': s}))\n",
         "no mechanism at all":
             "    story.append(Paragraph(report.indicator, s))\n",
         "%-format with a provider template":
@@ -1659,15 +1667,18 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
     assert unproven(source) == set(), (
         "render/pdf.py itself is not clean, so this test proves nothing")
 
+    missed = []
     for label, line in smuggled.items():
         mutated = source.replace(anchor, line + anchor, 1)
         if "_smuggle" in line:
             mutated = mutated.replace(
                 "def build_story(",
                 "def _smuggle(r):\n    return f'{r.indicator}'\n\n\ndef build_story(", 1)
-        assert unproven(mutated), (
-            f"the escaping guard does not see a provider value reaching a "
-            f"Paragraph by {label}")
+        if not unproven(mutated):
+            missed.append(label)
+    assert missed == [], (
+        f"the escaping guard does not see provider values reaching a "
+        f"Paragraph by {missed}")
 
     # And it must still see an _x() that was simply deleted.
     assert unproven(source.replace('f"Hash: {_x(report.indicator)}"',
