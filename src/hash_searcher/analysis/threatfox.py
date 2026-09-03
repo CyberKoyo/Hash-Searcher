@@ -9,6 +9,7 @@ fourth state SourceResult wraps this in for.
 
 from ..api.base_call import error_message, is_error
 from ..models import SourceResult, ThreatFoxReport
+from .payload import as_mappings, as_sequence
 
 
 def extract_threatfox(raw) -> SourceResult[ThreatFoxReport]:
@@ -27,18 +28,20 @@ def extract_threatfox(raw) -> SourceResult[ThreatFoxReport]:
         return SourceResult(error=f"ThreatFox query_status: {status}",
                             queried=True)
 
-    entries = [e for e in (raw.get("data") or []) if isinstance(e, dict)]
+    entries = as_mappings(raw.get("data"))
     if not entries:
         return SourceResult(value=ThreatFoxReport(found=False), queried=True)
     entry = entries[0]
 
-    confidence = entry.get("confidence_level")
     return SourceResult(
         value=ThreatFoxReport(
             found=True,
             malware=entry.get("malware_printable") or entry.get("malware"),
-            confidence=confidence if isinstance(confidence, int) else 0,
-            tags=list(entry.get("tags") or []),
+            # No isinstance here any more: `confidence: int` is the
+            # declaration and models.py's @coerced is what makes it true, the
+            # same as every other payload number in the tree.
+            confidence=entry.get("confidence_level"),
+            tags=as_sequence(entry.get("tags")),
         ),
         queried=True,
     )

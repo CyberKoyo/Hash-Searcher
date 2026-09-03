@@ -1,13 +1,16 @@
-from ..models import IPReport, as_count
+from ..models import IPReport
+from .payload import as_mapping, as_sequence
 
 
 def extract_ips(raw_list) -> dict[str, IPReport]:
     """Keyed by IP -- see Task 4 for why not by (hostnames, domain)."""
     ips: dict[str, IPReport] = {}
-    for entry in raw_list:
-        inner = entry.get("data", {}) if isinstance(entry, dict) else {}
+    for entry in as_sequence(raw_list):
+        inner = as_mapping(as_mapping(entry).get("data"))
         ip = inner.get("ipAddress")
-        if not ip:
+        # A str, not merely truthy: this keys the dict `ips`, so an
+        # unhashable ipAddress raised TypeError on the assignment itself.
+        if not isinstance(ip, str) or not ip:
             continue
 
         hostnames = inner.get("hostnames") or []
@@ -21,10 +24,11 @@ def extract_ips(raw_list) -> dict[str, IPReport]:
             # and then `worst < ABUSE_CONFIDENCE`, so a non-numeric
             # confidence raised TypeError out of score() -- and therefore
             # out of the TTY, the PDF and the JSON, which all take a
-            # verdict. This is deferred minor #9, and it is the same defect
-            # as the VT one above, so it is fixed in the same round.
-            confidence=as_count(inner.get("abuseConfidenceScore")),
-            reports=len(reports) if isinstance(reports, list) else as_count(reports),
+            # verdict. The coercion is IPReport's own now (models.py's
+            # @coerced); this hands over the raw value and the declaration
+            # `confidence: int` is what makes it a number.
+            confidence=inner.get("abuseConfidenceScore"),
+            reports=len(reports) if isinstance(reports, list) else reports,
             hostnames=[h for h in hostnames if h],
             domain=inner.get("domain"),
         )

@@ -7,6 +7,7 @@ SAN on that certificate into one newline-joined string.
 
 from ..api.base_call import error_message, is_error
 from ..models import CertReport, SourceResult
+from .payload import as_mappings, as_sequence, as_text
 
 #: A wildcard-heavy domain returns thousands of rows. The rendered list is
 #: capped here; CertReport.count keeps the untruncated total, so the report
@@ -25,10 +26,8 @@ def extract_crtsh(raw) -> SourceResult[CertReport]:
 
     siblings: list[str] = []
     seen: set[str] = set()
-    for row in raw:
-        if not isinstance(row, dict):
-            continue
-        for name in str(row.get("name_value") or "").split("\n"):
+    for row in as_mappings(raw):
+        for name in as_text(row.get("name_value")).split("\n"):
             name = name.strip().lower().removeprefix("*.")
             # name_value carries rfc822Name SANs as well as DNS names --
             # example.com's own certificate log has one. An email address
@@ -61,7 +60,7 @@ def merge_crtsh(raw_list) -> SourceResult[CertReport]:
 
     rows = []
     errors = []
-    for raw in raw_list:
+    for raw in as_sequence(raw_list):
         if is_error(raw):
             errors.append(error_message(raw))
         elif isinstance(raw, list):

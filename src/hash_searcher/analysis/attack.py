@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ..models import AttackTechnique
+from .payload import as_mapping, as_mappings, as_sequence, dig
 
 BUNDLE_PATH = Path(__file__).resolve().parent.parent / "data" / "mitre-attack-enterprise.json"
 ATTACK_SOURCE = "mitre-attack"
@@ -29,19 +30,25 @@ def load_bundle() -> dict:
 
 
 def _index(bundle: dict) -> dict[str, AttackTechnique]:
+    """The bundle is vendored, but load_bundle already promises a corrupt one
+    is not fatal -- and `{"objects": null}` is valid JSON that json.loads
+    accepts, so the promise needs the same shape checks a live payload gets.
+    `bundle` is also a public argument of resolve().
+    """
     index: dict[str, AttackTechnique] = {}
-    for obj in bundle.get("objects", []):
+    for obj in as_mappings(as_mapping(bundle).get("objects")):
         if obj.get("type") != "attack-pattern":
             continue
         reference = next(
-            (r for r in obj.get("external_references", [])
-             if r.get("source_name") == ATTACK_SOURCE and r.get("external_id")),
+            (r for r in as_mappings(obj.get("external_references"))
+             if r.get("source_name") == ATTACK_SOURCE
+             and isinstance(r.get("external_id"), str) and r["external_id"]),
             None,
         )
         if not reference:
             continue
         tactic = next(
-            (p.get("phase_name") for p in obj.get("kill_chain_phases", [])
+            (p.get("phase_name") for p in as_mappings(obj.get("kill_chain_phases"))
              if p.get("kill_chain_name") == ATTACK_SOURCE),
             None,
         )
@@ -73,8 +80,11 @@ def resolve(technique_ids: list[str], bundle: dict | None = None) -> list[Attack
     index = _index(bundle) if bundle is not None else _default_index()
     out: list[AttackTechnique] = []
     seen: set[str] = set()
-    for tid in technique_ids:
-        if not tid or tid in seen:
+    for tid in as_sequence(technique_ids):
+        # isinstance before `tid in seen`: an unhashable id raises TypeError
+        # on the set membership test, and VT's behaviour_mitre_trees supplies
+        # the id straight off the payload.
+        if not isinstance(tid, str) or not tid or tid in seen:
             continue
         seen.add(tid)
         out.append(index.get(tid) or AttackTechnique(id=tid, name=tid))
@@ -83,26 +93,23 @@ def resolve(technique_ids: list[str], bundle: dict | None = None) -> list[Attack
 
 def technique_ids_from_otx(raw) -> list[str]:
     """OTX attack_ids carry both an id and a display_name; take the id."""
-    if not isinstance(raw, dict):
-        return []
     ids: list[str] = []
-    for pulse in (raw.get("pulse_info") or {}).get("pulses", []) or []:
-        for attack in pulse.get("attack_ids", []) or []:
+    for pulse in as_mappings(as_mapping(as_mapping(raw).get("pulse_info")).get("pulses")):
+        for attack in as_sequence(pulse.get("attack_ids")):
             tid = attack.get("id") if isinstance(attack, dict) else attack
-            if tid:
+            if isinstance(tid, str) and tid:
                 ids.append(tid)
     return ids
 
 
 def technique_ids_from_vt(raw) -> list[str]:
     """behaviour_mitre_trees is {sandbox: {tactics: [{techniques: [...]}]}}."""
-    if not isinstance(raw, dict):
-        return []
-    trees = raw.get("data", {}).get("attributes", {}).get("behaviour_mitre_trees") or {}
+    trees = as_mapping(dig(raw, "data", "attributes").get("behaviour_mitre_trees"))
     ids: list[str] = []
     for tree in trees.values():
-        for tactic in tree.get("tactics", []) or []:
-            for technique in tactic.get("techniques", []) or []:
-                if technique.get("id"):
-                    ids.append(technique["id"])
+        for tactic in as_mappings(as_mapping(tree).get("tactics")):
+            for technique in as_mappings(tactic.get("techniques")):
+                tid = technique.get("id")
+                if isinstance(tid, str) and tid:
+                    ids.append(tid)
     return ids

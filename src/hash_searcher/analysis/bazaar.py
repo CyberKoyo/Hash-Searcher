@@ -11,6 +11,7 @@ that is what the SourceResult wrapper is for.
 
 from ..api.base_call import error_message, is_error
 from ..models import BazaarReport, SourceResult
+from .payload import as_mappings, as_sequence
 
 
 def _first_seen(value) -> str | None:
@@ -36,7 +37,7 @@ def extract_bazaar(raw) -> SourceResult[BazaarReport]:
         return SourceResult(error=f"MalwareBazaar query_status: {status}",
                             queried=True)
 
-    entries = [e for e in (raw.get("data") or []) if isinstance(e, dict)]
+    entries = as_mappings(raw.get("data"))
     if not entries:
         return SourceResult(value=BazaarReport(found=False), queried=True)
     entry = entries[0]
@@ -45,11 +46,11 @@ def extract_bazaar(raw) -> SourceResult[BazaarReport]:
         value=BazaarReport(
             found=True,
             family=entry.get("signature"),
-            tags=list(entry.get("tags") or []),
+            tags=as_sequence(entry.get("tags")),
             file_type=entry.get("file_type"),
             first_seen=_first_seen(entry.get("first_seen")),
-            yara=[r.get("rule_name") for r in (entry.get("yara_rules") or [])
-                  if isinstance(r, dict) and r.get("rule_name")],
+            yara=[r.get("rule_name") for r in as_mappings(entry.get("yara_rules"))
+                  if r.get("rule_name")],
         ),
         queried=True,
     )

@@ -15,6 +15,7 @@ no longer has to unwrap `raw["kev"]` and compute `kev_unchecked` by hand.
 
 from ..api.base_call import error_message, is_error
 from ..models import KEVEntry, KEVReport, SourceResult
+from .payload import as_mappings, as_text
 
 
 def known_exploited(cves: list[str], raw_catalog) -> SourceResult[KEVReport]:
@@ -46,10 +47,8 @@ def known_exploited(cves: list[str], raw_catalog) -> SourceResult[KEVReport]:
 
     wanted = {cve.upper() for cve in cves if isinstance(cve, str)}
     hits = []
-    for entry in raw_catalog.get("vulnerabilities") or []:
-        if not isinstance(entry, dict):
-            continue
-        cve = str(entry.get("cveID") or "")
+    for entry in as_mappings(raw_catalog.get("vulnerabilities")):
+        cve = as_text(entry.get("cveID"))
         if cve.upper() not in wanted:
             continue
         hits.append(KEVEntry(

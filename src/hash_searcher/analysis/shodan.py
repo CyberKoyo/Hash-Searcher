@@ -8,6 +8,7 @@ error, on the wrapping SourceResult, so an analyst can tell the two apart.
 
 from ..api.base_call import error_message, error_status, is_error
 from ..models import ShodanReport, SourceResult
+from .payload import as_sequence
 
 
 def extract_shodan(raw) -> SourceResult[ShodanReport]:
@@ -23,10 +24,15 @@ def extract_shodan(raw) -> SourceResult[ShodanReport]:
 
     return SourceResult(
         value=ShodanReport(
-            ports=[p for p in (raw.get("ports") or []) if isinstance(p, int)],
-            cpes=list(raw.get("cpes") or []),
-            vulns=list(raw.get("vulns") or []),
-            hostnames=list(raw.get("hostnames") or []),
+            # `or []` closed the null half and left the rest: {"ports": 443}
+            # still raised `'int' object is not iterable` right here. And the
+            # isinstance filter has moved to ShodanReport.ports' own
+            # `list[int]` declaration, so this extractor and the Censys one
+            # now say the same thing about the same concept.
+            ports=as_sequence(raw.get("ports")),
+            cpes=as_sequence(raw.get("cpes")),
+            vulns=as_sequence(raw.get("vulns")),
+            hostnames=as_sequence(raw.get("hostnames")),
         ),
         queried=True,
     )
