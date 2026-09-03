@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
         "indicator",
         help="a file path, an MD5/SHA-1/SHA-256 digest, an IP, a domain, "
              "or a URL -- defanged forms (hxxp://, 1[.]2[.]3[.]4) accepted")
+    parser.add_argument("--input-file", dest="input_file",
+                        help="read indicators from this file, one per line "
+                             "(blank lines and # comments are skipped)")
     parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
@@ -65,6 +68,47 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--yara-rules", dest="yara_rules",
                         help="directory of .yar/.yara rules to scan the sample against")
     return parser
+
+
+#: The positional argument that means "read the indicators from stdin".
+#: The conventional spelling, and it cannot collide with a real indicator:
+#: classify() does not recognize "-", and a file named "-" would have to be
+#: passed as "./-" for any other tool either.
+STDIN_ARGUMENT = "-"
+
+
+COMMENT_PREFIX = "#"
+
+
+def read_indicators(handle) -> list[str]:
+    """One indicator per line, with blank lines and # comments dropped.
+
+    A list an analyst pastes out of a report carries both. Feeding either
+    one to classify() would produce a "not a recognizable indicator" line
+    per blank line, which buries the answers.
+    """
+    found = []
+    for line in handle:
+        stripped = line.strip()
+        if stripped and not stripped.startswith(COMMENT_PREFIX):
+            found.append(stripped)
+    return found
+
+
+def batch_lines(args) -> list[str] | None:
+    """The indicators for a batch run, or None when this is a single run.
+
+    None rather than a one-element list, so the single-indicator path stays
+    exactly what it was -- including a ZIP argument, where resolve_indicator
+    returns several hashes and analyze_one deliberately analyzes only the
+    first. Treating that as a batch would silently change what a ZIP does.
+    """
+    if args.input_file:
+        with open(args.input_file) as handle:
+            return read_indicators(handle)
+    if args.indicator == STDIN_ARGUMENT:
+        return read_indicators(sys.stdin)
+    return None
 
 
 def output_format(path: str) -> str | None:
@@ -90,8 +134,23 @@ def write_report(report: Report, output: str,
         print(f"Unrecognized output extension: {output} (use .json or .pdf)")
 
 
-async def run_cli(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
+                      output: str | None = None) -> int:
+    """One indicator, start to finish: resolve, fetch, score, render, exit.
+
+    This is the whole of what `run_cli` used to be, with three arguments
+    lifted out of `args` so a batch can vary them per indicator:
+
+    - `user_input` rather than args.indicator, because a batch's indicators
+      come from stdin or a file, not from the positional argument.
+    - `cache`, so a batch opens ONE ResponseCache for the whole run. Two
+      indicators that share a contacted IP should cost one lookup, and a
+      cache per indicator would throw that away. None means "single run" --
+      open one here and close it before returning.
+    - `output`, so `-o report.json` over a batch writes one file per
+      indicator instead of overwriting the same file N times.
+    """
+    output = output or args.output
 
     # Static analysis runs before any network call and before check_env() --
     # both above the point that used to bail early. A sample nobody has ever
@@ -101,9 +160,9 @@ async def run_cli(argv: list[str] | None = None) -> int:
     # os.path.isfile guards a bare hash argument -- there is no file to
     # analyze, and attempting one is a crash, not a smaller report.
     static_report = None
-    if not args.no_static and os.path.isfile(args.indicator):
+    if not args.no_static and os.path.isfile(user_input):
         try:
-            static_report = analyze(args.indicator, yara_rules=args.yara_rules)
+            static_report = analyze(user_input, yara_rules=args.yara_rules)
         except Exception:
             # A local analyzer failure must never block the network pass --
             # this phase exists to ADD information, not to become a new way
@@ -119,7 +178,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
         extra_ips = static_report.strings.iocs.ips
 
     try:
-        resolved = resolve_indicator(args.indicator, args.zip_password)
+        resolved = resolve_indicator(user_input, args.zip_password)
     except FileNotFoundError as e:
         # The exception is constructed with a perfectly good user-facing
         # string and was simply never caught, so `hash-searcher notahash`
@@ -155,22 +214,27 @@ async def run_cli(argv: list[str] | None = None) -> int:
             generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             vt=extract_vt(offline), otx=extract_otx(offline),
             ips={}, hosts=[], whois=[],
-            source_file=args.indicator,
+            source_file=user_input,
             static=static_report,
         )
         verdict = score(report)
         render(report, verdict)
-        if args.output:
-            write_report(report, args.output, verdict)
+        if output:
+            write_report(report, output, verdict)
         return exit_code(verdict)
 
     print("Pulling data from every source that answers for "
           f"{indicator.kind} indicators...")
-    cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
+    own_cache = cache is None
+    if own_cache:
+        cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
         raw = await data_puller(indicator, cache, extra_ips=extra_ips)
     finally:
-        cache.close()
+        # Only whoever opened it may close it: a batch's cache outlives
+        # every individual run in it.
+        if own_cache:
+            cache.close()
     if not raw:
         print("No data was able to be pulled.")
         return EXIT_NO_DATA
@@ -207,7 +271,7 @@ async def run_cli(argv: list[str] | None = None) -> int:
         indicator_kind=indicator.kind,
         generated_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         vt=vt, otx=otx, ips=ips, hosts=hosts, whois=whois,
-        source_file=args.indicator,
+        source_file=user_input,
         static=static_report,
         # Each extractor now decides "never asked" for itself -- raw["bazaar"]
         # is None or raw["crtsh"] is [] means exactly that, and the extractor
@@ -227,10 +291,26 @@ async def run_cli(argv: list[str] | None = None) -> int:
     verdict = score(report)
     render(report, verdict)
 
-    if args.output:
-        write_report(report, args.output, verdict)
+    if output:
+        write_report(report, output, verdict)
 
     return exit_code(verdict)
+
+
+async def run_cli(argv: list[str] | None = None) -> int:
+    """Parse the command line and dispatch to one run or to a batch."""
+    args = build_parser().parse_args(argv)
+
+    lines = batch_lines(args)
+    if lines is None:
+        return await analyze_one(args.indicator, args)
+    # Imported here, not at module scope: batch.py runs this module's
+    # analyze_one over each indicator and reads its exit codes, so it
+    # imports cli. One of the two directions has to be deferred, and this
+    # is the one -- dispatching to a batch is the later, higher-level half
+    # of the pair, and cli is fully initialized by the time it runs.
+    from .batch import run_batch
+    return await run_batch(lines, args)
 
 
 def run() -> None:
