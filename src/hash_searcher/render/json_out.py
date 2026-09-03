@@ -1,7 +1,11 @@
 import json
 from dataclasses import asdict
 
-from ..models import CensysHost, Report, StaticReport, Verdict, VTReport, WhoisRecord
+from ..models import (
+    BazaarReport, CensysHost, CertReport, GreyNoiseReport, OTXReport, Report,
+    ShodanReport, SourceResult, StaticReport, ThreatFoxReport, Verdict,
+    VTReport, WhoisRecord,
+)
 
 
 def _censys_dict(host: CensysHost) -> dict:
@@ -38,6 +42,43 @@ def _whois_dict(record: WhoisRecord) -> dict:
     }
 
 
+def _source_dict(result: SourceResult, default) -> dict | None:
+    """Flatten a SourceResult to the shape its wrapped report used to have.
+
+    Present-but-null when the source never ran, same rule the rest of this
+    module follows. When it ran and failed, `.value` is None (the extractor
+    template never sets it on an error) -- `default` (a bare, zero-valued
+    instance of the wrapped report type) stands in so the JSON shape stays
+    exactly what it was before this report grew an `error` field of its own:
+    every field present, `error` set, everything else at its zero value.
+    """
+    if not result.queried:
+        return None
+    return {**asdict(result.value if result.value is not None else default),
+            "error": result.error}
+
+
+def _otx_dict(otx: OTXReport) -> dict:
+    """OTX's block, with an `error` key once the lookup has failed.
+
+    Added only when set, exactly as _censys_dict and _vt_dict do, so the
+    success shape is byte-identical to what it has always been. Global
+    Constraint 7 forbids moving or repurposing a key; this adds one, under
+    an explicit exception granted for it, because without it a failed OTX
+    lookup serializes identically to one that never ran -- every other
+    source in this document already carries its own error, and OTX was the
+    one asymmetry left. `recorded_instances` is "N/A" in both states, so a
+    consumer had nothing to branch on.
+    """
+    body = {
+        "recorded_instances": otx.recorded_instances,
+        "attack_techniques": otx.attack_techniques,
+    }
+    if otx.error:
+        body["error"] = otx.error
+    return body
+
+
 def _verdict_dict(verdict: Verdict) -> dict:
     return {
         "level": verdict.level,
@@ -57,9 +98,25 @@ def _vt_dict(vt: VTReport) -> dict:
     tool never looked". The Phase 1 keys stay exactly where they were --
     `vt_rules` is not folded in here, because moving it would be a schema
     break for anything already reading it.
+
+    `error`/`unavailable` follow the same present-but-null principle above,
+    one level up. On a healthy call there is nothing to report, so both
+    keys are omitted entirely -- the same precedent _censys_dict sets for
+    its own `error` key -- and the success shape stays exactly what it was
+    before this task. But once a call HAS failed, `unavailable` is always
+    present and explicit (`true` or `false`), never omitted: omitting it on
+    a 404 would ask a JSON consumer to read meaning into a missing key,
+    the exact anti-pattern this docstring's opening sentence rules out for
+    every other field here. `error` always rides alongside it -- alone,
+    `unavailable` would tell a consumer VT failed without saying why,
+    unlike every other source's JSON block. Before this, a 404 (VT
+    answered: no record) and a 503 (VT never answered) serialized
+    byte-identically, every block null both times -- broken against this
+    function's own opening promise, for the one consumer, a script
+    branching on exit 3, that this whole task exists to inform.
     """
     detection = vt.detection
-    return {
+    body = {
         # All five buckets: the TTY prints suspicious and undetected, and a
         # consumer that could not reconstruct what the terminal showed would
         # be reading a different report from the one the analyst saw.
@@ -82,6 +139,10 @@ def _vt_dict(vt: VTReport) -> dict:
         "techniques": [asdict(t) for t in vt.techniques],
         "contacted_domains": vt.contacted_domains,
     }
+    if vt.error:
+        body["error"] = vt.error
+        body["unavailable"] = vt.unavailable  # explicit, even when False (a 404)
+    return body
 
 
 def _static_dict(static: StaticReport) -> dict:
@@ -111,32 +172,51 @@ def _phase4_dict(report: Report) -> dict:
     """The Phase 4 sources, each present-but-null when it never ran.
 
     Same rule as _vt_dict and _static_dict above: a consumer can then tell
-    "the source had nothing" from "this tool never asked it". certs carries
+    "the source had nothing" from "this tool never asked it" -- with one
+    stated exception, `kev`, which shipped on main as a list and therefore
+    collapses those two states into `[]` both times. Global Constraint 7
+    forbids changing it to null, so the exception is named here rather than
+    fixed: `kev_error` and `kev_unchecked` beside it are what a consumer
+    reads to tell an unreachable catalog from an empty one. certs carries
     the untruncated `count` alongside the capped `siblings` list, so a JSON
-    consumer is not misled by the cap either.
+    consumer is not misled by the cap either. kev_error/kev_unchecked stay
+    their own top-level keys -- both already shipped on main, and Global
+    Constraint 7 says an existing JSON key never moves -- populated from the
+    SourceResult[KEVReport] that replaced the two bolted-on Report fields.
+
+    `threatfox_ips` is a new key, which Constraint 7 permits only with an
+    argument. The argument: it is additive and keyed by IP exactly as
+    `shodan` and `greynoise` already are, and `threatfox` keeps its
+    existing meaning untouched -- the sample's own answer, never a
+    contacted host's. Without it, the C2 attribution this task exists to
+    produce would reach the terminal and the PDF but stay invisible to the
+    machine consumer, which is the defect _vt_dict was fixed for one task
+    ago.
     """
+    kev = report.kev
     return {
-        "bazaar": asdict(report.bazaar) if report.bazaar else None,
-        "threatfox": asdict(report.threatfox) if report.threatfox else None,
-        "certs": asdict(report.certs) if report.certs else None,
-        "shodan": {ip: asdict(r) for ip, r in report.shodan.items()},
-        "greynoise": {ip: asdict(r) for ip, r in report.greynoise.items()},
-        "kev": [asdict(entry) for entry in report.kev],
+        "bazaar": _source_dict(report.bazaar, BazaarReport()),
+        "threatfox": _source_dict(report.threatfox, ThreatFoxReport()),
+        "certs": _source_dict(report.certs, CertReport()),
+        "shodan": {ip: _source_dict(r, ShodanReport())
+                   for ip, r in report.shodan.items()},
+        "greynoise": {ip: _source_dict(r, GreyNoiseReport())
+                      for ip, r in report.greynoise.items()},
+        "threatfox_ips": {ip: _source_dict(r, ThreatFoxReport())
+                          for ip, r in report.threatfox_ips.items()},
+        "kev": [asdict(entry) for entry in kev.value.entries] if kev.value else [],
         # Present-but-null unless the catalog could not be fetched, so a
         # consumer never reads an empty "kev" as "nothing is exploited"
         # when the truth is that nobody could ask.
-        "kev_error": report.kev_error,
-        "kev_unchecked": report.kev_unchecked,
+        "kev_error": kev.error,
+        "kev_unchecked": kev.value.unchecked if kev.value else 0,
     }
 
 
 def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
         "hash": report.indicator,
-        "otx": {
-            "recorded_instances": report.otx.recorded_instances,
-            "attack_techniques": report.otx.attack_techniques,
-        },
+        "otx": _otx_dict(report.otx),
         "censys": [_censys_dict(h) for h in report.hosts],
         "whois": [_whois_dict(w) for w in report.whois],
         "ipdb": [asdict(i) for i in report.ips.values()],

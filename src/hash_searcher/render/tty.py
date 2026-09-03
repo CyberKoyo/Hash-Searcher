@@ -100,6 +100,15 @@ def render_whois(report: Report) -> None:
 
 def render_otx(report: Report) -> None:
     _header("OTX DATA")
+    if report.otx.error:
+        # A failed OTX lookup used to be byte-identical to one that never
+        # ran: both fall through `otx_responded` and print "No OTX data
+        # available.", which is a claim about OTX rather than about this
+        # tool. Every other source in this renderer says which -- `Censys:
+        # <error>`, `MalwareBazaar: <error>`, `crt.sh: <error>` -- and OTX
+        # was the last one that did not.
+        print(f"OTX: {report.otx.error}")
+        return
     # Mirrors the original's `if not pulse_info:` gate. Keying off the
     # recorded_instances string instead would collide with a real count
     # whose value happens to be "N/A".
@@ -111,21 +120,55 @@ def render_otx(report: Report) -> None:
         print(technique)
 
 
+#: The sentence both render_kev (here) and pdf.py's build_story print when
+#: the CISA catalog could not be fetched. One template, for the reason
+#: VT_UNAVAILABLE_NOTE below has one: the load-bearing half is the unchecked
+#: count -- the single fact that keeps an unreachable catalog from reading as
+#: "nothing is known-exploited" -- and two independently written copies of
+#: the same sentence eventually disagree about it. The PDF had no copy at
+#: all until this round, which is the same asymmetry stated the other way.
+KEV_UNREACHABLE_NOTE = ("CISA KEV was unreachable ({error}) -- {unchecked} "
+                        "CVEs on contacted hosts went unchecked.")
+
 SIGNAL_NAME_WIDTH = 11
 
+#: The caveat both render_verdict (here) and pdf.py's build_story print for
+#: an UNKNOWN verdict that rests on a VT call which never actually
+#: answered. One template so the load-bearing second clause -- "not
+#: confirmation that nobody has seen this sample" -- cannot drift between
+#: the two surfaces the way two independently written copies of the same
+#: sentence eventually do.
+VT_UNAVAILABLE_NOTE = (
+    "VirusTotal did not answer ({error}) -- this UNKNOWN is not "
+    "confirmation that nobody has seen this sample."
+)
 
-def render_verdict(verdict: Verdict) -> None:
+
+def render_verdict(verdict: Verdict, report: Report | None = None) -> None:
     """Score first, then every signal that produced it.
 
     The rationale lines are the point. A verdict an analyst cannot decompose
     is one they cannot disagree with, which makes it useless to them.
+
+    `report` is optional so every pre-existing call site that passes only a
+    verdict keeps working. When it is given and VT's call failed outright
+    (not merely a 404), an UNKNOWN here is not "nobody has ever seen this
+    sample" -- it is "we do not actually know", and the caveat says so.
     """
     _header(f"VERDICT: {verdict.level} (score {verdict.score})")
     if not verdict.signals:
         print("No signals fired.")
-        return
-    for signal in verdict.signals:
-        print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
+    else:
+        for signal in verdict.signals:
+            print(f"  {signal.points:+d}  {signal.name:<{SIGNAL_NAME_WIDTH}} {signal.detail}")
+    if report is not None and verdict.level == "UNKNOWN" and report.vt.unavailable:
+        # Mechanism-neutral on purpose: a missing API key never dialled
+        # VirusTotal at all, so "unreachable" would assert something untrue
+        # for that case even though the underlying claim -- this UNKNOWN is
+        # not confirmation of absence -- holds regardless of why VT never
+        # answered. The error text carries the mechanism; this line only
+        # carries the fact that VT did not answer.
+        print(f"\nNote: {VT_UNAVAILABLE_NOTE.format(error=report.vt.error)}")
 
 
 def render_static(report: Report) -> None:
@@ -240,41 +283,41 @@ def render_bazaar(report: Report) -> None:
     could not ask abuse.ch".
     """
     bazaar = report.bazaar
-    if bazaar is None:
+    if not bazaar.queried:
         return
     _header("MALWAREBAZAAR")
     if bazaar.error:
         print(f"MalwareBazaar: {bazaar.error}")
         return
-    if not bazaar.found:
+    if not bazaar.value.found:
         print("MalwareBazaar has no record of this sample.")
         return
-    print(f"Family:     {bazaar.family or 'unnamed'}")
-    if bazaar.file_type:
-        print(f"File type:  {bazaar.file_type}")
-    if bazaar.first_seen:
-        print(f"First seen: {bazaar.first_seen}")
-    if bazaar.tags:
-        print(f"Tags:       {', '.join(bazaar.tags)}")
-    if bazaar.yara:
-        print(f"YARA:       {', '.join(bazaar.yara)}")
+    print(f"Family:     {bazaar.value.family or 'unnamed'}")
+    if bazaar.value.file_type:
+        print(f"File type:  {bazaar.value.file_type}")
+    if bazaar.value.first_seen:
+        print(f"First seen: {bazaar.value.first_seen}")
+    if bazaar.value.tags:
+        print(f"Tags:       {', '.join(bazaar.value.tags)}")
+    if bazaar.value.yara:
+        print(f"YARA:       {', '.join(bazaar.value.yara)}")
 
 
 def render_threatfox(report: Report) -> None:
     threatfox = report.threatfox
-    if threatfox is None:
+    if not threatfox.queried:
         return
     _header("THREATFOX")
     if threatfox.error:
         print(f"ThreatFox: {threatfox.error}")
         return
-    if not threatfox.found:
+    if not threatfox.value.found:
         print("ThreatFox has no record of this indicator.")
         return
-    print(f"Malware:    {threatfox.malware or 'unnamed'} "
-          f"({threatfox.confidence}% confidence)")
-    if threatfox.tags:
-        print(f"Tags:       {', '.join(threatfox.tags)}")
+    print(f"Malware:    {threatfox.value.malware or 'unnamed'} "
+          f"({threatfox.value.confidence}% confidence)")
+    if threatfox.value.tags:
+        print(f"Tags:       {', '.join(threatfox.value.tags)}")
 
 
 #: A real Shodan answer for a busy web server carries well over a hundred
@@ -284,56 +327,125 @@ def render_threatfox(report: Report) -> None:
 #: list is still in the JSON report.
 CVE_DISPLAY_LIMIT = 12
 
+#: ThreatFox tags for a busy C2 address run to dozens. Same bargain as
+#: CVE_DISPLAY_LIMIT: the list is capped and the total printed beside it, so
+#: a truncated list never reads as the whole answer. Shared with pdf.py,
+#: where the cap is load-bearing rather than cosmetic -- an unbounded
+#: provider list in a table cell raises LayoutError.
+TAG_DISPLAY_LIMIT = 8
+
+
+def tag_text(tags: list[str]) -> str:
+    """A capped, honestly-labelled tag list, or "" when there are none."""
+    if not tags:
+        return ""
+    shown = ", ".join(tags[:TAG_DISPLAY_LIMIT])
+    if len(tags) <= TAG_DISPLAY_LIMIT:
+        return f"tags: {shown}"
+    return f"{len(tags)} tags (showing {TAG_DISPLAY_LIMIT}): {shown}"
+
+
+def queried_ips(report: Report) -> list[str]:
+    """Every contacted IP at least one per-IP source actually answered for.
+
+    The dicts cannot be the gate. They hold SourceResults, which have no
+    __bool__, so a dict of nothing but never-asked results is non-empty and
+    therefore truthy -- `if not report.shodan and not report.greynoise`
+    passed, the section header printed, and each IP rendered as a bare
+    `IP: x.x.x.x` line with nothing under it. Asking whether anything was
+    queried is the question the guard meant to ask all along, and it stops
+    mattering only in theory once a THIRD per-IP dict exists: one source
+    populated and another not is exactly the state threatfox_ips creates.
+
+    pdf.py's IP table shares this, so the two surfaces cannot drift into
+    disagreeing about which addresses are worth a row.
+    """
+    per_ip = (report.shodan, report.greynoise, report.threatfox_ips)
+    return [ip for ip in dict.fromkeys(k for source in per_ip for k in source)
+            if any(ip in source and source[ip].queried for source in per_ip)]
+
 
 def render_ip_intel(report: Report) -> None:
-    """Shodan exposure and GreyNoise noise-vs-targeted, per contacted IP."""
-    if not report.shodan and not report.greynoise:
+    """Shodan exposure, GreyNoise noise-vs-targeted, and ThreatFox's C2
+    attribution, per contacted IP."""
+    ips = queried_ips(report)
+    if not ips:
         return
     _header("IP INTELLIGENCE")
-    for ip in dict.fromkeys((*report.shodan, *report.greynoise)):
+    for ip in ips:
         print(f"\nIP:      {ip}")
         shodan = report.shodan.get(ip)
         if shodan and shodan.error:
             print(f"Shodan:  {shodan.error}")
-        elif shodan:
-            print(f"Ports:   {', '.join(str(p) for p in shodan.ports) or 'none known'}")
-            if shodan.vulns:
-                shown = shodan.vulns[:CVE_DISPLAY_LIMIT]
+        elif shodan and shodan.ok:
+            ports, vulns, hostnames = (shodan.value.ports, shodan.value.vulns,
+                                        shodan.value.hostnames)
+            print(f"Ports:   {', '.join(str(p) for p in ports) or 'none known'}")
+            if vulns:
+                shown = vulns[:CVE_DISPLAY_LIMIT]
                 more = (f" (showing {CVE_DISPLAY_LIMIT})"
-                        if len(shodan.vulns) > CVE_DISPLAY_LIMIT else "")
-                print(f"CVEs:    {len(shodan.vulns)} CVEs{more}: "
+                        if len(vulns) > CVE_DISPLAY_LIMIT else "")
+                print(f"CVEs:    {len(vulns)} CVEs{more}: "
                       f"{', '.join(shown)}")
-            if shodan.hostnames:
-                print(f"Names:   {', '.join(shodan.hostnames)}")
+            if hostnames:
+                print(f"Names:   {', '.join(hostnames)}")
         noise = report.greynoise.get(ip)
         if noise and noise.error:
             print(f"GreyNoise: {noise.error}")
-        elif noise and noise.seen:
-            actor = f" -- {noise.name}" if noise.name else ""
-            print(f"GreyNoise: {noise.classification or 'seen'}{actor}, "
-                  f"last seen {noise.last_seen or 'N/A'}")
-        elif noise:
+        elif noise and noise.ok and noise.value.seen:
+            actor = f" -- {noise.value.name}" if noise.value.name else ""
+            print(f"GreyNoise: {noise.value.classification or 'seen'}{actor}, "
+                  f"last seen {noise.value.last_seen or 'N/A'}")
+        elif noise and noise.ok:
             # The more interesting answer of the two: an address GreyNoise
             # has never seen scanning is not internet background noise.
             print("GreyNoise: not observed scanning the internet")
+        # The one thing neither source above says: which malware family the
+        # address belongs to. Same three-way split as GreyNoise -- a failed
+        # lookup, a hit, and a clean "no record", with a source nobody asked
+        # rendering as silence.
+        threatfox = report.threatfox_ips.get(ip)
+        if threatfox and threatfox.error:
+            print(f"ThreatFox: {threatfox.error}")
+        elif threatfox and threatfox.ok and threatfox.value.found:
+            tags = tag_text(threatfox.value.tags)
+            print(f"ThreatFox: {threatfox.value.malware or 'unnamed'} "
+                  f"({threatfox.value.confidence}% confidence)"
+                  f"{f', {tags}' if tags else ''}")
+        elif threatfox and threatfox.ok:
+            print("ThreatFox: no C2 record for this address")
 
 
 def render_kev(report: Report) -> None:
-    """Silent only when there was nothing to check.
+    """Silent when nothing was checked, AND when the check found nothing.
 
     An unreachable CISA is not the same answer as "none of these CVEs are
     known-exploited", and it suppresses the strongest signal the tool has,
     so it gets a line of its own rather than an absent section.
+
+    The two silent cases are the ones with nothing to say: nobody asked
+    (`queried is False`), and the catalog answered with no hits. This
+    docstring used to claim the first was the ONLY silent case, which was
+    false of the second and had been since the section was written -- a
+    false claim in a docstring is the same defect as a false claim in a
+    comment, and the shape here is right, so the docstring is what changes.
     """
-    if report.kev_error:
-        _header("KNOWN EXPLOITED VULNERABILITIES")
-        print(f"CISA KEV was unreachable ({report.kev_error}) -- "
-              f"{report.kev_unchecked} CVEs on contacted hosts went unchecked.")
+    kev = report.kev
+    if not kev.queried:
         return
-    if not report.kev:
+    if kev.error:
+        _header("KNOWN EXPLOITED VULNERABILITIES")
+        # `value` survives an error on this one source (models.py), but it
+        # is still Optional on the type, and json_out already guards it the
+        # same way -- guarding here and not there was the subset again.
+        print(KEV_UNREACHABLE_NOTE.format(
+            error=kev.error,
+            unchecked=kev.value.unchecked if kev.value else 0))
+        return
+    if not kev.value.entries:
         return
     _header("KNOWN EXPLOITED VULNERABILITIES")
-    for entry in report.kev:
+    for entry in kev.value.entries:
         product = " ".join(x for x in (entry.vendor, entry.product) if x)
         ransomware = "  [ransomware campaign]" if entry.ransomware else ""
         print(f"{entry.cve}  {product or 'unknown product'} -- "
@@ -347,25 +459,25 @@ def render_certs(report: Report) -> None:
     list because a truncated list that reads as complete is worse than none.
     """
     certs = report.certs
-    if certs is None:
+    if not certs.queried:
         return
     _header("CERTIFICATE TRANSPARENCY")
     if certs.error:
         print(f"crt.sh: {certs.error}")
         return
-    if not certs.siblings:
+    if not certs.value.siblings:
         print("No certificates found for the contacted domains.")
         return
-    shown = len(certs.siblings)
-    tail = f" (showing {shown})" if shown < certs.count else ""
-    print(f"{certs.count} sibling domains on shared certificates{tail}:")
-    for domain in certs.siblings:
+    shown = len(certs.value.siblings)
+    tail = f" (showing {shown})" if shown < certs.value.count else ""
+    print(f"{certs.value.count} sibling domains on shared certificates{tail}:")
+    for domain in certs.value.siblings:
         print(f"  {domain}")
 
 
 def render(report: Report, verdict: Verdict | None = None) -> None:
     if verdict is not None:
-        render_verdict(verdict)
+        render_verdict(verdict, report)
     render_static(report)
     render_detection(report)
     render_vt(report)

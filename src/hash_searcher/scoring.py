@@ -50,10 +50,170 @@ W_YARA_LOCAL = 20
 # corroboration reach SUSPICIOUS on their own but never MALICIOUS.
 SIGMA_CAP = 30
 
+# --- Bounds on the provider lists a signal detail names -------------------
+#
+# Six details below join a list someone else supplied, and that string
+# lands in a reportlab table cell whose row cannot split across pages. An
+# unbounded join here is not a long line -- it is a LayoutError that kills
+# `-o report.pdf` after every provider has already succeeded (render/pdf.py's
+# module docstring, rule 2).
+#
+# How much text that column holds is NOT a character count. Measured in the
+# 250pt "Why" column, these are the longest strings of each shape that still
+# fit inside the 630pt a row has (render/pdf.py's CELL_HEIGHT_LIMIT carries
+# the arithmetic). Every payload is quoted, because a number whose input is
+# only described cannot be re-derived:
+#
+#     ("W" * 13 + " ") * n                                           728
+#     ("W" * 10 + " ") * n                                          1144
+#     "W" * n                                                       1300
+#     ", ".join(f"CVE-2021-{i:05d}" for i in range(n))               1662
+#     ", ".join("APT28_Sofacy_Downloader_Stage2" for _ in range(n))  1662
+#     ", ".join(f"198.51.100.{i % 256}" for i in range(n))           2384
+#     "THE QUICK BROWN FOX " * n                                    1820
+#     "the quick brown fox " * n                                    2760
+#
+# So no character cap here can be the crash bound; render/pdf.py fits each
+# cell by measured height, which is a bound on the thing that overflows.
+# What these caps buy is honesty, and that is not a lesser job: the fit
+# truncates mid-string, and a KEV detail at its upper bound -- 50 contacted
+# hosts at the 120-137 CVEs render/pdf.py's _cve_cell calls realistic,
+# 109,659 characters -- would otherwise reach the analyst as one fragment.
+# Capped here it names 12 CVEs and says how many there were.
+#
+# Two dimensions need capping, because a list is bounded only when both are:
+# how MANY items a detail names (the three limits below) and how long ONE
+# item may be (ITEM_CHAR_LIMIT). Eight rule names -- exactly
+# DETAIL_ITEM_LIMIT, the count cap doing its job -- were 3409 characters
+# when the provider returned 400-character names, and that detail raised
+# LayoutError out of a real write_pdf.
+
+#: CVE identifiers are short and uniform, so more of them fit and more of
+#: them are worth reading. Deliberately the same 12 as
+#: render.tty.CVE_DISPLAY_LIMIT, so the KEV signal and the PDF's CVE column
+#: never disagree about how many CVEs a report names. Not imported from
+#: there: scoring is the domain layer and must not depend on a renderer.
+KEV_CVE_LIMIT = 12
+
+#: Free-form provider strings -- YARA rule names, sandbox names -- run to
+#: forty characters each, so fewer fit. Same 8 as
+#: render.tty.TAG_DISPLAY_LIMIT, and for the same reason.
+DETAIL_ITEM_LIMIT = 8
+
+#: A threatfox entry is a whole clause ("the contacted IP 198.51.100.7
+#: RedLine Stealer (90% confidence)"), ~55 characters rather than ~14, so it
+#: gets the tightest cap of the three.
+THREATFOX_TARGET_LIMIT = 5
+
+#: And how long any ONE PROVIDER VALUE may be. Real YARA rule names,
+#: sandbox names and malware families run to about forty characters, so this
+#: leaves every string real input produces untouched -- it exists for the
+#: provider that returns a 400-character "rule name", where capping the
+#: count alone bounds nothing. 80 rather than 40: the cap must not fire on
+#: the ordinary case, because an item shortened here is one the analyst
+#: cannot search for verbatim.
+#:
+#: "Provider string", not "join item", and the distinction is load-bearing
+#: at exactly one site. Five of the six details join provider strings
+#: directly, so the two are the same thing. _threatfox_signal joins CLAUSES
+#: it composed: "the contacted IP " plus an address plus " (100%
+#: confidence)" is 51 characters this repo wrote, which left a malware
+#: family 29 of the 80 -- and "the contacted IP 198.51.100.10
+#: Trojan.Win32.Emotet.Downloader (95% confidence)" is 78, two short of
+#: firing on an ordinary answer and cutting the confidence figure off the
+#: end. So that site caps each provider substring on its own and tells
+#: _capped_join not to measure the clause (cap_items=False).
+#:
+#: "Value", not "string", and the word is load-bearing. Six provider
+#: NUMBERS reach a detail -- ThreatFox's confidence, AbuseIPDB's worst
+#: confidence, OTX's recorded instances, and VT's malicious, suspicious and
+#: total engine counts -- and not one of them is range-checked where it is
+#: extracted: analysis/threatfox.py only isinstance-checks
+#: `confidence_level`, and analysis/ipdb.py, analysis/otx.py and
+#: analysis/vt.py take theirs straight off the payload with a bare
+#: `.get(name, 0)`, which is weaker still. json.loads yields
+#: arbitrary-precision ints. The ThreatFox figure was bounded here
+#: incidentally, back when the whole composed clause was measured against
+#: this limit; when the clause stopped being measured it silently stopped
+#: being bounded, which is this failure class's exact signature. The PDF
+#: cell cannot crash on one either way -- CELL_HEIGHT_LIMIT is a layer below
+#: and bounds the row by height -- but the TTY and the JSON report have no
+#: such backstop.
+#:
+#: Every provider value a signal detail names goes through _capped_item or
+#: _capped_join, numbers included. That is a claim about all fifteen signal
+#: makers, and the last time it was written here it was made on the strength
+#: of three call sites and was false at eight more -- VT's three engine
+#: counts and the ratio built from two of them, the VT family, the VT
+#: signer, the MalwareBazaar family, and a whole uncapped join of GreyNoise
+#: addresses. A sentence cannot hold that claim, so it is checked against
+#: this module's source instead:
+#: test_every_provider_value_a_signal_detail_names_is_bounded parses every
+#: `_*_signal` here and requires each dynamic part of each detail to be
+#: capped, joined, or listed in its allowlist with the reason it needs
+#: neither. Adding a signal that interpolates a raw provider value reddens
+#: it; so does leaving a stale reason behind.
+ITEM_CHAR_LIMIT = 80
+
+
 STRONG_DETECTION = 5
 SUSPICIOUS_ENGINES = 3    # below this, engine hedging is noise
 ABUSE_CONFIDENCE = 75
 SUSPICIOUS_IMPORT_FLOOR = 3   # below this, one or two hits could be legitimate
+
+
+def _capped_join(items: list[str], limit: int, noun: str, sep: str = ", ",
+                 cap_items: bool = True) -> str:
+    """A provider list, truncated at an ITEM boundary, stating its total.
+
+    "137 CVEs (showing 12): CVE-..., CVE-..." -- the same shape and the same
+    bargain as render/pdf.py's _cve_cell and render/tty.py's tag_text: the
+    untruncated total is stated, so a shortened list never reads as the
+    whole answer, and the reader recovers it without arithmetic. Truncating
+    mid-identifier is what DETAIL_CHAR_LIMIT does when everything else has
+    failed; it is not what any of these should do.
+
+    Stating the TOTAL rather than the remainder also makes a plural bug
+    unreachable. The count is printed only when it exceeds `limit`, and
+    every limit here is at least 5, so the number is never 1 -- the
+    remainder form produced "and 1 more contacted IPs" at exactly six hits.
+
+    `cap_items=False` is for the one caller whose items are CLAUSES it
+    composed rather than strings a provider sent -- see ITEM_CHAR_LIMIT. It
+    turns off the length cap here because that caller has already applied it
+    to each provider substring, where the budget means something; it never
+    turns the cap off altogether.
+    """
+    shown = sep.join(_capped_item(item) if cap_items else item
+                     for item in items[:limit])
+    if len(items) <= limit:
+        return shown
+    return f"{len(items)} {noun} (showing {limit}): {shown}"
+
+
+def _capped_item(item: object) -> str:
+    """One provider value, bounded, stating its own untruncated length.
+
+    The count cap above says how many items are named; this says how long
+    one of them may be. Without it a list of eight is still unbounded text,
+    which is how eight YARA rule names became a 3409-character detail and a
+    LayoutError. The suffix follows the same rule as the join itself: what
+    was dropped is stated, not silently lost, and the full name is in the
+    JSON report.
+
+    It takes an `object` and str()s it, because not every provider value a
+    detail names is a string: six of them are numbers that arrive as
+    whatever json.loads made of them, unchecked (see ITEM_CHAR_LIMIT). One
+    bound for every provider value rather than a second constant for the
+    numeric ones -- two limits drift apart, which is how this module got
+    here, and 80 characters of digits is already far enough past absurd to
+    be a bound no real answer meets.
+    """
+    item = str(item)
+    if len(item) <= ITEM_CHAR_LIMIT:
+        return item
+    return (f"{item[:ITEM_CHAR_LIMIT].rstrip()}..."
+            f" ({ITEM_CHAR_LIMIT} of {len(item)} chars)")
 
 
 def _detection_signal(report: Report) -> Signal | None:
@@ -70,14 +230,22 @@ def _detection_signal(report: Report) -> Signal | None:
         return Signal(
             name="detection",
             points=W_DETECTION_SUSPICIOUS,
-            detail=f"{detection.suspicious} engines called this file suspicious "
-                   f"({detection.malicious}/{detection.total} malicious)",
+            detail=f"{_capped_item(detection.suspicious)} engines called "
+                   f"this file suspicious "
+                   f"({_capped_item(detection.malicious)}/"
+                   f"{_capped_item(detection.total)} malicious)",
         )
     strong = detection.malicious >= STRONG_DETECTION
     return Signal(
         name="detection",
         points=W_DETECTION_STRONG if strong else W_DETECTION_WEAK,
-        detail=f"{detection.ratio} engines flagged this file",
+        # Detection.ratio's two halves rather than Detection.ratio itself.
+        # ratio is a CLAUSE this repo composed out of two provider numbers,
+        # and measuring a composed clause against a per-value budget is the
+        # exact mistake ITEM_CHAR_LIMIT documents at the ThreatFox site. The
+        # rendered text is byte-identical for every ratio real input makes.
+        detail=f"{_capped_item(detection.malicious)}/"
+               f"{_capped_item(detection.total)} engines flagged this file",
     )
 
 
@@ -98,23 +266,26 @@ def _family_signal(report: Report) -> Signal | None:
     if not threat or not threat.family:
         return None
     return Signal(name="family", points=W_FAMILY,
-                  detail=f"VT names the family {threat.family!r}")
+                  detail=f"VT names the family "
+                         f"{_capped_item(threat.family)!r}")
 
 
 def _sandbox_signal(report: Report) -> Signal | None:
     if not report.vt.sandbox:
         return None
     return Signal(name="sandbox", points=W_SANDBOX,
-                  detail="flagged by sandbox: "
-                         + ", ".join(v.sandbox for v in report.vt.sandbox))
+                  detail="flagged by sandbox: " + _capped_join(
+                      [v.sandbox for v in report.vt.sandbox],
+                      DETAIL_ITEM_LIMIT, "sandboxes"))
 
 
 def _yara_signal(report: Report) -> Signal | None:
     if not report.vt.yara:
         return None
     return Signal(name="yara", points=W_YARA,
-                  detail="crowdsourced YARA matched: "
-                         + ", ".join(y.rule for y in report.vt.yara))
+                  detail="crowdsourced YARA matched: " + _capped_join(
+                      [y.rule for y in report.vt.yara],
+                      DETAIL_ITEM_LIMIT, "rules"))
 
 
 def _otx_signal(report: Report) -> Signal | None:
@@ -122,7 +293,8 @@ def _otx_signal(report: Report) -> Signal | None:
         return None
     return Signal(name="otx", points=W_OTX_PULSE,
                   detail=f"OTX pulses reference this indicator "
-                         f"({report.otx.recorded_instances} recorded instances)")
+                         f"({_capped_item(report.otx.recorded_instances)} "
+                         f"recorded instances)")
 
 
 def _abuseipdb_signal(report: Report) -> Signal | None:
@@ -130,7 +302,8 @@ def _abuseipdb_signal(report: Report) -> Signal | None:
     if worst < ABUSE_CONFIDENCE:
         return None
     return Signal(name="abuseipdb", points=W_ABUSEIPDB,
-                  detail=f"a contacted IP has {worst}% AbuseIPDB confidence")
+                  detail=f"a contacted IP has {_capped_item(worst)}% "
+                         f"AbuseIPDB confidence")
 
 
 def _signed_signal(report: Report) -> Signal | None:
@@ -146,9 +319,9 @@ def _signed_signal(report: Report) -> Signal | None:
         # signature is the one input in the scoring set that the attacker
         # attaches to the sample themselves.
         return None
+    signer = _capped_item(signature.signer or "an unnamed signer")
     return Signal(name="signed", points=W_SIGNED,
-                  detail=f"valid signature from "
-                         f"{signature.signer or 'an unnamed signer'}")
+                  detail=f"valid signature from {signer}")
 
 
 def _packed_signal(report: Report) -> Signal | None:
@@ -176,38 +349,93 @@ def _yara_local_signal(report: Report) -> Signal | None:
     if not static or not static.yara:
         return None
     return Signal(name="yara_local", points=W_YARA_LOCAL,
-                  detail="local YARA rules matched: "
-                         + ", ".join(h.rule for h in static.yara))
+                  detail="local YARA rules matched: " + _capped_join(
+                      [h.rule for h in static.yara],
+                      DETAIL_ITEM_LIMIT, "rules"))
 
 
 def _bazaar_signal(report: Report) -> Signal | None:
     bazaar = report.bazaar
-    if not bazaar or not bazaar.found:
+    # .ok gates BOTH cases a bare `if not bazaar` used to collapse: a source
+    # that was never asked and one that was asked and failed. Touching
+    # .value before checking .ok would raise on either -- .value is None
+    # unless the query actually succeeded.
+    if not bazaar.ok or not bazaar.value.found:
         return None
+    family = bazaar.value.family
+    named = f" as {_capped_item(family)}" if family else ""
     return Signal(name="bazaar", points=W_BAZAAR,
-                  detail=f"MalwareBazaar holds this sample"
-                         f"{f' as {bazaar.family}' if bazaar.family else ''}")
+                  detail=f"MalwareBazaar holds this sample{named}")
 
 
 def _threatfox_signal(report: Report) -> Signal | None:
-    threatfox = report.threatfox
-    if not threatfox or not threatfox.found:
+    """Fires on the sample, on any contacted IP, or on both.
+
+    The per-IP half is the half that usually lands: ThreatFox's dataset is
+    overwhelmingly C2 addresses, not sample hashes. One signal rather than
+    one per target, and a flat W_THREATFOX either way -- four contacted IPs
+    in the same botnet's C2 pool is one fact stated four times, and letting
+    it multiply would out-vote the engine consensus.
+
+    .ok gates each result before .value is touched: a SourceResult has no
+    __bool__, so a never-asked one is truthy and `.value` is None on it.
+
+    The named targets are capped at THREATFOX_TARGET_LIMIT and the total
+    stated -- see _capped_join: this detail is rendered into a PDF table
+    cell whose row cannot split across pages.
+
+    All three PROVIDER values in each clause -- the address, the family and
+    the confidence figure -- are capped one at a time, and the join is told
+    not to measure the clause (cap_items=False). Measured against the
+    clause, ITEM_CHAR_LIMIT spent 51 of its 80 characters on wording this
+    function wrote; see the constant. The confidence figure is the one that
+    was bounded only by that discarded clause measurement, and so stopped
+    being bounded at all when it went.
+    """
+    hits = []
+    if report.threatfox.ok and report.threatfox.value.found:
+        hits.append(("this indicator", report.threatfox.value))
+    # The address is a provider value too, and nothing anywhere on its path
+    # checks that it looks like an IP: api/api_data_puller.py keys the dict
+    # with dict(zip(ips, threatfox_ip_results)), where `ips` is
+    # _merge_indicators(contacted_ips(vt_data), extra_ips) -- VT's
+    # contacted_ips relationship plus the IP-shaped strings the static pass
+    # harvested out of the sample -- and cli.py rebuilds report.threatfox_ips
+    # from raw["threatfox_ips"], those same keys. So it gets its own
+    # ITEM_CHAR_LIMIT budget here rather than sharing one with the malware
+    # family below.
+    hits += [(f"the contacted IP {_capped_item(ip)}", result.value)
+             for ip, result in report.threatfox_ips.items()
+             if result.ok and result.value.found]
+
+    if not hits:
         return None
-    return Signal(name="threatfox", points=W_THREATFOX,
-                  detail=f"ThreatFox names this indicator "
-                         f"{threatfox.malware or 'a known IOC'} "
-                         f"({threatfox.confidence}% confidence)")
+    detail = "ThreatFox names " + _capped_join(
+        [f"{target} {_capped_item(value.malware or 'a known IOC')} "
+         f"({_capped_item(value.confidence)}% confidence)"
+         for target, value in hits],
+        THREATFOX_TARGET_LIMIT, "targets", sep="; ", cap_items=False)
+    return Signal(name="threatfox", points=W_THREATFOX, detail=detail)
 
 
 def _kev_signal(report: Report) -> Signal | None:
     """Confirmed exploitation in the wild -- the strongest single statement
-    any Phase 4 source makes, which is why it outweighs the rest of them."""
-    if not report.kev:
+    any Phase 4 source makes, which is why it outweighs the rest of them.
+
+    known_exploited() caps nothing, and the CVE list it intersects against
+    the catalog is bounded only by Shodan's vulns across every contacted
+    host: fifty hosts at the realistic 137 CVEs each is a detail of over a
+    hundred thousand characters. KEV_CVE_LIMIT is the reason that is not
+    what an analyst reads.
+    """
+    kev = report.kev
+    if not kev.ok or not kev.value.entries:
         return None
     return Signal(name="kev", points=W_KEV,
                   detail="a contacted host exposes CVEs CISA lists as "
-                         "known-exploited: "
-                         + ", ".join(entry.cve for entry in report.kev))
+                         "known-exploited: " + _capped_join(
+                             [entry.cve for entry in kev.value.entries],
+                             KEV_CVE_LIMIT, "CVEs"))
 
 
 def _internet_noise_signal(report: Report) -> Signal | None:
@@ -217,14 +445,25 @@ def _internet_noise_signal(report: Report) -> Signal | None:
     was aimed at anyone. Scoring GreyNoise's "seen" as a positive would
     inflate every verdict that touches a contacted IP, which is most of
     them -- so only the benign classification fires, and it fires downward.
+
+    The addresses go through _capped_join like the other five joined
+    details. They are report.greynoise's KEYS, which
+    api/api_data_puller.py builds with `dict(zip(ips, greynoise_results))`
+    off the same `ips` list that keys report.threatfox_ips -- provider
+    strings with nothing on their path checking they look like IPs, and the
+    argument is spelled out at the ThreatFox site. It was the only one of
+    the six with no bound in EITHER dimension: at IOC_LIMIT contacted hosts
+    a bare join is exactly 808 characters of a row that cannot split, and
+    one hostile key could reach any length at all.
     """
     noisy = [ip for ip, r in report.greynoise.items()
-             if r.seen and r.classification == "benign"]
+             if r.ok and r.value.seen and r.value.classification == "benign"]
     if not noisy:
         return None
     return Signal(name="internet_noise", points=W_INTERNET_NOISE,
                   detail="GreyNoise calls these contacted IPs benign internet "
-                         "background noise: " + ", ".join(noisy))
+                         "background noise: " + _capped_join(
+                             noisy, DETAIL_ITEM_LIMIT, "IPs"))
 
 
 SIGNALS = (

@@ -23,6 +23,24 @@ def test_extract_vt_on_a_404():
     assert vt.error == "Hash not found in GetTotal"
 
 
+def test_a_failed_vt_call_is_not_the_same_as_vt_having_no_record():
+    """found=False alone conflates two opposite claims: 'VirusTotal has no
+    record of this sample' and 'the VirusTotal call failed'. unavailable is
+    True only for the second."""
+    assert extract_vt(make_error("GetTotal API Error 503", 503)).unavailable is True
+    assert extract_vt(make_error("Hash not found in GetTotal", 404)).unavailable is False
+    assert extract_vt({"data": {"attributes": {}}}).unavailable is False
+
+
+def test_a_network_failure_to_virustotal_is_unavailable_not_unrecorded():
+    """base_call.py emits a statusless error dict when every retry attempt
+    fails at the transport layer -- offline, DNS, timeout -- and that is the
+    single most common way VirusTotal fails to answer, far more common than
+    a clean 5xx. A statusless error is still an error, not a 404; reporting
+    it as "no record" would claim evidence of absence the tool never had."""
+    assert extract_vt(make_error("Network Error: Connection timed out")).unavailable is True
+
+
 def test_extract_otx_deduplicates_techniques_in_first_seen_order(fixture_json):
     otx = extract_otx(fixture_json("otx_pulses"))
     assert otx.recorded_instances == 7
@@ -292,6 +310,19 @@ def test_a_failed_censys_lookup_names_the_ip_when_the_fetcher_tagged_it():
     assert hosts[0].error == "Censys 403: forbidden"
 
 
+def test_an_empty_censys_country_code_is_normalized_at_the_boundary():
+    _, hosts = extract_hosts([{
+        "result": {
+            "resource": {
+                "ip": "198.51.100.10",
+                "autonomous_system": {"country_code": ""},
+            },
+        },
+    }], {})
+
+    assert hosts[0].country == "N/A"
+
+
 def test_an_errored_censys_entry_contributes_no_domains():
     """A failure must not widen the WHOIS lookup set."""
     from hash_searcher.analysis.censys import extract_hosts
@@ -309,12 +340,32 @@ def test_an_entry_without_an_ip_address_is_skipped():
     assert extract_ips([{"data": {"abuseConfidenceScore": 90}}]) == {}
 
 
-def test_a_scalar_hostnames_value_is_tolerated():
-    """AbuseIPDB returns a list; the extractor wraps a scalar rather than
-    iterating its characters."""
+def test_a_scalar_hostnames_value_is_discarded_the_way_every_other_list_key_is():
+    """AbuseIPDB documents hostnames as an array. A scalar is not one.
+
+    This used to WRAP the scalar, and it was the only place in the package
+    that did: ipdb.py hand-rolled `or []` plus `if not isinstance(...):
+    [value]` instead of calling as_sequence, and so was the one module
+    whose behaviour differed from the shared helper it was re-implementing.
+    Wrapping `{"a": 1}` produced a hostname spelled "{'a': 1}", which is
+    the same act as_texts was just stopped from committing one type over --
+    a value no provider asserted, in a document an analyst pivots from.
+
+    Discarding is what the Censys and Shodan hostname lists already do, and
+    what as_sequence publishes: what iterates is not therefore a sequence,
+    and guessing at a caller's intent is how the shapes stopped matching
+    their declarations in the first place. A `hostnames` that is a string
+    is a schema change worth noticing, not data worth reinterpreting.
+    """
     from hash_searcher.analysis.ipdb import extract_ips
 
     ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": "host.example"}}])
+    assert ips["198.51.100.10"].hostnames == []
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": {"a": 1}}}])
+    assert ips["198.51.100.10"].hostnames == []
+    # The shape it does promise still works, and still drops the empties.
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                 "hostnames": ["host.example", "", None]}}])
     assert ips["198.51.100.10"].hostnames == ["host.example"]
 
 
@@ -353,3 +404,176 @@ def test_vt_techniques_are_resolved_and_attached(fixture_json):
     assert injection.name == "Process Injection"
     assert injection.tactic == "defense-evasion"
     assert injection.url and injection.url.endswith("T1055")
+
+
+#: Every numeric an extractor takes straight off a provider payload, and
+#: where it lands. Enumerated rather than sampled: the finding named VT's
+#: five detection buckets and deferred minor #9 named AbuseIPDB's
+#: abuseConfidenceScore, and applying the fix to those two would have been
+#: the branch's meta-pattern for the eighth time.
+#:
+#: The three that reach arithmetic RAISED TypeError from provider input,
+#: unhandled, on every surface. The other three never do -- they are
+#: coerced anyway, because "the sites that happen to crash today" is not a
+#: rule anyone can apply to the next extractor.
+HOSTILE = "<script>"
+
+
+def _vt_payload(**attributes):
+    return {"data": {"attributes": attributes}}
+
+
+def test_a_non_numeric_vt_detection_bucket_cannot_take_the_run_down():
+    """MINOR 2. Detection.total sums the five buckets, so one string among
+    them raised `TypeError: unsupported operand type(s) for +: 'int' and
+    'str'` out of score(), tty.render(), write_pdf() and to_dict() alike.
+    Each bucket separately: one shared coercion is still five call sites.
+    """
+    for bucket in ("malicious", "suspicious", "harmless", "undetected", "timeout"):
+        stats = {name: 3 for name in
+                 ("malicious", "suspicious", "harmless", "undetected", "timeout")}
+        stats[bucket] = HOSTILE
+        detection = extract_vt(_vt_payload(last_analysis_stats=stats)).detection
+        assert getattr(detection, bucket) == 0, bucket
+        # 3 x 4 surviving buckets; the hostile one contributes nothing.
+        assert detection.total == 12, bucket
+        assert isinstance(detection.ratio, str)
+
+
+def test_a_non_numeric_vt_threat_count_cannot_take_the_run_down():
+    """The same defect one expression over: _by_count's sort key is
+    `-e.get("count", 0)`, and unary minus on a string raises before any
+    Detection bucket is built."""
+    vt = extract_vt(_vt_payload(popular_threat_classification={
+        "suggested_threat_label": "trojan.emotet",
+        "popular_threat_name": [{"value": "quiet", "count": HOSTILE},
+                                {"value": "loud", "count": 9}],
+        "popular_threat_category": [{"value": "trojan", "count": None}],
+    }))
+    assert vt.threat.family == "loud"
+    assert vt.threat.categories == ["trojan"]
+
+
+def test_a_non_numeric_vt_submission_count_is_zero_not_a_string():
+    """Never reaches arithmetic -- only truthiness and interpolation -- and
+    is coerced anyway. Same bare `.get(name, 0)` into the same int field."""
+    vt = extract_vt(_vt_payload(times_submitted=HOSTILE, names=["a.exe"]))
+    assert vt.submission.times_submitted == 0
+
+
+def test_a_non_numeric_abuseipdb_confidence_cannot_take_the_run_down():
+    """Deferred minor #9, fixed in the same round as its VT sibling.
+
+    scoring.py's _abuseipdb_signal does `max(i.confidence ...)` and then
+    `worst < ABUSE_CONFIDENCE`, so one string confidence raised
+    `TypeError: '<' not supported between instances of 'str' and 'int'`
+    out of score() -- and therefore out of every surface that takes a
+    verdict.
+    """
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                 "abuseConfidenceScore": HOSTILE,
+                                 "reports": HOSTILE}}])
+    assert ips["198.51.100.10"].confidence == 0
+    assert ips["198.51.100.10"].reports == 0
+
+
+def test_a_hostile_payload_number_reaches_every_surface_without_raising():
+    """The claim the fix is actually about, measured rather than argued.
+
+    Before this, each of these four calls raised TypeError from provider
+    input on an otherwise successful run. `score` is listed first because
+    the other three take a verdict.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    from hash_searcher import scoring
+    from hash_searcher.models import OTXReport, Report
+    from hash_searcher.render import json_out, pdf, tty
+
+    report = Report(
+        indicator="a" * 64, generated_at="2026-09-02 00:00:00",
+        vt=extract_vt(_vt_payload(
+            last_analysis_stats={"malicious": 3, "suspicious": HOSTILE},
+            times_submitted=HOSTILE,
+            popular_threat_classification={
+                "suggested_threat_label": "trojan",
+                "popular_threat_name": [{"value": "x", "count": HOSTILE}]},
+        )),
+        otx=OTXReport(recorded_instances="N/A"),
+        ips=extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                   "abuseConfidenceScore": HOSTILE}}]),
+        hosts=[], whois=[],
+    )
+    verdict = scoring.score(report)
+    with contextlib.redirect_stdout(io.StringIO()):
+        tty.render(report, verdict)
+        pdf.write_pdf(report, tempfile.mktemp(suffix=".pdf"), verdict)
+    assert json_out.to_dict(report, verdict)["report"]["vt"]["detection"] == {
+        "malicious": 3, "suspicious": 0, "harmless": 0, "undetected": 0,
+        "timeout": 0, "total": 3, "ratio": "3/3",
+    }
+
+
+def test_the_payload_numbers_left_uncoerced_are_inert():
+    """That the opt-outs are HARMLESS. Which fields are opted out is derived
+    elsewhere, and this docstring no longer claims to know.
+
+    Round 1's version of this test opened "CensysHost.asn and
+    PEInfo.entry_point are the only other numbers an extractor takes off a
+    payload with no type check", and that was false: CensysHost.ports, two
+    lines below the `asn` this test reads, was a third, and the fixture below
+    used to omit `services` entirely so the field was never even constructed.
+    A test that certifies an exclusion list is the first place a reviewer
+    looks before deciding not to look further, so it pointed away from the
+    defect it sat on top of.
+
+    The list is no longer asserted in prose anywhere. `models.py`'s ANNOTATION
+    is the opt-out -- `int | None` and `int | str` mean "keep the provider's
+    value" -- and
+    test_the_fields_a_payload_reaches_uncoerced_are_exactly_the_declared_opt_outs
+    derives the set from the module by exact equality, so it cannot drift.
+    There are three, not two: the third is OTXReport.recorded_instances,
+    which round 1 also did not mention.
+
+    What is left for THIS test is the other half, which no annotation can
+    show: that carrying a hostile value in one of them reaches all four
+    surfaces without raising. Coercing them would DELETE provider data -- an
+    `asn` of "AS15169" would render as blank -- to prevent a crash that does
+    not happen, and this is what makes "does not happen" checkable.
+
+    The fixture now populates `services` alongside `asn`, so the sibling
+    field on the same dataclass is actually constructed.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    from hash_searcher import scoring
+    from hash_searcher.models import OTXReport, Report
+    from hash_searcher.render import json_out, pdf, tty
+
+    hosts = extract_hosts([{"result": {"resource": {
+        "ip": "198.51.100.10",
+        "autonomous_system": {"name": "Example AS", "asn": HOSTILE},
+        "services": [{"port": HOSTILE}, {"port": 443}]}}}], {})[1]
+    assert hosts[0].asn == HOSTILE, "asn is carried through, not coerced"
+    assert hosts[0].ports == [443], "ports IS coerced -- it is declared list[int]"
+
+    vt = extract_vt(_vt_payload(pe_info={"entry_point": HOSTILE, "sections": []}))
+    assert vt.pe.entry_point == HOSTILE
+
+    otx = extract_otx({"pulse_info": {"count": HOSTILE, "pulses": []}})
+    assert otx.recorded_instances == HOSTILE
+
+    report = Report(indicator="a" * 64, generated_at="t", vt=vt, otx=otx,
+                    ips={}, hosts=hosts, whois=[])
+    verdict = scoring.score(report)
+    with contextlib.redirect_stdout(io.StringIO()):
+        tty.render(report, verdict)
+        pdf.write_pdf(report, tempfile.mktemp(suffix=".pdf"), verdict)
+    rendered = json_out.to_dict(report, verdict)["report"]
+    assert rendered["censys"][0]["asn"] == HOSTILE
+    assert rendered["censys"][0]["ports"] == [443]
+    assert rendered["otx"]["recorded_instances"] == HOSTILE

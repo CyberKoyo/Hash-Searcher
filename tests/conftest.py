@@ -82,6 +82,14 @@ def no_backoff(monkeypatch):
     Retry-After: 0 only zeroes the status-code retry path. The network-error
     path has no header to read and always takes the hardcoded exponential, so
     it can only be neutralized by replacing sleep itself.
+
+    The dotted path below reads as if it scoped the patch to base_call. It
+    does not, and nothing in this suite should be written as though it did:
+    `hash_searcher.api.base_call.asyncio` resolves to the one shared asyncio
+    module object, so this replaces asyncio.sleep for the whole process
+    until monkeypatch undoes it. What actually keeps this fixture out of
+    other tests' way is that it is not autouse -- only block_network is --
+    so a test gets it only by asking for it by name.
     """
     async def _instant(_seconds):
         return None

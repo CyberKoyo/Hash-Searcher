@@ -1,11 +1,13 @@
 import datetime
+import math
 
-from ..api.base_call import error_message, is_error
+from ..api.base_call import error_message, error_status, is_error
 from ..models import (
     Detection, PEInfo, SandboxVerdict, Signature, SigmaRule, Submission,
-    ThreatClass, VTReport, YaraMatch,
+    ThreatClass, VTReport, YaraMatch, as_count,
 )
 from .attack import resolve, technique_ids_from_vt
+from .payload import as_mapping, as_mappings, as_sequence, as_text, dig
 
 NAME_LIMIT = 5  # VT returns hundreds; the report shows the first few.
 FLAGGED = frozenset({"malicious", "suspicious"})
@@ -20,42 +22,71 @@ def relationship_ids(data: dict, name: str) -> list[str]:
     """
     return [
         entry["id"]
-        for entry in data.get("data", {})
-                         .get("relationships", {})
-                         .get(name, {})
-                         .get("data", [])
-        if "id" in entry
+        for entry in as_mappings(dig(data, "data", "relationships", name).get("data"))
+        # isinstance, not `"id" in entry`: over a list of STRINGS that was a
+        # substring test that passed, and entry["id"] then raised
+        # `TypeError: string indices must be integers`. The same two lines as
+        # analysis/censys.py's services bug, in a second module.
+        if isinstance(entry.get("id"), str)
     ]
+
+
+def _epoch_date(value) -> str | None:
+    """A VT epoch-seconds field, as a date, or None when it is not one.
+
+    `datetime.fromtimestamp` raises TypeError on a string and OverflowError
+    or OSError on a number outside the platform's range, and both
+    first_submission_date and pe_info.timestamp are taken straight off the
+    payload. A falsy value stays None, which is what `if ts else None`
+    already meant.
+    """
+    if not value or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(
+            value, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _detection(attributes: dict) -> Detection | None:
     """None, not a zeroed Detection: 'VT reported nothing' and 'VT reported
     0/72' are different facts and the verdict layer weighs them differently.
     """
-    stats = attributes.get("last_analysis_stats")
+    stats = as_mapping(attributes.get("last_analysis_stats"))
     if not stats:
         return None
+    # as_count, not a bare .get(name, 0): the 0 default covers an absent
+    # key and says nothing about a present one. Detection.total sums these
+    # five, so one non-numeric bucket raised TypeError out of `score`, the
+    # TTY, the PDF and the JSON alike -- from provider input, on a run in
+    # which every provider answered.
     return Detection(
-        malicious=stats.get("malicious", 0),
-        suspicious=stats.get("suspicious", 0),
-        harmless=stats.get("harmless", 0),
-        undetected=stats.get("undetected", 0),
-        timeout=stats.get("timeout", 0),
+        malicious=stats.get("malicious"),
+        suspicious=stats.get("suspicious"),
+        harmless=stats.get("harmless"),
+        undetected=stats.get("undetected"),
+        timeout=stats.get("timeout"),
     )
 
 
 def _by_count(entries: list[dict]) -> list[str]:
     """VT's popular_threat_* lists carry a count per value and are not
     pre-sorted. Highest count first, ties in payload order."""
+    # The sort key is the same defect one expression over: `-"<script>"`
+    # raises TypeError before any of the five Detection buckets are even
+    # built, so a hostile `count` here took the run down first.
     return [
         entry["value"]
-        for entry in sorted(entries or [], key=lambda e: -e.get("count", 0))
+        for entry in sorted(as_mappings(entries), key=lambda e: -as_count(e.get("count")))
         if entry.get("value")
     ]
 
 
 def _threat(attributes: dict) -> ThreatClass | None:
-    block = attributes.get("popular_threat_classification")
+    block = as_mapping(attributes.get("popular_threat_classification"))
     if not block:
         return None
     families = _by_count(block.get("popular_threat_name", []))
@@ -67,24 +98,21 @@ def _threat(attributes: dict) -> ThreatClass | None:
 
 
 def _submission(attributes: dict) -> Submission:
-    ts = attributes.get("first_submission_date")
-    first_seen = (
-        datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
-        if ts else None
-    )
     return Submission(
-        first_seen=first_seen,
-        times_submitted=attributes.get("times_submitted", 0),
-        names=list(attributes.get("names", []) or [])[:NAME_LIMIT],
+        first_seen=_epoch_date(attributes.get("first_submission_date")),
+        times_submitted=attributes.get("times_submitted"),
+        names=as_sequence(attributes.get("names"))[:NAME_LIMIT],
     )
 
 
 def _signature(attributes: dict) -> Signature | None:
-    block = attributes.get("signature_info")
+    block = as_mapping(attributes.get("signature_info"))
     if not block:
         return None
-    verified = block.get("verified", "")
-    signers = block.get("signers", "")
+    # as_text: .strip() and .split() are why these two need to be strings,
+    # and a payload of {"verified": null} raised AttributeError on the first.
+    verified = as_text(block.get("verified"))
+    signers = as_text(block.get("signers"))
     return Signature(
         # VT writes prose here. The constant below is the only form that
         # means valid; every other string -- including the ones about
@@ -96,15 +124,20 @@ def _signature(attributes: dict) -> Signature | None:
 
 
 def _sandbox(attributes: dict) -> list[SandboxVerdict]:
-    return [
-        SandboxVerdict(
+    verdicts = []
+    for name, raw_body in as_mapping(attributes.get("sandbox_verdicts")).items():
+        body = as_mapping(raw_body)
+        # as_text before the membership test: an unhashable category raised
+        # TypeError on `in FLAGGED` rather than simply not matching.
+        category = as_text(body.get("category"))
+        if category not in FLAGGED:
+            continue
+        verdicts.append(SandboxVerdict(
             sandbox=body.get("sandbox_name", name),
-            category=body.get("category", ""),
-            malware_names=list(body.get("malware_names", []) or []),
-        )
-        for name, body in (attributes.get("sandbox_verdicts") or {}).items()
-        if body.get("category") in FLAGGED
-    ]
+            category=category,
+            malware_names=as_sequence(body.get("malware_names")),
+        ))
+    return verdicts
 
 
 def _yara(attributes: dict) -> list[YaraMatch]:
@@ -114,33 +147,41 @@ def _yara(attributes: dict) -> list[YaraMatch]:
             author=match.get("author") or None,
             description=match.get("description") or None,
         )
-        for match in attributes.get("crowdsourced_yara_results", []) or []
+        for match in as_mappings(attributes.get("crowdsourced_yara_results"))
         if match.get("rule_name")
     ]
 
 
 def _pe(attributes: dict) -> PEInfo | None:
-    block = attributes.get("pe_info")
+    block = as_mapping(attributes.get("pe_info"))
     if not block:
         return None
-    ts = block.get("timestamp")
     return PEInfo(
         imphash=block.get("imphash") or None,
         entry_point=block.get("entry_point"),
-        sections=len(block.get("sections", []) or []),
-        compiled=(
-            datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
-            if ts else None
-        ),
+        sections=len(as_sequence(block.get("sections"))),
+        compiled=_epoch_date(block.get("timestamp")),
     )
 
 
 def extract_vt(raw) -> VTReport:
     if is_error(raw):
-        return VTReport(found=False, error=error_message(raw))
+        # raw is already known to be an error dict here, so a status of
+        # None does not mean "no error" -- it means an error with no HTTP
+        # status, which is exactly what a retry-exhausted network failure
+        # (offline, DNS, timeout; see base_call.py's _finish) produces. A
+        # 404 is VirusTotal's answer: "no record", real information. Every
+        # other error -- with a status or without one -- means the call
+        # failed and VT never actually answered; unavailable is how the
+        # render layer tells the two apart.
+        return VTReport(
+            found=False,
+            error=error_message(raw),
+            unavailable=error_status(raw) != 404,
+        )
 
-    attributes = raw.get("data", {}).get("attributes", {})
-    rules = attributes.get("sigma_analysis_results", []) or []
+    attributes = dig(raw, "data", "attributes")
+    rules = as_mappings(attributes.get("sigma_analysis_results"))
     sigma = [
         SigmaRule(
             title=r.get("rule_title", ""),

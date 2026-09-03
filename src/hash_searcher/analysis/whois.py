@@ -9,6 +9,7 @@ import datetime
 
 from ..api.base_call import error_message, is_error
 from ..models import WhoisRecord
+from .payload import as_mapping, as_mappings, as_sequence
 
 MISSING = "N/A"
 
@@ -36,8 +37,8 @@ def _event_date(events, action: str) -> str:
     Many ccTLD RDAP servers omit expiration entirely, so a missing event is
     a normal answer rather than a failure.
     """
-    for event in events or []:
-        if isinstance(event, dict) and event.get("eventAction") == action:
+    for event in as_mappings(events):
+        if event.get("eventAction") == action:
             return _iso_date(event.get("eventDate"))
     return MISSING
 
@@ -46,7 +47,7 @@ def _vcard_name(vcard) -> str | None:
     """Pull `fn` out of ["vcard", [["fn", {}, "text", "Name"], ...]]."""
     if not isinstance(vcard, list) or len(vcard) < 2:
         return None
-    for entry in vcard[1] or []:
+    for entry in as_sequence(vcard[1]):
         if isinstance(entry, list) and len(entry) >= 4 and entry[0] == "fn":
             return entry[3]
     return None
@@ -58,8 +59,8 @@ def _registrar(entities) -> str:
     RDAP entities carry roles, and the abuse contact is not the registrar --
     taking the first entry gets it wrong on many TLDs.
     """
-    for entity in entities or []:
-        if isinstance(entity, dict) and "registrar" in (entity.get("roles") or []):
+    for entity in as_mappings(entities):
+        if "registrar" in as_sequence(entity.get("roles")):
             name = _vcard_name(entity.get("vcardArray"))
             if name:
                 return name
@@ -68,7 +69,7 @@ def _registrar(entities) -> str:
 
 def extract_whois(raw_list) -> list[WhoisRecord]:
     records = []
-    for entry in raw_list:
+    for entry in as_sequence(raw_list):
         if not isinstance(entry, dict):
             records.append(WhoisRecord(domain="", error="unrecognized RDAP payload"))
             continue

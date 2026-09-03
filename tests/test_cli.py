@@ -71,7 +71,7 @@ def _stub_entry(monkeypatch):
 EMPTY_RAW = {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": [],
              "domains": [], "rdap": [], "crtsh": [], "shodan": {},
              "greynoise": {}, "kev": {},
-             "bazaar": None, "threatfox": None}
+             "bazaar": None, "threatfox": None, "threatfox_ips": {}}
 
 
 def _stub_data_puller(monkeypatch, raw):
@@ -129,8 +129,10 @@ async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, f
     assert "WHOIS DATA" in out
 
 
-async def test_vt_404_with_no_otx_pulses_reports_invalid_hash(monkeypatch, capsys):
-    """B2(i): the real not-found case still bails."""
+async def test_vt_404_no_longer_bails_before_the_verdict(monkeypatch, capsys):
+    """B2(i): a VT 404 with no OTX pulses used to be treated as an invalid
+    hash and bail before score()/render(). resolve_hash already proved this
+    is a well-formed digest, so the run must reach a rendered verdict."""
     _stub_entry(monkeypatch)
     raw = {
         "vt": make_error("Hash not found in GetTotal", 404),
@@ -145,8 +147,12 @@ async def test_vt_404_with_no_otx_pulses_reports_invalid_hash(monkeypatch, capsy
     exit_code = await run_cli(["deadbeef", "--no-cache"])
 
     out = capsys.readouterr().out
+    assert "Invalid hash" not in out
+    assert "VirusTotal has no record of this indicator -- continuing with the other sources." in out
+    assert "VERDICT: UNKNOWN" in out
+    # No source saw anything, so EXIT_NO_DATA and EXIT_UNKNOWN collide here
+    # by design -- see their definitions in cli.py.
     assert exit_code == EXIT_NO_DATA
-    assert "Invalid hash. Please check filename or hash." in out
 
 
 async def test_vt_network_error_with_no_otx_pulses_does_not_bail(monkeypatch, capsys):
@@ -541,3 +547,40 @@ async def test_a_full_run_on_a_file_nothing_flagged_exits_zero(monkeypatch, caps
     assert exit_code == EXIT_CLEAN
     assert "VERDICT: CLEAN" in out
     assert "No signals fired." in out
+
+
+async def test_a_bare_hash_vt_has_never_seen_still_reports_what_abusech_found(
+        monkeypatch, capsys):
+    """The case Phase 4 exists for. VT 404s on a sample MalwareBazaar holds;
+    bailing here throws away the family name we already paid a request for."""
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": make_error("Hash not found in GetTotal", 404),
+        "bazaar": {"query_status": "ok", "data": [
+            {"signature": "Emotet", "file_type": "exe", "tags": ["banker"]}]},
+    })
+
+    exit_code = await run_cli(["a" * 64, "--no-cache"])
+    out = capsys.readouterr().out
+
+    assert "Invalid hash" not in out
+    assert "MALWAREBAZAAR" in out and "Emotet" in out
+    # bazaar is in SAMPLE_EVIDENCE_NAMES, so this escapes UNKNOWN.
+    assert exit_code != EXIT_UNKNOWN
+
+
+async def test_a_hash_no_source_has_ever_seen_is_unknown_not_invalid(
+        monkeypatch, capsys):
+    """The spec's acceptance row: random hex -> UNKNOWN, exit 3, no traceback.
+    Exit 3 was already right; the message and the missing verdict were not."""
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {
+        "vt": make_error("Hash not found in GetTotal", 404),
+    })
+
+    exit_code = await run_cli(["a" * 64, "--no-cache"])
+    out = capsys.readouterr().out
+
+    assert exit_code == EXIT_UNKNOWN
+    assert "VERDICT: UNKNOWN" in out
+    assert "Invalid hash" not in out

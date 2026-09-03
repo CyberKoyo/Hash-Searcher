@@ -1,7 +1,10 @@
-from hash_searcher.render.tty import RULE, render, render_hosts, render_ips, render_otx, render_vt, render_whois
+from hash_searcher.render.tty import (
+    RULE, VT_UNAVAILABLE_NOTE, render, render_hosts, render_ip_intel, render_ips, render_otx,
+    render_vt, render_whois,
+)
 from hash_searcher.models import (
     AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
-    SigmaRule, Signature, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
+    SigmaRule, Signature, SourceResult, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
 )
 
 
@@ -32,6 +35,24 @@ def test_empty_rule_levels_say_so(capsys, sample_report):
 def test_new_indicators_are_flagged(capsys, sample_report):
     render(sample_report)
     assert "[!] New indicators not found in AbuseIPDB:" in capsys.readouterr().out
+
+
+def test_ip_intel_renders_silence_for_a_source_nobody_asked(capsys, sample_report):
+    """A never-asked SourceResult (queried=False) must render as silence,
+    not a crash. SourceResult has no __bool__, so every instance -- even a
+    bare, never-asked one -- is truthy; a bug routed that truthiness into
+    the success branch and dereferenced `.value` (None) instead of treating
+    `queried=False` as nothing to report."""
+    sample_report.shodan = {"198.51.100.10": SourceResult()}
+    sample_report.greynoise = {"198.51.100.10": SourceResult()}
+
+    render_ip_intel(sample_report)
+
+    out = capsys.readouterr().out
+    assert "Ports:" not in out
+    assert "CVEs:" not in out
+    assert "Names:" not in out
+    assert "GreyNoise:" not in out
 
 
 def test_render_ips_exact_formatting(capsys):
@@ -259,21 +280,39 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
     assert out == expected
 
 
-def test_render_otx_error_path_unaffected(capsys):
-    report = Report(
-        indicator="test", generated_at="x", vt=VTReport(found=False),
-        otx=OTXReport(recorded_instances="N/A", error="OTX key not set"),
-        ips={}, hosts=[], whois=[],
-    )
-    render_otx(report)
-    out = capsys.readouterr().out
-    expected = (
-        "\n==================================================\n"
-        "OTX DATA\n"
-        "==================================================\n"
-        "No OTX data available.\n"
-    )
-    assert out == expected
+def test_a_failed_otx_lookup_says_so_instead_of_reading_as_no_data(capsys):
+    """The assertion this suite could not make until now.
+
+    A failed OTX lookup printed "No OTX data available." -- byte-identical
+    to a lookup that was never made, and a claim about OTX rather than
+    about this tool. Every other source in this renderer already said
+    which: `Censys: <error>`, `MalwareBazaar: <error>`, `crt.sh: <error>`.
+    OTX was the last asymmetry, and the two states are asserted here
+    against each other rather than each against a literal, because being
+    DIFFERENT is the property that was missing.
+    """
+    def rendered(otx):
+        report = Report(
+            indicator="test", generated_at="x", vt=VTReport(found=False),
+            otx=otx, ips={}, hosts=[], whois=[],
+        )
+        render_otx(report)
+        return capsys.readouterr().out
+
+    header = ("\n==================================================\n"
+              "OTX DATA\n"
+              "==================================================\n")
+
+    failed = rendered(OTXReport(recorded_instances="N/A",
+                                error="OTX key not set"))
+    never_asked = rendered(OTXReport(recorded_instances="N/A"))
+    answered = rendered(OTXReport(recorded_instances=4, otx_responded=True,
+                                  attack_techniques=["Process Injection"]))
+
+    assert failed == header + "OTX: OTX key not set\n"
+    assert never_asked == header + "No OTX data available.\n"
+    assert answered == header + "Recorded instances: 4\nProcess Injection\n"
+    assert failed != never_asked
 
 
 def test_render_gates_ip_censys_whois_sections_on_vt_contacted_ips(capsys):
@@ -376,6 +415,60 @@ def test_a_negative_signal_prints_its_sign(capsys, sample_report):
         Signal("signed", -20, "valid signature from Contoso Ltd"),
     ]))
     assert "  -20  signed" in capsys.readouterr().out
+
+
+def test_an_unreachable_virustotal_says_so_rather_than_implying_nobody_has_seen_it(capsys):
+    """UNKNOWN means 'nothing has ever seen this'. A 503 supports no such
+    claim, and a script branching on exit 3 deserves to know which it got."""
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(vt=VTReport(found=False, unavailable=True,
+                                         error="GetTotal API Error 503"))
+    render(report, score(report))
+    out = capsys.readouterr().out
+    # Pinned against the literal wording, not just re-derived from the same
+    # live import -- VT_UNAVAILABLE_NOTE.format(...) alone would recompute
+    # its expected value from the very constant under test, so deleting the
+    # caveat's second clause would vanish from both sides at once and this
+    # assertion would never notice.
+    assert VT_UNAVAILABLE_NOTE == (
+        "VirusTotal did not answer ({error}) -- this UNKNOWN is not "
+        "confirmation that nobody has seen this sample."
+    )
+    assert f"Note: {VT_UNAVAILABLE_NOTE.format(error='GetTotal API Error 503')}" in out.splitlines()
+
+
+def test_the_caveat_is_silent_once_the_verdict_no_longer_depends_on_vt(capsys):
+    """unavailable alone must not print the caveat -- only unavailable AND
+    UNKNOWN. Sample evidence (here, a MalwareBazaar hit) escapes the
+    UNKNOWN guard on its own; once the verdict does not lean on VT's
+    non-answer, the caveat has nothing left to qualify."""
+    from hash_searcher.models import BazaarReport, SourceResult
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(
+        vt=VTReport(found=False, unavailable=True, error="GetTotal API Error 503"),
+        bazaar=SourceResult(value=BazaarReport(found=True, family="Emotet"), queried=True),
+    )
+    verdict = score(report)
+    assert verdict.level != "UNKNOWN"
+    render(report, verdict)
+    assert "VirusTotal did not answer" not in capsys.readouterr().out
+
+
+def test_the_caveat_is_silent_for_a_genuine_404_at_unknown(capsys):
+    """A 404 is VirusTotal's actual answer: no record of this sample. That
+    is exactly the UNKNOWN case the caveat must stay silent for -- printing
+    it here would cast doubt on the one answer VT actually gave."""
+    from hash_searcher.analysis.vt import extract_vt
+    from hash_searcher.api.base_call import make_error
+    from hash_searcher.scoring import score
+
+    report = _phase4_report(vt=extract_vt(make_error("Hash not found in GetTotal", 404)))
+    verdict = score(report)
+    assert verdict.level == "UNKNOWN"
+    render(report, verdict)
+    assert "VirusTotal did not answer" not in capsys.readouterr().out
 
 
 def test_detection_section_prints_the_ratio(capsys, sample_report):
@@ -751,12 +844,12 @@ def _phase4_report(**kwargs) -> Report:
 
 
 def test_render_bazaar_exact_formatting(capsys):
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.render.tty import render_bazaar
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(
+    render_bazaar(_phase4_report(bazaar=SourceResult(value=BazaarReport(
         found=True, family="Emotet", tags=["exe", "banker"], file_type="exe",
-        first_seen="2019-04-02", yara=["Emotet_Loader"])))
+        first_seen="2019-04-02", yara=["Emotet_Loader"]), queried=True)))
     assert capsys.readouterr().out == (
         "\n==================================================\n"
         "MALWAREBAZAAR\n"
@@ -772,26 +865,27 @@ def test_render_bazaar_exact_formatting(capsys):
 def test_a_sample_bazaar_has_never_seen_says_so_rather_than_going_silent(capsys):
     """A missing section reads as a bug. 'abuse.ch has never seen this' is
     an answer, and a different one from 'we could not ask abuse.ch'."""
-    from hash_searcher.models import BazaarReport
+    from hash_searcher.models import BazaarReport, SourceResult
     from hash_searcher.render.tty import render_bazaar
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False)))
+    render_bazaar(_phase4_report(
+        bazaar=SourceResult(value=BazaarReport(found=False), queried=True)))
     out = capsys.readouterr().out
     assert "MalwareBazaar has no record of this sample." in out
 
-    render_bazaar(_phase4_report(bazaar=BazaarReport(found=False, error="500")))
+    render_bazaar(_phase4_report(bazaar=SourceResult(error="500", queried=True)))
     assert "MalwareBazaar: 500" in capsys.readouterr().out
 
 
 def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
-    from hash_searcher.models import GreyNoiseReport, ShodanReport
+    from hash_searcher.models import GreyNoiseReport, ShodanReport, SourceResult
     from hash_searcher.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
-        shodan={"198.51.100.10": ShodanReport(ports=[22, 443],
-                                              vulns=["CVE-2021-41617"])},
-        greynoise={"198.51.100.10": GreyNoiseReport(
-            seen=True, classification="malicious", name="Mirai")},
+        shodan={"198.51.100.10": SourceResult(value=ShodanReport(
+            ports=[22, 443], vulns=["CVE-2021-41617"]), queried=True)},
+        greynoise={"198.51.100.10": SourceResult(value=GreyNoiseReport(
+            seen=True, classification="malicious", name="Mirai"), queried=True)},
     ))
     out = capsys.readouterr().out
     assert "198.51.100.10" in out
@@ -801,12 +895,12 @@ def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
 
 
 def test_kev_entries_are_rendered_with_the_product(capsys):
-    from hash_searcher.models import KEVEntry
+    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
     from hash_searcher.render.tty import render_kev
 
-    render_kev(_phase4_report(kev=[KEVEntry(
+    render_kev(_phase4_report(kev=SourceResult(value=KEVReport(entries=[KEVEntry(
         cve="CVE-2021-41617", vendor="OpenBSD", product="OpenSSH",
-        name="Privilege Escalation", date_added="2022-03-03")]))
+        name="Privilege Escalation", date_added="2022-03-03")]), queried=True)))
     out = capsys.readouterr().out
     assert "KNOWN EXPLOITED VULNERABILITIES" in out
     assert "CVE-2021-41617" in out and "OpenSSH" in out
@@ -815,11 +909,12 @@ def test_kev_entries_are_rendered_with_the_product(capsys):
 def test_a_capped_sibling_list_says_how_many_there_were(capsys):
     """The count is the whole point of capping honestly: a truncated list
     that reads as complete is worse than no list."""
-    from hash_searcher.models import CertReport
+    from hash_searcher.models import CertReport, SourceResult
     from hash_searcher.render.tty import render_certs
 
-    render_certs(_phase4_report(certs=CertReport(
-        siblings=[f"h{n}.evil.example" for n in range(100)], count=5000)))
+    render_certs(_phase4_report(certs=SourceResult(value=CertReport(
+        siblings=[f"h{n}.evil.example" for n in range(100)], count=5000),
+        queried=True)))
     out = capsys.readouterr().out
     assert "5000" in out
     assert "showing 100" in out
@@ -841,13 +936,158 @@ def test_a_long_cve_list_is_capped_with_the_total_kept(capsys):
     """A real Shodan answer for a busy web server carries over a hundred
     CVEs. Printed whole they are one unreadable line that buries the KEV
     section underneath -- capped, the count still says how many there were."""
-    from hash_searcher.models import ShodanReport
+    from hash_searcher.models import ShodanReport, SourceResult
     from hash_searcher.render.tty import CVE_DISPLAY_LIMIT, render_ip_intel
 
     cves = [f"CVE-2021-{n:05d}" for n in range(128)]
     render_ip_intel(_phase4_report(
-        shodan={"198.51.100.10": ShodanReport(ports=[80], vulns=cves)}))
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[80], vulns=cves), queried=True)}))
     out = capsys.readouterr().out
     assert cves[CVE_DISPLAY_LIMIT] not in out
     assert f"128 CVEs" in out
     assert f"showing {CVE_DISPLAY_LIMIT}" in out
+
+
+def test_ip_intel_names_the_c2_family_for_a_contacted_ip(capsys):
+    """The section already had exposure (Shodan) and noise-vs-targeted
+    (GreyNoise). Neither names a C2 family, which is ThreatFox's whole
+    value and the reason it now runs per IP as well as per sample."""
+    from hash_searcher.models import ShodanReport, SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[443]), queried=True)},
+        threatfox_ips={"198.51.100.10": SourceResult(
+            value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                                  tags=["botnet", "c2"]), queried=True)},
+    ))
+    out = capsys.readouterr().out
+    assert "ThreatFox: Emotet (90% confidence)" in out
+    assert "botnet, c2" in out
+
+
+def test_an_ip_only_threatfox_answered_for_still_gets_a_row(capsys):
+    """threatfox_ips is a third per-IP dict beside shodan and greynoise, so
+    it has to join the key union too -- otherwise an attribution for an
+    address Shodan never answered about is fetched and then dropped."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Qakbot", confidence=75),
+        queried=True)}))
+    out = capsys.readouterr().out
+    assert "IP INTELLIGENCE" in out
+    assert "IP:      203.0.113.7" in out
+    assert "ThreatFox: Qakbot (75% confidence)" in out
+
+
+def test_an_address_threatfox_has_no_record_of_says_so(capsys):
+    """A real answer, and a different one from an error or a source nobody
+    asked -- the same three-way split every other renderer here makes."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=False), queried=True)}))
+    assert "ThreatFox: no C2 record for this address" in capsys.readouterr().out
+
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        error="ThreatFox rejected the key", queried=True)}))
+    assert "ThreatFox: ThreatFox rejected the key" in capsys.readouterr().out
+
+
+def test_ip_intel_is_silent_when_no_per_ip_source_was_ever_asked(capsys):
+    """Carried from Task A2's review. The old guard tested the DICTS --
+    `if not report.shodan and not report.greynoise` -- and a dict holding
+    only never-asked SourceResults is non-empty and therefore truthy. The
+    header printed and each IP rendered as a bare `IP: x.x.x.x` line with
+    nothing under it. The gate has to ask whether anything was queried."""
+    from hash_searcher.models import SourceResult
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult()},
+        greynoise={"198.51.100.10": SourceResult()},
+        threatfox_ips={"198.51.100.10": SourceResult()},
+    ))
+    assert capsys.readouterr().out == ""
+
+
+def test_an_ip_nobody_asked_about_is_dropped_while_the_answered_ones_stay(capsys):
+    """The third per-IP dict is exactly the change that can leave one dict
+    populated and another not, so the gate is per IP, not per section."""
+    from hash_searcher.models import ShodanReport, SourceResult
+    from hash_searcher.render.tty import render_ip_intel
+
+    render_ip_intel(_phase4_report(
+        shodan={"198.51.100.10": SourceResult(
+            value=ShodanReport(ports=[443]), queried=True),
+            "203.0.113.7": SourceResult()},
+        threatfox_ips={"203.0.113.7": SourceResult()},
+    ))
+    out = capsys.readouterr().out
+    assert "198.51.100.10" in out
+    assert "203.0.113.7" not in out
+
+
+def test_a_long_threatfox_tag_list_is_capped_with_the_total_kept(capsys):
+    """Same bargain as the CVE cap: a truncated list that reads as complete
+    is worse than no list. In the PDF the cap is load-bearing rather than
+    cosmetic -- an unbounded provider list in a table cell raises
+    LayoutError -- so both surfaces share TAG_DISPLAY_LIMIT."""
+    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from hash_searcher.render.tty import TAG_DISPLAY_LIMIT, render_ip_intel
+
+    tags = [f"tag-{n:03d}" for n in range(40)]
+    render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
+        value=ThreatFoxReport(found=True, malware="Emotet", confidence=90,
+                              tags=tags), queried=True)}))
+    out = capsys.readouterr().out
+    assert tags[TAG_DISPLAY_LIMIT] not in out
+    assert tags[TAG_DISPLAY_LIMIT - 1] in out
+    assert f"40 tags (showing {TAG_DISPLAY_LIMIT})" in out
+
+
+def test_an_unreachable_kev_says_how_many_cves_went_unchecked(capsys):
+    """The count models.py singles out as the one field that survives an error.
+
+    `KEVReport.unchecked` is set correctly and pinned there; no CONSUMER's use
+    of it was pinned on either surface, so
+    `f"{kev.value.unchecked} CVEs ..."` -> `f"0 CVEs ..."` left 431 tests
+    green -- an unreachable catalog reporting that nothing went unchecked,
+    which is the Phase 4 KEV bug wearing the words of the fix for it.
+
+    Two different counts, and the whole line as a literal: one count would
+    also pass against a hardcoded number in the renderer.
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+    from hash_searcher.render.tty import render_kev
+
+    for unchecked in (3, 17):
+        render_kev(_phase4_report(kev=SourceResult(
+            value=KEVReport(unchecked=unchecked),
+            error="CISA KEV API Error 503", queried=True)))
+        out = capsys.readouterr().out
+        assert "KNOWN EXPLOITED VULNERABILITIES" in out
+        assert (f"CISA KEV was unreachable (CISA KEV API Error 503) -- "
+                f"{unchecked} CVEs on contacted hosts went unchecked."
+                in out.splitlines())
+
+
+def test_render_kev_is_silent_when_the_catalog_answered_with_no_hits(capsys):
+    """The property render_kev's docstring now claims.
+
+    It used to say "silent only when there was nothing to check", which was
+    false: a catalog that ran and matched nothing is silent too. The shape is
+    right -- an empty KEV section is not news -- so the docstring was the
+    thing that was wrong, and this pins what it says now.
+    """
+    from hash_searcher.models import KEVReport, SourceResult
+    from hash_searcher.render.tty import render_kev
+
+    render_kev(_phase4_report(kev=SourceResult(
+        value=KEVReport(entries=[], unchecked=0), queried=True)))
+    assert capsys.readouterr().out == ""
