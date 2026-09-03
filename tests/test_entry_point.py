@@ -30,7 +30,23 @@ def test_readme_does_not_advertise_a_missing_script():
     # added "-" for a stdin batch. Still the whole line rather than a prefix:
     # a rename must redden this, which is the reason it reads the name out of
     # pyproject instead of spelling it here.
-    assert f"    {name} <indicator | - > [-o report.json | report.pdf]" in readme
+    #
+    # Part C moved the extension list out of the synopsis: with four writers
+    # and more coming, spelling them here made the line wrap, and the table
+    # below it (guarded by the next test) is where a reader looks anyway.
+    assert f"    {name} <indicator | - > [-o report.EXT]" in readme
+
+
+def test_readme_documents_every_output_extension():
+    """`-o` refuses an extension with a list of the ones it accepts; the
+    README must name the same set. A writer wired into the CLI but missing
+    from the table is a format nobody knows exists.
+    """
+    from hash_searcher.cli import OUTPUT_FORMATS
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    for extension in OUTPUT_FORMATS:
+        assert f"`{extension}`" in readme
 
 
 def test_readme_does_not_claim_every_archive_member_is_analyzed():

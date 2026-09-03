@@ -22,8 +22,12 @@ from .api.base_call import error_status, make_error
 from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report, Verdict
+from .render.csv_out import write_csv
 from .render.json_out import write_json
+from .render.markdown import write_markdown
+from .render.misp import write_misp
 from .render.pdf import write_pdf
+from .render.stix import write_stix
 from .render.tty import render
 from .scoring import score
 from .static.runner import analyze
@@ -77,7 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-file", dest="input_file",
                         help="read indicators from this file, one per line "
                              "(blank lines and # comments are skipped)")
-    parser.add_argument("-o", "--output", help="write a report to this path (.json or .pdf)")
+    parser.add_argument("-o", "--output",
+                        help="write a report to this path; the extension "
+                             f"picks the format ({output_extensions()})")
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
     parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
@@ -151,9 +157,46 @@ def parse_args(argv: list[str] | None = None):
     return args
 
 
+#: Every extension `-o` understands, and the format it selects. One map,
+#: because three things read it -- the dispatch below, the help text a user
+#: sees when they get it wrong, and batch.py's pre-flight check -- and a
+#: format added to only two of the three is how `.csv` would end up
+#: accepted by a single run and refused by a batch of one.
+OUTPUT_FORMATS = {
+    ".json": "json",
+    ".pdf": "pdf",
+    ".csv": "csv",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    # A STIX bundle is JSON, and so is a MISP event -- but `.json` already
+    # means this tool's own report, and silently writing a different schema
+    # under it would break every consumer keyed on the existing one. Each
+    # gets an extension that says which document it is.
+    ".stix": "stix",
+    ".misp": "misp",
+}
+
+
 def output_format(path: str) -> str | None:
     ext = os.path.splitext(path)[1].lower()
-    return {".json": "json", ".pdf": "pdf"}.get(ext)
+    return OUTPUT_FORMATS.get(ext)
+
+
+def output_extensions() -> str:
+    """The accepted extensions, listed for a human, derived rather than
+    restated -- a new entry above cannot leave this sentence stale."""
+    names = list(OUTPUT_FORMATS)
+    return f"{', '.join(names[:-1])}, or {names[-1]}"
+
+
+def unrecognized_output_message(output: str) -> str:
+    """What a user sees when `-o` names an extension nothing writes.
+
+    Shared with batch.py: the message was duplicated there, and the two
+    copies would have disagreed the moment this one grew a format.
+    """
+    return (f"Unrecognized output extension: {output} "
+            f"(use {output_extensions()})")
 
 
 def write_report(report: Report, output: str,
@@ -170,8 +213,16 @@ def write_report(report: Report, output: str,
         write_json(report, path, verdict)
     elif fmt == "pdf":
         write_pdf(report, path, verdict)
+    elif fmt == "csv":
+        write_csv(report, path, verdict)
+    elif fmt == "markdown":
+        write_markdown(report, path, verdict)
+    elif fmt == "stix":
+        write_stix(report, path, verdict)
+    elif fmt == "misp":
+        write_misp(report, path, verdict)
     else:
-        print(f"Unrecognized output extension: {output} (use .json or .pdf)")
+        print(unrecognized_output_message(output))
 
 
 async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
