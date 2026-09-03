@@ -327,12 +327,32 @@ def test_an_entry_without_an_ip_address_is_skipped():
     assert extract_ips([{"data": {"abuseConfidenceScore": 90}}]) == {}
 
 
-def test_a_scalar_hostnames_value_is_tolerated():
-    """AbuseIPDB returns a list; the extractor wraps a scalar rather than
-    iterating its characters."""
+def test_a_scalar_hostnames_value_is_discarded_the_way_every_other_list_key_is():
+    """AbuseIPDB documents hostnames as an array. A scalar is not one.
+
+    This used to WRAP the scalar, and it was the only place in the package
+    that did: ipdb.py hand-rolled `or []` plus `if not isinstance(...):
+    [value]` instead of calling as_sequence, and so was the one module
+    whose behaviour differed from the shared helper it was re-implementing.
+    Wrapping `{"a": 1}` produced a hostname spelled "{'a': 1}", which is
+    the same act as_texts was just stopped from committing one type over --
+    a value no provider asserted, in a document an analyst pivots from.
+
+    Discarding is what the Censys and Shodan hostname lists already do, and
+    what as_sequence publishes: what iterates is not therefore a sequence,
+    and guessing at a caller's intent is how the shapes stopped matching
+    their declarations in the first place. A `hostnames` that is a string
+    is a schema change worth noticing, not data worth reinterpreting.
+    """
     from hash_searcher.analysis.ipdb import extract_ips
 
     ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": "host.example"}}])
+    assert ips["198.51.100.10"].hostnames == []
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": {"a": 1}}}])
+    assert ips["198.51.100.10"].hostnames == []
+    # The shape it does promise still works, and still drops the empties.
+    ips = extract_ips([{"data": {"ipAddress": "198.51.100.10",
+                                 "hostnames": ["host.example", "", None]}}])
     assert ips["198.51.100.10"].hostnames == ["host.example"]
 
 

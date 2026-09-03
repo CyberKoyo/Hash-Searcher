@@ -55,6 +55,16 @@ HOSTILE_SHAPES = [
     ("negative", -5),
     ("huge", 10 ** 40),
     ("markup", "<b>unclosed"),
+    # json.loads produces a float for any JSON number with a point or an
+    # exponent, and as_count and vt._epoch_date both carry a dedicated
+    # math.isfinite branch written for exactly these -- branches whose only
+    # guard was a unit test, never this sweep. NaN and the infinities are
+    # not standard JSON but every provider in this tree is read with
+    # json.loads, which accepts NaN, Infinity and -Infinity by default.
+    ("float", 3.5),
+    ("nan", float("nan")),
+    ("inf", float("inf")),
+    ("-inf", float("-inf")),
 ]
 
 VT_PAYLOAD = {"data": {"attributes": {
@@ -128,15 +138,24 @@ CRTSH_PAYLOAD = [{"name_value": "a.example.com\nb.example.com"}]
 EXTRACTORS = [
     ("extract_vt", VT_PAYLOAD, lambda p: extract_vt(p)),
     ("extract_otx", OTX_PAYLOAD, lambda p: extract_otx(p)),
-    ("extract_ips", IPDB_PAYLOAD, lambda p: extract_ips([p])),
-    ("extract_hosts", CENSYS_PAYLOAD, lambda p: extract_hosts([p], {})),
-    ("extract_whois", RDAP_PAYLOAD, lambda p: extract_whois([p])),
+    # The four list-taking extractors are given the LIST as their payload,
+    # not an element the harness then wraps. `lambda p: extract_ips([p])`
+    # meant the substitution at the <root> path replaced the element and
+    # never the argument, so the sweep could not build extract_ips(7) --
+    # and reverting analysis/ipdb.py's as_sequence to the `or []` idiom
+    # this round exists to eliminate left the suite fully green (round 2's
+    # surviving mutant M-K). The payload is the argument now, so _paths'
+    # own enumeration reaches the outermost container without anything
+    # here having to name it.
+    ("extract_ips", [IPDB_PAYLOAD], lambda p: extract_ips(p)),
+    ("extract_hosts", [CENSYS_PAYLOAD], lambda p: extract_hosts(p, {})),
+    ("extract_whois", [RDAP_PAYLOAD], lambda p: extract_whois(p)),
     ("extract_bazaar", BAZAAR_PAYLOAD, lambda p: extract_bazaar(p)),
     ("extract_threatfox", THREATFOX_PAYLOAD, lambda p: extract_threatfox(p)),
     ("extract_shodan", SHODAN_PAYLOAD, lambda p: extract_shodan(p)),
     ("extract_greynoise", GREYNOISE_PAYLOAD, lambda p: extract_greynoise(p)),
     ("extract_crtsh", CRTSH_PAYLOAD, lambda p: extract_crtsh(p)),
-    ("merge_crtsh", CRTSH_PAYLOAD, lambda p: merge_crtsh([p])),
+    ("merge_crtsh", [CRTSH_PAYLOAD], lambda p: merge_crtsh(p)),
     ("known_exploited", KEV_PAYLOAD,
      lambda p: known_exploited(["CVE-2021-1"], p)),
     ("technique_ids_from_vt", VT_PAYLOAD, lambda p: technique_ids_from_vt(p)),
@@ -168,7 +187,7 @@ def _replaced(document, path, value):
 
 
 def test_no_payload_shape_takes_an_extractor_down():
-    """The sweep. 2856 (extractor, path, shape) combinations.
+    """The sweep. 3872 (extractor, path, shape) combinations.
 
     Measured against the commit before this one: **428 of these raised**,
     across **58 distinct source sites** in analysis/. The reviewer's Minor E
@@ -179,6 +198,13 @@ def test_no_payload_shape_takes_an_extractor_down():
     artifact that has failed nine times on this branch: it is complete only
     until the next site is written. The enumeration here is over payload
     SHAPES, which do not grow when the code does.
+
+    The count in the first line is a fact about today and the floor below
+    is what actually holds; they are stated separately on purpose, because
+    a number in a docstring is the kind of claim nothing enumerates. It
+    rose from 2856 when the four list-taking extractors started being
+    handed their argument rather than an element of it, and when float, NaN
+    and the two infinities joined HOSTILE_SHAPES.
     """
     failures = []
     combinations = 0

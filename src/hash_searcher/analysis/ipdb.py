@@ -13,10 +13,6 @@ def extract_ips(raw_list) -> dict[str, IPReport]:
         if not isinstance(ip, str) or not ip:
             continue
 
-        hostnames = inner.get("hostnames") or []
-        if not isinstance(hostnames, list):
-            hostnames = [hostnames]
-
         reports = inner.get("reports", 0)
         ips[ip] = IPReport(
             ip=ip,
@@ -29,7 +25,20 @@ def extract_ips(raw_list) -> dict[str, IPReport]:
             # `confidence: int` is what makes it a number.
             confidence=inner.get("abuseConfidenceScore"),
             reports=len(reports) if isinstance(reports, list) else reports,
-            hostnames=[h for h in hostnames if h],
+            # as_sequence, not the `or []` plus a hand-rolled wrap this
+            # used to carry. That was the one module in the package that
+            # re-implemented a payload.py helper, and predictably the one
+            # that behaved differently: it WRAPPED a non-list, so
+            # {"hostnames": "h.example"} became ["h.example"] and
+            # {"hostnames": {"a": 1}} became a hostname spelled "{'a': 1}",
+            # where as_sequence discards both. AbuseIPDB documents
+            # hostnames as an array; a bare string is a shape it did not
+            # promise, and guessing at one is what payload.py's docstring
+            # argues against. CensysHost.hostnames and
+            # ShodanReport.hostnames already discard. `if h` drops the
+            # empty string; anything that is not a string at all is
+            # IPReport.hostnames' own business, declared list[str].
+            hostnames=[h for h in as_sequence(inner.get("hostnames")) if h],
             domain=inner.get("domain"),
         )
     return ips
