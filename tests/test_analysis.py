@@ -483,38 +483,64 @@ def test_a_hostile_payload_number_reaches_every_surface_without_raising():
     }
 
 
-def test_the_two_optional_payload_numbers_left_uncoerced_are_inert():
-    """Stated so the exclusion is checkable rather than a claim in a report.
+def test_the_payload_numbers_left_uncoerced_are_inert():
+    """That the opt-outs are HARMLESS. Which fields are opted out is derived
+    elsewhere, and this docstring no longer claims to know.
 
-    `CensysHost.asn` and `PEInfo.entry_point` are the only other numbers an
-    extractor takes off a payload with no type check. Both are declared
-    `int | None`, neither enters arithmetic or an ordering comparison
-    anywhere in the tree, and both reach output only through `str()` or
-    `asdict`. Coercing them would DELETE provider data -- an `asn` of
-    "AS15169" would render as blank -- to prevent a crash that cannot
-    happen. This is what makes that true.
+    Round 1's version of this test opened "CensysHost.asn and
+    PEInfo.entry_point are the only other numbers an extractor takes off a
+    payload with no type check", and that was false: CensysHost.ports, two
+    lines below the `asn` this test reads, was a third, and the fixture below
+    used to omit `services` entirely so the field was never even constructed.
+    A test that certifies an exclusion list is the first place a reviewer
+    looks before deciding not to look further, so it pointed away from the
+    defect it sat on top of.
+
+    The list is no longer asserted in prose anywhere. `models.py`'s ANNOTATION
+    is the opt-out -- `int | None` and `int | str` mean "keep the provider's
+    value" -- and
+    test_the_fields_a_payload_reaches_uncoerced_are_exactly_the_declared_opt_outs
+    derives the set from the module by exact equality, so it cannot drift.
+    There are three, not two: the third is OTXReport.recorded_instances,
+    which round 1 also did not mention.
+
+    What is left for THIS test is the other half, which no annotation can
+    show: that carrying a hostile value in one of them reaches all four
+    surfaces without raising. Coercing them would DELETE provider data -- an
+    `asn` of "AS15169" would render as blank -- to prevent a crash that does
+    not happen, and this is what makes "does not happen" checkable.
+
+    The fixture now populates `services` alongside `asn`, so the sibling
+    field on the same dataclass is actually constructed.
     """
     import contextlib
     import io
     import tempfile
 
     from hash_searcher import scoring
-    from hash_searcher.models import CensysHost, OTXReport, Report
+    from hash_searcher.models import OTXReport, Report
     from hash_searcher.render import json_out, pdf, tty
 
     hosts = extract_hosts([{"result": {"resource": {
         "ip": "198.51.100.10",
-        "autonomous_system": {"name": "Example AS", "asn": HOSTILE}}}}], {})[1]
+        "autonomous_system": {"name": "Example AS", "asn": HOSTILE},
+        "services": [{"port": HOSTILE}, {"port": 443}]}}}], {})[1]
     assert hosts[0].asn == HOSTILE, "asn is carried through, not coerced"
+    assert hosts[0].ports == [443], "ports IS coerced -- it is declared list[int]"
 
     vt = extract_vt(_vt_payload(pe_info={"entry_point": HOSTILE, "sections": []}))
     assert vt.pe.entry_point == HOSTILE
 
-    report = Report(indicator="a" * 64, generated_at="t", vt=vt,
-                    otx=OTXReport(recorded_instances="N/A"), ips={},
-                    hosts=hosts, whois=[])
+    otx = extract_otx({"pulse_info": {"count": HOSTILE, "pulses": []}})
+    assert otx.recorded_instances == HOSTILE
+
+    report = Report(indicator="a" * 64, generated_at="t", vt=vt, otx=otx,
+                    ips={}, hosts=hosts, whois=[])
     verdict = scoring.score(report)
     with contextlib.redirect_stdout(io.StringIO()):
         tty.render(report, verdict)
         pdf.write_pdf(report, tempfile.mktemp(suffix=".pdf"), verdict)
-    assert json_out.to_dict(report, verdict)["report"]["censys"][0]["asn"] == HOSTILE
+    rendered = json_out.to_dict(report, verdict)["report"]
+    assert rendered["censys"][0]["asn"] == HOSTILE
+    assert rendered["censys"][0]["ports"] == [443]
+    assert rendered["otx"]["recorded_instances"] == HOSTILE
