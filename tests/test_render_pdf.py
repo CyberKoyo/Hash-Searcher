@@ -1690,14 +1690,27 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
         f"the escaping guard does not see provider values reaching a "
         f"Paragraph by {missed}")
 
+    # The shadowing binding is injected by this case rather than borrowed
+    # from whatever render/pdf.py happens to spell today. Round 4 wrote it
+    # against pdf.py:679's `for level in ('high', 'medium', 'low')`, which
+    # made the case depend on a production local it does not own: renaming
+    # that loop variable let the reverted fix pass again, so the regression
+    # test stopped detecting its own regression WITHOUT going red about it.
+    # A name asserted absent from the module cannot be taken away by a
+    # rename, and the assertion says so if one ever arrives.
+    shadow = "_smuggled_literal"
+    assert shadow not in source, (
+        f"{shadow} now exists in render/pdf.py, so this case would once "
+        f"again be borrowing a production binding instead of owning one")
     lexical = source.replace(
         "def build_story(",
-        "def _smuggle(level):\n"
-        "    return Paragraph(level, getSampleStyleSheet()['Normal'])\n\n\n"
+        f"def _smuggle({shadow}):\n"
+        f"    return Paragraph({shadow}, getSampleStyleSheet()['Normal'])\n\n\n"
         "def build_story(",
         1,
     ).replace(
         anchor,
+        f"    {shadow} = 'a literal bound in another function'\n"
         "    story.append(_smuggle(report.indicator))\n" + anchor,
         1,
     )
