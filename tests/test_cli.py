@@ -46,6 +46,12 @@ def test_short_and_long_output_flags_agree():
     ("report.pdf", "pdf"),
     ("REPORT.JSON", "json"),
     ("report.txt", None),
+    # Part C: the extension is what picks the format, so each new writer
+    # gets its own case rather than trusting the map to be read correctly.
+    ("report.csv", "csv"),
+    ("report.md", "markdown"),
+    ("report.markdown", "markdown"),
+    ("REPORT.MD", "markdown"),
 ])
 def test_output_format_is_chosen_by_extension(name, expected):
     assert output_format(name) == expected
@@ -283,8 +289,69 @@ def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, c
     cli.write_report(object(), "report.txt")
 
     assert calls == []
-    assert "Unrecognized output extension: report.txt (use .json or .pdf)" \
-        in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    # The literal, so a reworded message is a decision someone makes rather
+    # than one that happens: this is the only thing a user gets back when
+    # `-o` is wrong.
+    assert ("Unrecognized output extension: report.txt "
+            "(use .json, .pdf, .csv, .md, or .markdown)") in printed
+    # And a coverage check on top of it: a format added to OUTPUT_FORMATS
+    # but left out of the sentence a user reads is the drift that made this
+    # message worth deriving in the first place.
+    for extension in cli.OUTPUT_FORMATS:
+        assert extension in printed
+
+
+def test_write_report_dispatches_a_csv_extension(tmp_path, monkeypatch):
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    written = {}
+    monkeypatch.setattr(cli, "write_csv",
+                        lambda report, path, verdict=None: written.setdefault("path", path))
+
+    cli.write_report(object(), "report.csv")
+
+    assert written["path"] == os.path.join(str(tmp_path), "report.csv")
+
+
+def test_write_report_dispatches_a_markdown_extension(tmp_path, monkeypatch):
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    written = {}
+    monkeypatch.setattr(cli, "write_markdown",
+                        lambda report, path, verdict=None: written.setdefault("path", path))
+
+    cli.write_report(object(), "report.md")
+
+    assert written["path"] == os.path.join(str(tmp_path), "report.md")
+
+
+def test_every_declared_output_format_has_a_writer(tmp_path, monkeypatch, capsys):
+    """Fail closed: a format in the map with no branch in write_report
+    prints "unrecognized" for an extension the help text just told the user
+    to use. Every entry is exercised, so the next one cannot be half-wired.
+    """
+    import hash_searcher.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    called = []
+    for name in ("write_json", "write_pdf", "write_csv", "write_markdown"):
+        monkeypatch.setattr(
+            cli, name,
+            lambda report, path, verdict=None, name=name: called.append(name))
+
+    for extension in cli.OUTPUT_FORMATS:
+        cli.write_report(object(), f"report{extension}")
+
+    assert "Unrecognized" not in capsys.readouterr().out
+    # One writer call per declared extension, and every writer reached --
+    # the "no branch" case would show up as a short list, the "wrong
+    # branch" case as the wrong names.
+    assert len(called) == len(cli.OUTPUT_FORMATS)
+    assert set(called) == {"write_json", "write_pdf", "write_csv",
+                           "write_markdown"}
 
 
 async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(

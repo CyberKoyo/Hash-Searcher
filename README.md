@@ -13,7 +13,7 @@ Verdict: Every run ends in MALICIOUS, SUSPICIOUS, CLEAN, or UNKNOWN, with every 
 
 OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relations.
 
-Report Production: Automatically formatted output to either .json or PDF.
+Report Production: Automatically formatted output — JSON, PDF, CSV, or Markdown, chosen by the `-o` file extension. See 📤 Output formats.
 
 Cache System: Every provider response is cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). The TTL is chosen per source rather than shared — ThreatFox turns over hourly, RDAP registration data on the order of years — and the exact numbers are in the 🔌 Sources table. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
@@ -38,7 +38,7 @@ recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
 
 📖 Usage
 
-    hash-searcher <indicator | - > [-o report.json | report.pdf]
+    hash-searcher <indicator | - > [-o report.EXT]
                   [--input-file PATH] [--pivot-depth N]
                   [--zip-password PASSWORD] [--no-cache] [--refresh]
                   [--no-static] [--yara-rules DIR]
@@ -60,7 +60,8 @@ you actually care about.
 An argument that is also a filename on disk is treated as the file. A file
 named `evil.example` in the working directory is hashed, not resolved.
 
-    -o, --output PATH     write a report to this path (.json or .pdf)
+    -o, --output PATH     write a report to this path; the extension picks
+                          the format (see 📤 Output formats)
     --input-file PATH     read indicators from this file, one per line
     --pivot-depth N       follow domains discovered through crt.sh, N levels
                           deep (default 0 — no pivoting)
@@ -70,6 +71,23 @@ named `evil.example` in the working directory is hashed, not resolved.
     --no-static           skip local static analysis (entropy, PE, YARA, strings)
     --yara-rules DIR      scan against this directory of .yar/.yara rules
                           instead of the default (see 🔬 Static Analysis)
+
+📤 Output formats
+
+`-o` picks the format from the extension. Every writer consumes the report
+model, not the terminal output, so no format can drift from what the run
+actually found.
+
+| Extension | Format | What it is for |
+| --- | --- | --- |
+| `.json` | JSON report | The machine-readable record — every source, every error, the full verdict. |
+| `.pdf` | PDF report | The document you attach to a case. |
+| `.csv` | One spreadsheet row | A triage queue: N indicators sorted by score, filtered by source. |
+| `.md`, `.markdown` | Markdown | A pasteable ticket or chat comment. |
+
+An extension nothing writes is refused with the list above rather than
+written as some default — and in a batch it is refused **before** the first
+lookup, so a run does not spend its rate limit on reports it cannot write.
 
 **Batches.** Pass `-` to read indicators from stdin, or `--input-file PATH`
 to read them from a file — one per line, with blank lines and `#` comments

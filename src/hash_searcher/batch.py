@@ -14,7 +14,7 @@ import re
 from .cache import ResponseCache
 from .cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
-    analyze_one, output_format,
+    analyze_one, output_format, unrecognized_output_message,
 )
 
 #: How bad each exit code is, which is NOT the order of the codes
@@ -95,8 +95,7 @@ async def run_batch(indicators: list[str], args) -> int:
     # shows its verdict; a batch would print it once per indicator, having
     # spent every rate-limited lookup on reports it then cannot write.
     if args.output and output_format(args.output) is None:
-        print(f"Unrecognized output extension: {args.output} "
-              "(use .json or .pdf)")
+        print(unrecognized_output_message(args.output))
         return EXIT_NO_DATA
 
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
