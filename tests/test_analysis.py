@@ -310,6 +310,19 @@ def test_a_failed_censys_lookup_names_the_ip_when_the_fetcher_tagged_it():
     assert hosts[0].error == "Censys 403: forbidden"
 
 
+def test_an_empty_censys_country_code_is_normalized_at_the_boundary():
+    _, hosts = extract_hosts([{
+        "result": {
+            "resource": {
+                "ip": "198.51.100.10",
+                "autonomous_system": {"country_code": ""},
+            },
+        },
+    }], {})
+
+    assert hosts[0].country == "N/A"
+
+
 def test_an_errored_censys_entry_contributes_no_domains():
     """A failure must not widen the WHOIS lookup set."""
     from hash_searcher.analysis.censys import extract_hosts
