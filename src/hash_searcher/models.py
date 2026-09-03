@@ -115,22 +115,38 @@ def as_counts(value) -> list[int]:
 def as_texts(value) -> list[str]:
     """The strings in a provider-supplied list, for a `list[str]` field.
 
-    Same shape rule as as_counts and a different coercion, because str() is
-    total where int() is not: a member that is not a string BECOMES one
-    rather than being dropped, so nothing is deleted from the report.
+    Same shape rule as as_counts and the SAME coercion: a member that is
+    not a string is DROPPED, not turned into one.
 
-    The crash this closes is not hypothetical and is not in this layer.
-    render/tty.py and render/pdf.py join these lists -- `', '.join(
-    bazaar.value.tags)`, `', '.join(vt.submission.names)`, sixteen sites --
-    and str.join raises TypeError on a non-string member. Measured at HEAD
-    against `{"data": [{"tags": [1, 2]}]}`: TTY and PDF both raised
-    `sequence item 0: expected str instance, int found`, unhandled, while
-    the JSON surface printed it happily. Same failure shape as the numbers
-    above, one declared type over.
+    Round 2 wrote str() here instead, on the argument that str() is total
+    where int() is not, so nothing need be deleted from the report. What
+    that actually produced was `{"tags": ["trojan", null]}` ->
+    `["trojan", "None"]` -- a tag named None, and beside it a tag named
+    `{'a': 1}` and a tag named `7`. Those are facts about the sample that
+    no provider asserted, in a document an analyst pivots from, and they
+    reached all three surfaces: the TTY, the PDF, and the JSON report,
+    where the commit before that one had emitted an honest null.
+
+    as_counts, five lines above, faces the identical shape problem and
+    already published the answer: "a scalar must hold something and 0 is
+    the honest nothing, while a list can simply be SHORTER. Coercing would
+    invent a port 0 that no scanner reported." Inventing a tag is the same
+    act. Two functions in one module giving opposite answers to one
+    question, with an argument written under only one of them, is how the
+    disagreement went unnoticed for a round.
+
+    The crash this function exists to close is closed either way, and it is
+    not in this layer: render/tty.py and render/pdf.py join these lists --
+    `', '.join(bazaar.value.tags)`, `', '.join(vt.submission.names)`,
+    sixteen sites -- and str.join raises TypeError on a non-string member.
+    Measured against `{"data": [{"tags": [1, 2]}]}`: TTY and PDF both
+    raised `sequence item 0: expected str instance, int found`, unhandled,
+    while the JSON surface printed it happily. Dropping the member closes
+    that crash exactly as coercing it did, without asserting anything.
     """
     if not isinstance(value, list):
         return []
-    return [item if isinstance(item, str) else str(item) for item in value]
+    return [item for item in value if isinstance(item, str)]
 
 
 def as_declared_text(value, nothing: str = "") -> str:

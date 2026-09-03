@@ -180,7 +180,11 @@ _HOSTILE = {
     "list[int]": ((["8080/tcp", 443, None, True, -1], [443]), (None, [])),
     "str": ((12345, "12345"), (None, DECLARED_DEFAULT)),
     "str | None": ((12345, "12345"), (None, None)),
-    "list[str]": (([1, None], ["1", "None"]), (None, [])),
+    # Pinned literally, because this is the pair round 2 got wrong in the
+    # other direction: it asserted ([1, None], ["1", "None"]) and so
+    # certified the fabrication. A member that is not a string is dropped,
+    # and the surviving string proves the list is not simply emptied.
+    "list[str]": ((["trojan", 1, None, {"a": 1}], ["trojan"]), (None, [])),
 }
 
 
@@ -504,3 +508,47 @@ def test_the_coercion_call_sites_outside_models_are_exactly_the_declared_ones():
         f"new {sorted(found - set(COERCION_CALLS_OUTSIDE_MODELS))}, gone "
         f"{sorted(set(COERCION_CALLS_OUTSIDE_MODELS) - found)}. models.py's "
         f"as_count docstring describes this set; update both together.")
+
+
+def test_as_texts_drops_what_is_not_a_string_rather_than_naming_it():
+    """The decision, pinned with literals, and the same one as_counts made.
+
+    Round 2 coerced with str(), so `{"tags": ["trojan", null]}` produced a
+    tag named `None` on the TTY, in the PDF, and in the JSON report, where
+    the commit before it had emitted an honest null. A tag named None, a
+    tag named `{'a': 1}` and a tag named `7` are facts about the sample
+    that no provider asserted.
+
+    Dropping is what as_counts does with a port it cannot read, for the
+    argument as_counts publishes: a scalar must hold something, but a list
+    can simply be shorter, and coercing invents a member nobody reported.
+    """
+    from hash_searcher.models import as_counts, as_texts
+
+    assert as_texts(["trojan", None]) == ["trojan"]
+    assert as_texts(["trojan", 7, {"a": 1}, True, ["nested"]]) == ["trojan"]
+    assert as_texts([]) == []
+    assert as_texts(None) == []
+    assert as_texts("trojan") == []          # not a list is not a list of strings
+    assert as_texts(["a", "b"]) == ["a", "b"]
+
+    # The two are answering one question the same way now. This is the
+    # assertion that reddens if they diverge again.
+    assert as_texts([None]) == [] and as_counts([None]) == []
+
+
+def test_a_null_tag_is_absent_from_the_json_report_rather_than_named_None():
+    """The surface the Constraint 3 breach was on.
+
+    `bazaar.tags` is serialized straight out of the dataclass, so what the
+    field holds is what the JSON says. Asserted end to end from a provider
+    payload rather than on as_texts alone, because the finding was about
+    what a consumer reads.
+    """
+    from hash_searcher.analysis.bazaar import extract_bazaar
+
+    result = extract_bazaar(
+        {"query_status": "ok",
+         "data": [{"tags": ["trojan", None, {"a": 1}, 7]}]})
+    assert result.value.tags == ["trojan"]
+    assert "None" not in result.value.tags
