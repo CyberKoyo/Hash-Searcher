@@ -14,7 +14,7 @@ new extractor cannot get it wrong because there is nothing left for it to do.
 
 import functools
 import math
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from types import UnionType
 from typing import Generic, TypeVar, Union, get_args, get_origin
 
@@ -58,7 +58,17 @@ def as_count(value, default: int = 0, floor: int | None = 0) -> int:
     to make true, rather than in one extractor that the next extractor then
     has to remember about -- the argument A4c made for moving the height fit
     into pdf.py's cell factory. `@coerced` below finishes that argument: no
-    extractor calls this at all any more.
+    extractor calls this to satisfy a DECLARATION any more. One call site
+    outside this module survives -- analysis/vt.py sorts VT's popular
+    threat names by `-as_count(e.get("count"))` -- and it is correct
+    precisely because there is no declaration there to hang the invariant
+    on: it is an ordering key over a raw payload, not a field. Round 2's
+    version of this sentence said "no extractor calls this at all any
+    more", which was false one import away, so the sentence is no longer
+    the evidence: tests/test_models.py's
+    test_the_coercion_call_sites_outside_models_are_exactly_the_declared_ones
+    enumerates them from the source, with a reason recorded per call site,
+    and this paragraph has to agree with it.
     """
     if isinstance(value, bool):
         coerced = default
@@ -123,18 +133,79 @@ def as_texts(value) -> list[str]:
     return [item if isinstance(item, str) else str(item) for item in value]
 
 
-def _as_declared_text(value):
-    """A `str` / `str | None` field's value, at the type it declares.
+def as_declared_text(value, nothing: str = "") -> str:
+    """A bare `str` field's value, at the type it declares.
 
-    None is left alone deliberately. A `str` field holding None is this
-    repo's own bug rather than provider data, and turning it into the string
-    "None" would hide it while changing what the JSON report emits for that
-    key. Every consumer that could raise on a non-string -- the str.join
-    sites in render/ -- already skips a None with `if x`.
+    `nothing` is what the field holds when the provider supplied something
+    that is not a string, and it is the field's OWN declared default --
+    "N/A" for CensysHost.country, "" for FileTypeReport.note, and str()
+    for a field that declares no default, exactly as as_count's is int().
+
+    Round 2 passed None straight through here, on a docstring that said "a
+    `str` field holding None is this repo's own bug rather than provider
+    data". That sentence was false, and measurably so:
+    `.get(key, default)` fires its default on an ABSENT key and on nothing
+    else, so `{"ip": null}` walked past `result.get("ip", "N/A")` and put
+    None in CensysHost.ip, declared `str`. Eight bare-`str` fields are
+    reachable that way from a provider payload -- CensysHost.ip,
+    ThreatClass.label, SandboxVerdict.sandbox, YaraMatch.rule, all three
+    SigmaRule fields, and AttackTechnique.name through the MITRE bundle --
+    and the consequences were user-visible, not theoretical: the TTY
+    printed `Label:      None`, the JSON emitted `"label": null` under a
+    key whose declared type is string, and a Sigma rule whose level was
+    null vanished from every by_level bucket.
+
+    The answer is as_count's, one declared type over. A scalar must hold
+    SOMETHING -- the as_counts argument that a list can simply be shorter
+    is not available to it -- and the honest something is the nothing the
+    field itself declares. `str | None` is the opt-out and it is the
+    ANNOTATION that opts out, the same way `int | None` opts out of
+    as_count: a field that genuinely has no value says so in its type.
+    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return nothing
+    return str(value)
+
+
+def _as_optional_text(value):
+    """A `str | None` field's value. None is one of the two it declares.
+
+    The union is the opt-out marker, so unlike as_declared_text above this
+    keeps a null verbatim: SourceResult.error, CensysHost.org and the rest
+    are declared `str | None` precisely because "no answer" is data there,
+    and every consumer that could raise on it -- the str.join sites in
+    render/ -- already skips a None with `if x`.
     """
     if value is None or isinstance(value, str):
         return value
     return str(value)
+
+
+def _declared_nothing(spec) -> str:
+    """A bare `str` field's own declared default, as as_declared_text's floor.
+
+    Read off the dataclass field rather than chosen here, so the answer for
+    a field is written beside the field. A `str` field that declares a
+    default which is not a string is a contradiction in the declaration and
+    raises at import rather than being papered over at runtime.
+    """
+    if spec.default is not MISSING:
+        nothing = spec.default
+    elif spec.default_factory is not MISSING:
+        nothing = spec.default_factory()
+    else:
+        return ""
+    if not isinstance(nothing, str):
+        raise TypeError(
+            f"field {spec.name!r} declares `str` but defaults to "
+            f"{nothing!r}, which is not one")
+    return nothing
+
+
+def _text_coercion(nothing: str):
+    return lambda value: as_declared_text(value, nothing)
 
 
 #: field annotation -> the one total coercion for it. A field whose
@@ -142,15 +213,26 @@ def _as_declared_text(value):
 #: opt-out: `int | None` (CensysHost.asn, PEInfo.entry_point) and `int | str`
 #: (OTXReport.recorded_instances) are declared as unions precisely because
 #: they carry a provider value that is not a plain count -- an `asn` of
-#: "AS15169" is data, and coercing it to 0 would delete it. That is a
-#: property of the source now, not a sentence in a test docstring; round 1's
-#: docstring claimed a two-item exclusion list and the third item was two
-#: lines from the field it read.
+#: "AS15169" is data, and coercing it to 0 would delete it. `str | None` is
+#: a key here rather than an opt-out for the same reason read the other
+#: way: it declares that None is one of the two things the field holds, so
+#: the coercion for it keeps a null and the one for a bare `str` does not.
+#: That is a property of the source now, not a sentence in a test
+#: docstring; round 1's docstring claimed a two-item exclusion list and the
+#: third item was two lines from the field it read.
+#:
+#: Each entry takes the dataclass FIELD and whether it was named `signed`,
+#: and returns the one-argument coercion for it -- because two of the four
+#: answers depend on the declaration and not only on the annotation: an int
+#: field's floor comes from `signed`, and a str field's nothing comes from
+#: its own default.
 _COERCIONS = {
-    "int": lambda v, floor: as_count(v, floor=floor),
-    "list[int]": lambda v, floor: as_counts(v),
-    "str": lambda v, floor: _as_declared_text(v),
-    "list[str]": lambda v, floor: as_texts(v),
+    "int": lambda spec, signed: (
+        lambda value: as_count(value, floor=None if signed else 0)),
+    "list[int]": lambda spec, signed: as_counts,
+    "str": lambda spec, signed: _text_coercion(_declared_nothing(spec)),
+    "str | None": lambda spec, signed: _as_optional_text,
+    "list[str]": lambda spec, signed: as_texts,
 }
 
 
@@ -166,7 +248,7 @@ def _declared(annotation) -> str | None:
         return "list[str]"
     if get_origin(annotation) in (Union, UnionType):
         if set(get_args(annotation)) == {str, type(None)}:
-            return "str"
+            return "str | None"
     return None
 
 
@@ -189,7 +271,11 @@ def coerced(cls=None, *, signed: tuple[str, ...] = ()):
 
     `signed` names the `int` fields that legitimately admit a negative; see
     as_count. Passing a name that is not an `int` field on this class raises
-    at import, so a renamed field cannot silently leave a floor on.
+    at import, so a renamed field cannot silently leave a floor on --
+    checked against the int fields specifically, not merely against the
+    coercible ones, and pinned by
+    test_coerced_refuses_a_class_it_can_say_nothing_true_about rather than
+    left as this sentence's word for it.
 
     Applied only to the classes that declare a coercible field -- on any
     other it would be a no-op decoration nobody could justify. What stops the
@@ -199,16 +285,19 @@ def coerced(cls=None, *, signed: tuple[str, ...] = ()):
     """
     def decorate(target):
         coercions = []
+        integers = set()
         for spec in fields(target):
             kind = _declared(spec.type)
-            if kind is not None:
-                coercions.append((spec.name, _COERCIONS[kind],
-                                  None if spec.name in signed else 0))
-        names = {name for name, _, _ in coercions}
-        unknown = set(signed) - names
+            if kind is None:
+                continue
+            if kind == "int":
+                integers.add(spec.name)
+            coercions.append(
+                (spec.name, _COERCIONS[kind](spec, spec.name in signed)))
+        unknown = set(signed) - integers
         if unknown:
             raise TypeError(
-                f"{target.__name__} declares no coercible field(s) "
+                f"{target.__name__} declares no int field(s) "
                 f"{sorted(unknown)} to mark signed")
         if not coercions:
             raise TypeError(
@@ -225,12 +314,29 @@ def coerced(cls=None, *, signed: tuple[str, ...] = ()):
         @functools.wraps(built)
         def __init__(self, *args, **kwargs):
             built(self, *args, **kwargs)
-            for name, coerce, floor in coercions:
+            for name, coerce in coercions:
                 # object.__setattr__ because most of these are frozen; the
                 # invariant has to hold for them too.
-                object.__setattr__(self, name, coerce(getattr(self, name), floor))
+                object.__setattr__(self, name, coerce(getattr(self, name)))
 
         target.__init__ = __init__
+
+        # Thirteen of this module's 33 dataclasses are mutable, and until
+        # now the invariant held only at construction -- "a field holds the
+        # type it declares" was true of a field nobody had assigned to
+        # since. Nothing in src/ assigns to a coercible field today (an AST
+        # walk finds 8 attribute assignments, none of them here), so this
+        # breaks nothing; it means the sentence is now true without that
+        # measurement having to be repeated by every future reader.
+        if not target.__dataclass_params__.frozen:
+            by_name = dict(coercions)
+
+            def __setattr__(self, name, value):
+                coerce = by_name.get(name)
+                object.__setattr__(
+                    self, name, coerce(value) if coerce else value)
+
+            target.__setattr__ = __setattr__
         return target
 
     return decorate if cls is None else decorate(cls)

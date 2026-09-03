@@ -143,13 +143,44 @@ UNCOERCED_PAYLOAD_FIELDS = {
 #: is evidence AGAINST) and W_INTERNET_NOISE is -10; Verdict.score sums them.
 SIGNED_FIELDS = {("Signal", "points"), ("Verdict", "score")}
 
-#: One hostile value per declared annotation, and what the declaration must
-#: turn it into. Literal, not computed from the coercion functions.
+class _DeclaredDefault:
+    """Stands for "this field's own declared default" in _HOSTILE below.
+
+    A bare `str` field's honest nothing is not one value for every field:
+    it is "N/A" for CensysHost.country, "" for FileTypeReport.note and
+    str() for a field that declares no default at all. So the expectation
+    is read off the dataclass FIELD -- the declaration in models.py's class
+    body -- rather than off models.as_declared_text. That still reddens if
+    the coercion returns None, "" or the string "None" for a field whose
+    class body says "N/A". What it cannot catch alone is _declared_nothing
+    misreading a default, which is why
+    test_a_null_where_a_str_is_declared_becomes_the_declared_nothing pins
+    five specific fields against five hardcoded literals.
+    """
+
+    def __repr__(self):
+        return "<this field's own declared default>"
+
+
+DECLARED_DEFAULT = _DeclaredDefault()
+
+#: Hostile values per declared annotation, and what the declaration must
+#: turn each into. Literal, not computed from the coercion functions.
+#:
+#: EVERY annotation carries a None case, and that is the round-3 change.
+#: Round 2's only hostile value for a `str` field was 12345, so the test
+#: whose NAME asserts a universal -- every field holds the type it declares
+#: -- could not reach the counter-example: a provider null walks straight
+#: through `.get(key, default)`, whose default fires on an ABSENT key and
+#: on nothing else, into a bare `str` field. A fixture that cannot express
+#: the failure is how round 1's CRITICAL survived; this was the same
+#: artifact one declared type over.
 _HOSTILE = {
-    "int": ("<script>", 0),
-    "list[int]": (["8080/tcp", 443, None, True, -1], [443]),
-    "str": (12345, "12345"),
-    "list[str]": ([1, None], ["1", "None"]),
+    "int": (("<script>", 0), (None, 0)),
+    "list[int]": ((["8080/tcp", 443, None, True, -1], [443]), (None, [])),
+    "str": ((12345, "12345"), (None, DECLARED_DEFAULT)),
+    "str | None": ((12345, "12345"), (None, None)),
+    "list[str]": (([1, None], ["1", "None"]), (None, [])),
 }
 
 
@@ -174,8 +205,19 @@ def _kind(annotation):
         return "list[str]"
     if typing.get_origin(annotation) in (typing.Union, types.UnionType):
         if set(typing.get_args(annotation)) == {str, type(None)}:
-            return "str"
+            return "str | None"
     return None
+
+
+def _wanted(want, spec):
+    """Resolve DECLARED_DEFAULT against the field's own declaration."""
+    if want is not DECLARED_DEFAULT:
+        return want
+    if spec.default is not dataclasses.MISSING:
+        return spec.default
+    if spec.default_factory is not dataclasses.MISSING:
+        return spec.default_factory()
+    return ""
 
 
 def test_every_models_field_holds_the_type_it_declares():
@@ -189,38 +231,48 @@ def test_every_models_field_holds_the_type_it_declares():
     the moment it exists -- which is precisely what the tenth call site
     (CensysHost.ports) was not.
 
+    Every annotation now carries more than one hostile value, None among
+    them, and the whole set is run against every field -- see _HOSTILE for
+    why a fixture of one value per annotation was the hole rather than a
+    detail of it.
+
     It also refuses to be vacuous: the count of fields it actually exercised
     is asserted against a floor, so an annotation change that makes _kind
     return None everywhere reddens instead of passing over an empty loop.
     """
     exercised = 0
-    for cls in _models_dataclasses():
-        kwargs, expected = {}, {}
-        for spec in dataclasses.fields(cls):
-            kind = _kind(spec.type)
-            if kind is None:
-                # Not coerced. Give it something valid so the class can be
-                # built at all; what it holds is not this test's subject.
-                if spec.default is not dataclasses.MISSING:
+    rounds = max(len(pairs) for pairs in _HOSTILE.values())
+    for case in range(rounds):
+        for cls in _models_dataclasses():
+            kwargs, expected = {}, {}
+            for spec in dataclasses.fields(cls):
+                kind = _kind(spec.type)
+                if kind is None:
+                    # Not coerced. Give it something valid so the class can
+                    # be built at all; what it holds is not this test's
+                    # subject.
+                    if spec.default is not dataclasses.MISSING:
+                        continue
+                    if spec.default_factory is not dataclasses.MISSING:
+                        continue
+                    kwargs[spec.name] = None
                     continue
-                if spec.default_factory is not dataclasses.MISSING:
-                    continue
-                kwargs[spec.name] = None
-                continue
-            hostile, want = _HOSTILE[kind]
-            kwargs[spec.name] = hostile
-            expected[spec.name] = want
+                pairs = _HOSTILE[kind]
+                hostile, want = pairs[min(case, len(pairs) - 1)]
+                kwargs[spec.name] = hostile
+                expected[spec.name] = _wanted(want, spec)
 
-        instance = cls(**kwargs)
-        for name, want in expected.items():
-            exercised += 1
-            declared = [f.type for f in dataclasses.fields(cls)
-                        if f.name == name][0]
-            assert getattr(instance, name) == want, (
-                f"{cls.__name__}.{name} declares {declared} but holds "
-                f"{getattr(instance, name)!r} after construction")
+            instance = cls(**kwargs)
+            for name, want in expected.items():
+                exercised += 1
+                declared = [f.type for f in dataclasses.fields(cls)
+                            if f.name == name][0]
+                assert getattr(instance, name) == want, (
+                    f"{cls.__name__}.{name} declares {declared} but holds "
+                    f"{getattr(instance, name)!r} after construction with "
+                    f"{kwargs[name]!r}")
 
-    assert exercised >= 90, (
+    assert exercised >= 190, (
         f"only {exercised} fields exercised; the enumeration has stopped "
         f"seeing the module it is checking")
 
@@ -276,3 +328,179 @@ def test_only_the_two_scoring_fields_carry_a_negative():
 
     assert signed == SIGNED_FIELDS, f"signed int fields changed: {sorted(signed)}"
     assert len(clamped) >= 10, f"only {len(clamped)} clamped int fields found"
+
+
+def test_a_null_where_a_str_is_declared_becomes_the_declared_nothing():
+    """The counter-example the round-2 fixture could not reach, pinned literally.
+
+    Round 2's models.py passed None through for a bare `str` field on the
+    written justification that "a `str` field holding None is this repo's
+    own bug rather than provider data". It is not. `.get(key, default)`
+    fires its default on an ABSENT key and on nothing else, so a provider
+    `null` walks past `result.get("ip", "N/A")` and lands in a field
+    declared `str` -- measured, on the surfaces an analyst reads: the TTY
+    printed `Label:      None`, the JSON emitted `"label": null` under a
+    key whose declared type is string, and a Sigma rule whose level was
+    null disappeared from every by_level bucket.
+
+    The expectations here are five hardcoded literals rather than anything
+    derived, because the test above derives its expectation from the same
+    declaration models._declared_nothing reads. These are what keeps that
+    from being circular: "N/A" and "default" are written out, so a
+    coercion that answered "" everywhere would redden here even though it
+    agreed with itself.
+    """
+    from hash_searcher.models import CensysHost, SourceResult, YaraHit
+
+    # A field with no declared default falls back to str(), exactly as
+    # as_count's default is int().
+    assert CensysHost(ip=None).ip == ""
+    # A field WITH one gets its own, not a blanket empty string.
+    assert CensysHost(ip="198.51.100.10", country=None).country == "N/A"
+    assert YaraHit(rule=None, namespace=None).namespace == "default"
+    assert YaraHit(rule=None, namespace=None).rule == ""
+    # `str | None` is the opt-out, and it is the ANNOTATION that opts out:
+    # None is one of the two things the union declares, so it survives.
+    assert SourceResult(error=None).error is None
+    assert SourceResult(error=12345).error == "12345"
+
+
+def test_the_declaration_holds_after_assignment_and_not_only_at_construction():
+    """Thirteen of the module's 33 dataclasses are mutable.
+
+    "A field holds the type it declares" was true only of a field nobody
+    had assigned to since it was built, which is a smaller claim than the
+    sentence makes. Nothing in src/ assigns to a coercible field today, so
+    this breaks nothing -- but the invariant should not depend on that
+    staying true, and re-measuring it is not something a future reader
+    should have to do.
+
+    Enumerated rather than named, the same way the construction test is:
+    every mutable dataclass, every coercible field on it.
+    """
+    checked = 0
+    for cls in _models_dataclasses():
+        if cls.__dataclass_params__.frozen:
+            continue
+        kwargs = {}
+        for spec in dataclasses.fields(cls):
+            if (spec.default is dataclasses.MISSING
+                    and spec.default_factory is dataclasses.MISSING):
+                kind = _kind(spec.type)
+                pairs = _HOSTILE.get(kind)
+                kwargs[spec.name] = pairs[0][0] if pairs else None
+        instance = cls(**kwargs)
+        for spec in dataclasses.fields(cls):
+            kind = _kind(spec.type)
+            if kind is None:
+                continue
+            for hostile, want in _HOSTILE[kind]:
+                setattr(instance, spec.name, hostile)
+                checked += 1
+                assert getattr(instance, spec.name) == _wanted(want, spec), (
+                    f"{cls.__name__}.{spec.name} declares {spec.type} but "
+                    f"holds {getattr(instance, spec.name)!r} after being "
+                    f"assigned {hostile!r}")
+
+    assert checked >= 60, (
+        f"only {checked} assignments checked; the enumeration has stopped "
+        f"seeing the mutable classes it is about")
+
+
+def test_coerced_refuses_a_class_it_can_say_nothing_true_about():
+    """@coerced's two import-time guards, and the one _declared_nothing adds.
+
+    Both of the original two survived round 2's mutation run untouched
+    (mutants M-F and M-G), and `coerced()`'s own docstring rests an
+    argument on the first: "passing a name that is not an `int` field on
+    this class raises at import, so a renamed field cannot silently leave a
+    floor on". Nothing checked that it still does -- and it did not, quite:
+    the check was against every COERCIBLE field, so `signed=("a_str_field",)`
+    passed silently and left the sentence false. It is against the int
+    fields now, and asserted here.
+    """
+    import pytest
+
+    from hash_searcher.models import coerced
+
+    with pytest.raises(TypeError, match="no int field"):
+        @coerced(signed=("nowhere",))
+        @dataclasses.dataclass
+        class RenamedAway:
+            points: int = 0
+
+    with pytest.raises(TypeError, match="no int field"):
+        # The half that was missing: a `str` field is coercible but has no
+        # floor, so marking it signed says nothing true either.
+        @coerced(signed=("label",))
+        @dataclasses.dataclass
+        class SignedText:
+            label: str = ""
+            points: int = 0
+
+    with pytest.raises(TypeError, match="no coercible field"):
+        @coerced
+        @dataclasses.dataclass
+        class NothingToCoerce:
+            when: float = 0.0
+
+    with pytest.raises(TypeError, match="not one"):
+        # A `str` field whose declared default is not a string is a
+        # contradiction in the declaration, and as_declared_text would
+        # otherwise hand that default out as a str field's value.
+        @coerced
+        @dataclasses.dataclass
+        class LyingDefault:
+            label: str = 0
+
+
+#: Every call to one of models.py's coercion helpers from outside models.py,
+#: with the reason it is not a field declaration doing the work.
+#:
+#: models.py's as_count docstring asserted "no extractor calls this at all
+#: any more" while analysis/vt.py imported it and called it one line under
+#: eighty. The sentence was in production source, nothing enumerated it, so
+#: nothing reddened -- which is the artifact class round 1's CRITICAL was.
+#: This dict is what makes the claim checkable instead of asserted.
+COERCION_CALLS_OUTSIDE_MODELS = {
+    ("analysis/vt.py", "as_count"):
+        "an ordering key -- `key=lambda e: -as_count(e.get('count'))` over a "
+        "raw VT payload. Correct BECAUSE there is no declaration there to "
+        "hang the invariant on: it sorts a list of dicts, it does not "
+        "populate a field.",
+}
+
+
+def test_the_coercion_call_sites_outside_models_are_exactly_the_declared_ones():
+    """Read from the source, so the docstring above as_count cannot drift.
+
+    Enumerates every import-and-call of a models.py coercion helper across
+    src/, because the claim that matters is a completeness one and a
+    sentence cannot be enumerated by anything.
+    """
+    import ast
+    import pathlib
+
+    helpers = {"as_count", "as_counts", "as_texts", "as_declared_text"}
+    root = pathlib.Path(__file__).resolve().parent.parent / "src" / "hash_searcher"
+    assert root.is_dir(), f"{root} is not where hash_searcher lives any more"
+
+    found, scanned = set(), 0
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "models.py":
+            continue
+        scanned += 1
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id in helpers:
+                found.add((str(path.relative_to(root)), node.func.id))
+
+    assert scanned >= 20, (
+        f"only {scanned} modules scanned; the walk has stopped seeing the "
+        f"package it is checking")
+    assert found == set(COERCION_CALLS_OUTSIDE_MODELS), (
+        f"the coercion helpers called from outside models.py changed: "
+        f"new {sorted(found - set(COERCION_CALLS_OUTSIDE_MODELS))}, gone "
+        f"{sorted(set(COERCION_CALLS_OUTSIDE_MODELS) - found)}. models.py's "
+        f"as_count docstring describes this set; update both together.")
