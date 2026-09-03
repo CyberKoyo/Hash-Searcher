@@ -208,10 +208,20 @@ def _as_optional_text(value):
     are declared `str | None` precisely because "no answer" is data there,
     and every consumer that could raise on it -- the str.join sites in
     render/ -- already skips a None with `if x`.
+
+    A value that is NEITHER gets that same None, and this is as_declared_text's
+    rule rather than a second one: a wrong type is absence, and absence is
+    spelled with whatever the declaration can hold. A bare `str` has only its
+    declared default to say that with; this annotation has None itself, which
+    is the more honest of the two. What neither may do is answer with a
+    provider claim nobody made -- str(False) is "False", and an org named
+    False, printed on the terminal, written into JSON and drawn into the PDF
+    Censys row, is the same invention `as_texts` was stopped from making one
+    declared type over.
     """
     if value is None or isinstance(value, str):
         return value
-    return str(value)
+    return None
 
 
 def _declared_nothing(spec) -> str:

@@ -177,7 +177,11 @@ _HOSTILE = {
             (["not text"], DECLARED_DEFAULT),
             ({"not": "text"}, DECLARED_DEFAULT),
             (None, DECLARED_DEFAULT)),
-    "str | None": ((12345, "12345"), (None, None)),
+    # A wrong type is absence, not a Python spelling. Unlike a bare `str`,
+    # this annotation CAN say "no answer", so the honest answer for a value
+    # that is not a string is the None the union already declares -- the
+    # same rule as bare `str`, resolved to what this declaration can hold.
+    "str | None": ((12345, None), (False, None), (None, None)),
     # Pinned literally, because this is the pair round 2 got wrong in the
     # other direction: it asserted ([1, None], ["1", "None"]) and so
     # certified the fabrication. A member that is not a string is dropped,
@@ -364,7 +368,10 @@ def test_a_null_where_a_str_is_declared_becomes_the_declared_nothing():
     # `str | None` is the opt-out, and it is the ANNOTATION that opts out:
     # None is one of the two things the union declares, so it survives.
     assert SourceResult(error=None).error is None
-    assert SourceResult(error=12345).error == "12345"
+    # ...and a value that is neither becomes the None it declares, rather
+    # than a provider claim Python spelled: `str(False)` is "False".
+    assert SourceResult(error=12345).error is None
+    assert SourceResult(error=False).error is None
 
 
 def test_a_wrong_type_where_str_is_declared_becomes_the_declared_nothing():
