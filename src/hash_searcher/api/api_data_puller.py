@@ -4,6 +4,7 @@ import asyncio
 import httpx
 
 from ..analysis.censys import extract_hosts
+from ..analysis.crtsh import merge_crtsh
 from ..analysis.ipdb import extract_ips
 from ..analysis.shodan import extract_shodan, observed_cves
 from ..hashing import get_zip_hash
@@ -311,8 +312,102 @@ def _domains(vt_data, ipdb_data: list, censys_results: list) -> list[str]:
     return _merge_indicators(contacted_domains(vt_data), censys_domains)
 
 
+
+#: How many domains a pivot may look up in total, across every level. The
+#: ceiling is stated as one number rather than derived from depth and
+#: branching factor because those two multiply: a certificate log routinely
+#: names hundreds of siblings, so depth 2 over 50 domains is thousands of
+#: requests against providers that all rate limit (Constraint 8). Whatever
+#: the depth, a run pays at most this many extra domain lookups.
+PIVOT_FETCH_BUDGET = 20
+
+
+async def _domain_fanout(client, cache, pool, domain_sources, domains):
+    """RDAP and crt.sh over `domains`, as (rdap_results, crtsh_results).
+
+    Extracted so a pivot level runs exactly the fan-out the base pass runs
+    -- a second, subtly different copy for pivoted domains is how the two
+    would drift.
+    """
+    if not domains:
+        return [], []
+
+    if "rdap" in domain_sources:
+        rdap_provider = by_name("rdap", pool)
+        rdap_results = await _bounded_gather(RDAP_CONCURRENCY, *(
+            _cached(cache, domain, lambda d=domain: get_rdap(client, d),
+                    provider=rdap_provider)
+            for domain in domains
+        ))
+    else:
+        rdap_results = []
+    # Capped well below IOC_LIMIT: crt.sh is serial with a 2s gap and
+    # answers slowly, and every result is merged into one 100-name
+    # CertReport, so domains past the first few add minutes of runtime
+    # for names the report will not print.
+    crtsh_results = (
+        await fetch_serial(client, by_name("crtsh", pool), get_crtsh,
+                           domains[:CRTSH_DOMAIN_LIMIT], cache,
+                           label="crt.sh")
+        if "crtsh" in domain_sources else []
+    )
+    return list(rdap_results), list(crtsh_results)
+
+
+def _siblings(crtsh_results) -> list[str]:
+    """The domain names a set of crt.sh answers reported.
+
+    merge_crtsh rather than a second walk over name_value: it already pools
+    rows across queries, de-duplicates, strips the wildcard prefix, and
+    drops the rfc822Name SANs that are email addresses rather than domains.
+    """
+    report = merge_crtsh(crtsh_results)
+    return list(report.value.siblings) if report.value else []
+
+
+async def _pivot_domains(client, cache, pool, domain_sources, seeded,
+                         crtsh_results, depth: int):
+    """Breadth-first over newly discovered domains, to `depth` levels.
+
+    Returns (domains_pivoted, rdap_results, crtsh_results) to append.
+
+    Breadth-first with an explicit frontier and a visited set, not
+    recursion: the ceiling on total requests is the point of this function,
+    and a recursive walk makes that ceiling impossible to state in one
+    place. Certificate logs are also full of cycles -- two names on one
+    certificate each naming the other -- so without the visited set this is
+    an unbounded walk that only the budget stops.
+    """
+    if depth < 0:
+        raise ValueError(f"pivot_depth must be 0 or more, got {depth}")
+
+    pivoted: list[str] = []
+    rdap: list = []
+    crtsh: list = []
+    visited = set(seeded)
+    frontier = [d for d in _siblings(crtsh_results) if d not in visited]
+    budget = PIVOT_FETCH_BUDGET
+
+    for _ in range(depth):
+        if not frontier or budget <= 0:
+            break
+        level = frontier[:budget]
+        budget -= len(level)
+        visited.update(level)
+        pivoted.extend(level)
+
+        level_rdap, level_crtsh = await _domain_fanout(
+            client, cache, pool, domain_sources, level)
+        rdap.extend(level_rdap)
+        crtsh.extend(level_crtsh)
+        frontier = [d for d in _siblings(level_crtsh) if d not in visited]
+
+    return pivoted, rdap, crtsh
+
+
 async def data_puller(indicator: Indicator, cache,
-                      extra_ips: list[str] | None = None):
+                      extra_ips: list[str] | None = None,
+                      pivot_depth: int = 0):
     """Every source that can answer for `indicator`, fanned out once.
 
     The entry is keyed by the indicator's kind rather than assuming a hash
@@ -323,8 +418,14 @@ async def data_puller(indicator: Indicator, cache,
     is the point: `for_indicator()` has selected providers by type since
     Phase 4, and the ip and domain providers were simply unreachable from
     the command line.
+
+    `pivot_depth` levels of newly discovered domains are looked up after
+    the first pass, capped at PIVOT_FETCH_BUDGET lookups in total. 0, the
+    default, is exactly the behavior that came before it.
     """
     _require_indicator(indicator)
+    if pivot_depth < 0:
+        raise ValueError(f"pivot_depth must be 0 or more, got {pivot_depth}")
     # Selection is by indicator type, not by a hand-written branch per name:
     # indicator_types has been declared since Phase 1 and read by nothing,
     # and with seven more sources across three types the branches stop
@@ -482,25 +583,17 @@ async def data_puller(indicator: Indicator, cache,
             [primary_domain] if primary_domain else [],
             _domains(vt_data, list(ipdb_data), censys_results),
         )
-        if domains and "rdap" in domain_sources:
-            rdap_provider = by_name("rdap", pool)
-            rdap_results = await _bounded_gather(RDAP_CONCURRENCY, *(
-                _cached(cache, domain, lambda d=domain: get_rdap(client, d),
-                        provider=rdap_provider)
-                for domain in domains
-            ))
-        else:
-            rdap_results = []
-        # Capped well below IOC_LIMIT: crt.sh is serial with a 2s gap and
-        # answers slowly, and every result is merged into one 100-name
-        # CertReport, so domains past the first few add minutes of runtime
-        # for names the report will not print.
-        crtsh_results = (
-            await fetch_serial(client, by_name("crtsh", pool), get_crtsh,
-                               domains[:CRTSH_DOMAIN_LIMIT], cache,
-                               label="crt.sh")
-            if domains and "crtsh" in domain_sources else []
-        )
+        rdap_results, crtsh_results = await _domain_fanout(
+            client, cache, pool, domain_sources, domains)
+
+        # Pivoting: the names crt.sh just handed back are themselves
+        # domains, and at depth > 0 they get the same fan-out.
+        pivoted, more_rdap, more_crtsh = await _pivot_domains(
+            client, cache, pool, domain_sources, domains, crtsh_results,
+            pivot_depth)
+        domains = domains + pivoted
+        rdap_results = list(rdap_results) + more_rdap
+        crtsh_results = list(crtsh_results) + more_crtsh
 
         # KEV is a ~1MB catalog, not a lookup service, and it is not a
         # Provider for exactly that reason: Constraint 4 requires

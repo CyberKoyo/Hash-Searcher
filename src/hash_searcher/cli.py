@@ -15,7 +15,9 @@ from .analysis.threatfox import extract_threatfox
 from .analysis.otx import extract_otx
 from .analysis.vt import extract_vt
 from .analysis.whois import extract_whois
-from .api.api_data_puller import data_puller, resolve_indicator
+from .api.api_data_puller import (
+    PIVOT_FETCH_BUDGET, data_puller, resolve_indicator,
+)
 from .api.base_call import error_status, make_error
 from .cache import ResponseCache
 from .hashing import check_env
@@ -45,6 +47,16 @@ def exit_code(verdict: Verdict) -> int:
     return _EXIT_BY_LEVEL.get(verdict.level, EXIT_UNKNOWN)
 
 
+def _depth(value: str) -> int:
+    """A non-negative pivot depth, rejected by argparse rather than deep
+    inside the fan-out where the message would name neither the flag nor
+    the value."""
+    depth = int(value)
+    if depth < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more, got {depth}")
+    return depth
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hash-searcher",
@@ -63,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
     parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
+    parser.add_argument("--pivot-depth", dest="pivot_depth", type=_depth,
+                        default=0, metavar="N",
+                        help=f"look up domains discovered through crt.sh, N "
+                             f"levels deep (default 0). At most "
+                             f"{PIVOT_FETCH_BUDGET} extra domain lookups per "
+                             f"run whatever N is")
     parser.add_argument("--no-static", action="store_true",
                         help="skip local static analysis (entropy, PE, YARA, strings)")
     parser.add_argument("--yara-rules", dest="yara_rules",
@@ -229,7 +247,8 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
     if own_cache:
         cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     try:
-        raw = await data_puller(indicator, cache, extra_ips=extra_ips)
+        raw = await data_puller(indicator, cache, extra_ips=extra_ips,
+                                pivot_depth=args.pivot_depth)
     finally:
         # Only whoever opened it may close it: a batch's cache outlives
         # every individual run in it.

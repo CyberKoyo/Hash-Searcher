@@ -1,7 +1,7 @@
 
 ## Hash-Searcher 🔍
 
-A fast, asynchronous Python tool to check file hashes across eleven intelligence sources. Five need no account at all, two more need only a free one, and four are commercial-tier keys. Supports password-protected ZIP files and modern AES-256 encryption.
+A fast, asynchronous Python tool to check hashes, IPs, domains, and URLs across eleven intelligence sources. Five need no account at all, two more need only a free one, and four are commercial-tier keys. Supports password-protected ZIP files and modern AES-256 encryption.
 
 🚀 Features
 
@@ -38,19 +38,69 @@ recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
 
 📖 Usage
 
-    hash-searcher <file_path_or_hash> [-o report.json | report.pdf]
+    hash-searcher <indicator | - > [-o report.json | report.pdf]
+                  [--input-file PATH] [--pivot-depth N]
                   [--zip-password PASSWORD] [--no-cache] [--refresh]
                   [--no-static] [--yara-rules DIR]
 
-Accepts MD5, SHA-1, and SHA-256 digests, or a path to a file.
+Accepts an MD5/SHA-1/SHA-256 digest, a path to a file, an IP address, a
+domain, or a URL. Whichever it is decides which sources run — an IP goes to
+the IP sources and never to VirusTotal's file endpoint, which cannot answer
+for one.
+
+**Defanged indicators are accepted as typed.** `hxxps://evil[.]example/path`,
+`1[.]2[.]3[.]4`, and `evil[dot]com` are refanged before anything is looked
+up, because that is the form an indicator arrives in after travelling
+through a report, a ticket, or a mail gateway.
+
+A CIDR range is recognized and declined rather than expanded: a `/16` is
+65,536 rate-limited lookups, and no flag turns that on. Pass the addresses
+you actually care about.
+
+An argument that is also a filename on disk is treated as the file. A file
+named `evil.example` in the working directory is hashed, not resolved.
 
     -o, --output PATH     write a report to this path (.json or .pdf)
+    --input-file PATH     read indicators from this file, one per line
+    --pivot-depth N       follow domains discovered through crt.sh, N levels
+                          deep (default 0 — no pivoting)
     --zip-password PASS   password for an encrypted ZIP; prompts if omitted
     --no-cache            ignore and bypass the cache
     --refresh             force fresh calls, then re-cache
     --no-static           skip local static analysis (entropy, PE, YARA, strings)
     --yara-rules DIR      scan against this directory of .yar/.yara rules
                           instead of the default (see 🔬 Static Analysis)
+
+**Batches.** Pass `-` to read indicators from stdin, or `--input-file PATH`
+to read them from a file — one per line, with blank lines and `#` comments
+skipped, so a list pasted straight out of a report works:
+
+    cut -f2 iocs.tsv | hash-searcher -
+    hash-searcher --input-file iocs.txt -o report.json
+
+A batch opens **one** cache for the whole run, so two indicators that share
+a contacted IP cost one lookup rather than two. It runs serially on purpose:
+every provider here rate limits, and N indicators at once would multiply the
+request rate by N.
+
+With `-o`, each indicator gets its own file — `report-1-198.51.100.10.json`,
+`report-2-evil.example.json` — rather than the same path being overwritten
+once per indicator. The exit code is the **most severe** of the runs, not the
+last: a batch that found one malicious sample exits `2` even if everything
+after it was clean.
+
+**Pivoting.** `--pivot-depth N` takes the sibling domains crt.sh reported and
+looks *those* up too, N levels deep. It is off by default.
+
+The walk is breadth-first with a visited set and a hard ceiling of **20 extra
+domain lookups per run, whatever N is** (`PIVOT_FETCH_BUDGET` in
+`src/hash_searcher/api/api_data_puller.py`). That ceiling is not a
+performance tuning knob: a certificate log routinely names hundreds of
+siblings, so depth 2 over 50 domains is thousands of requests against
+providers that all rate limit, and depth 5 unbounded does not terminate in
+any useful sense. The visited set matters for the same reason — certificate
+logs are full of cycles, where two names on one certificate each name the
+other.
 
 🔬 Static Analysis
 
@@ -252,6 +302,11 @@ silent row of `N/A`.
 | `3` | UNKNOWN | No provider has seen it — and also the code for an unusable run (bad path, no data), because a script should treat both alike. |
 
 An unrecognized level fails safe to `3`, never to `0`.
+
+For a batch, the exit code is the most severe of the individual runs, ranked
+MALICIOUS > SUSPICIOUS > UNKNOWN > CLEAN — which is deliberately not the
+numeric order of the codes, since UNKNOWN is `3` and MALICIOUS is `2`. A
+batch with nothing to check exits `3`, never `0`.
 
 📋 Report sections
 
