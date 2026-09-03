@@ -1,6 +1,5 @@
 import os
 import asyncio
-import string
 
 import httpx
 
@@ -22,13 +21,9 @@ from .threatfox import THREATFOX_CONCURRENCY, get_threatfox
 from .base_call import is_error, make_error, tag_indicator
 from .registry import Provider, available, by_name, for_indicator
 from ..static.strings import IOC_LIMIT
-
-HASH_LENGTHS = frozenset({32, 40, 64})  # md5, sha1, sha256
-
-
-def looks_like_hash(value: str) -> bool:
-    """True if value is a bare hex digest rather than a path."""
-    return len(value) in HASH_LENGTHS and all(c in string.hexdigits for c in value)
+# Re-exported: the definition moved to indicators.py, where classify()
+# needs it too, and this module's callers keep importing it from here.
+from ..indicators import HASH_LENGTHS, looks_like_hash  # noqa: F401
 
 
 def resolve_hash(user_input: str, password: str | None = None) -> list[str] | None:
