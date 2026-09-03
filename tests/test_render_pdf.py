@@ -1237,96 +1237,39 @@ def test_an_unbounded_provider_error_is_capped_before_it_reaches_the_pdf(
     assert open(path, "rb").read(5) == b"%PDF-"
 
 
-#: Rule 1's allowlist: every interpolation in render/pdf.py that does NOT go
-#: through _x() and does NOT reach its Paragraph through the cell factory,
-#: with the reason each one is safe.
+#: The values that reach a Paragraph in render/pdf.py without being escaped,
+#: and the reason each one is not a provider value.
 #:
-#: A4c pinned rule 2 from the source on the argument that "a property of six
-#: call sites is not a property of the signature". Rule 1, stated in the same
-#: docstring paragraph, had no equivalent, and it had live exceptions: VT's
-#: `suspicious` and `undetected` were interpolated raw beside an ESCAPED
-#: `ratio`, off analysis/vt.py's unvalidated `stats.get(...)`.
-#:
-#: Exact set equality, so a new raw interpolation reddens here and has to be
+#: Exact set equality, so a new unescaped value reddens here and has to be
 #: justified in this dict rather than merged on the strength of nobody
 #: noticing. Nothing here is a provider value.
-MODULE_OWN_INTERPOLATIONS = {
-    "keep":              "_shortened's own argument, an int",
-    "len(text)":         "_shortened's own arithmetic",
-    "text[:keep].rstrip()":
-                         "_shortened's own argument, sliced. Newly visible to "
-                         "this guard in round 2 -- it is a `+` concatenation, "
-                         "not an f-string. Audited rather than assumed: all "
-                         "five _shortened call sites (pdf.py:265, :273, :404, "
-                         ":630, and _fitted's own :278) wrap the result in "
-                         "_x(), so the provider text this slices is escaped "
-                         "one frame up in every case.",
-    "verdict.score":     "scoring.py's int, computed in this repo",
-    "state":             "one of two string literals written above it",
-    "tactic":            "composed here; the provider half is already _x()'d",
-    "len(entries)":      "a count",
-    "KEV_ROW_LIMIT":     "this module's own constant",
-    "len(report.certs.value.siblings)": "a count",
-    "path":              "write_pdf's own argument, printed to the terminal "
-                         "rather than rendered into the document",
-    "VT_UNAVAILABLE_NOTE.format(error=_x(report.vt.error))":
-                         "the template is this module's own text and the one "
-                         "provider value inside it is escaped at the call",
+#:
+#: Three rounds of this guard have now been written, and the first two both
+#: shipped a hole of the same shape. Round 1 enumerated one interpolation
+#: MECHANISM (f-strings) and missed `str.format`. Round 2 enumerated six and
+#: missed `a + b` where neither operand is a literal, and missed
+#: `Paragraph(text=...)` entirely. The list was never the wrong list; a list
+#: of syntactic forms was the wrong ARTIFACT, because Python keeps adding
+#: forms and this file cannot. So this round stops enumerating forms: the
+#: check below descends through whatever the source actually is and reports
+#: the VALUES it bottoms out on, and the entries here are values, not forms.
+MODULE_OWN_PARAGRAPH_VALUES = {
+    "verdict.score":
+        "scoring.py's own int, summed from this repo's weights. Never "
+        "provider text; reaches the document as a number.",
+    "len(entries)":
+        "a count of KEV entries, computed here.",
+    "len(report.certs.value.siblings)":
+        "a count of the siblings shown, computed here.",
+    "KEV_UNREACHABLE_NOTE":
+        "the template sentence render/tty.py and this module share, so the "
+        "two surfaces cannot disagree about the unchecked count. This "
+        "module's own text; every value it formats IN is escaped at the "
+        "call, and the check below descends into those arguments "
+        "separately rather than trusting this entry to cover them.",
+    "VT_UNAVAILABLE_NOTE":
+        "the same, for the VT caveat both surfaces print.",
 }
-
-#: The Paragraph first arguments that carry no interpolation at all, and so
-#: are invisible to any mechanism-based guard however wide. `Paragraph(x)`
-#: with a bare provider `x` would be the widest possible instance of rule 1
-#: and the classifier below could not see it, which is why the second test
-#: enumerates Paragraph arguments themselves.
-MODULE_OWN_PARAGRAPH_ARGUMENTS = {
-    "heading":       "_error_flowables' own argument; every caller passes a "
-                     "string literal written in this module",
-    "level.upper()": "`level` is bound by `for level in ('high', 'medium', "
-                     "'low')` two lines above -- this module's own tuple, "
-                     "never a provider value",
-}
-
-
-def _interpolations(tree):
-    """Every value written into a string by any mechanism Python offers.
-
-    Round 1 added a guard for rule 1 and classified `ast.FormattedValue`
-    only -- f-strings. 48 of render/pdf.py's 49 provider-value Paragraphs are
-    f-strings and were covered. The 49th, `KEV_UNREACHABLE_NOTE.format(...)`,
-    contains ZERO FormattedValue nodes, so the guard walked past it -- and it
-    was written by the same commit that added the guard. Dropping both its
-    _x() calls left the suite fully green at 455 passed.
-
-    A guard that checks one mechanism is a guard against one mechanism. These
-    are all of them, and the module is asserted below to still exercise more
-    than one, so this cannot quietly narrow back to f-strings.
-    """
-    import ast
-
-    def literal_text(node):
-        return (isinstance(node, ast.JoinedStr)
-                or (isinstance(node, ast.Constant) and isinstance(node.value, str)))
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FormattedValue):
-            yield "f-string", node.value
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("format", "format_map")):
-            for argument in list(node.args) + [k.value for k in node.keywords]:
-                yield f"str.{node.func.attr}", argument
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "join"):
-            for argument in node.args:
-                yield "str.join", argument
-        elif (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod)
-                and literal_text(node.left)):
-            yield "%-format", node.right
-        elif (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
-                and (literal_text(node.left) or literal_text(node.right))):
-            for side in (node.left, node.right):
-                if not literal_text(side):
-                    yield "concatenation", side
 
 
 def _pdf_source_tree():
@@ -1337,167 +1280,396 @@ def _pdf_source_tree():
     return ast.parse(inspect.getsource(pdf_module))
 
 
-def _regions(tree):
-    """(escaped-by-_x, reaching-a-Paragraph-through-the-cell-factory).
+def _escaped_region(tree):
+    """Every node id inside an `_x(...)` call.
 
-    Sets of node ids rather than single nodes, so a value nested anywhere
-    inside `_x(...)` counts as escaped -- `_x(', '.join(tags))` escapes the
-    join's argument as surely as it escapes the join.
+    A set of ids rather than the call nodes themselves, so a value nested
+    anywhere inside `_x(...)` counts as escaped -- `_x(', '.join(tags))`
+    escapes the join's argument as surely as it escapes the join.
     """
     import ast
 
-    escaped, fitted = set(), set()
+    escaped = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name.endswith("_cell"):
-            fitted |= {id(n) for n in ast.walk(node)}
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_table":
-            fitted |= {id(n) for n in ast.walk(node)}
         if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_x":
             escaped |= {id(n) for n in ast.walk(node)}
-    return escaped, fitted
+    return escaped
+
+
+def _enclosing_functions(tree):
+    """node id -> the innermost function that contains it."""
+    import ast
+
+    owner = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                owner.setdefault(id(child), node)
+    return owner
+
+
+def _bindings(scope):
+    """(assigned, injected): what can flow into each name in one scope.
+
+    `assigned` is what the name was bound TO -- by an assignment, an
+    annotated or augmented assignment, a `for`, a comprehension, a `with`
+    or a walrus. `injected` is what a method call PUT INTO it
+    (`parts.append(x)`), which is how a value reaches a list without any
+    assignment naming it.
+
+    Deliberately over-approximate, and deliberately separate: a name with
+    no `assigned` entry is unproven even when something was injected into
+    it, so `template.format(escaped)` still reports `template` itself.
+    Anything this misses leaves a name unbound, and an unbound name is
+    reported rather than trusted -- the direction that reddens.
+    """
+    import ast
+
+    assigned, injected = {}, {}
+
+    def bind(target, value):
+        if isinstance(target, ast.Name):
+            assigned.setdefault(target.id, []).append(value)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            # Which element gets which part is not tracked: every element
+            # is treated as able to hold the whole right-hand side.
+            for element in target.elts:
+                bind(element, value)
+
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                bind(target, node.value)
+        elif (isinstance(node, (ast.AnnAssign, ast.AugAssign))
+                and node.value is not None):
+            bind(node.target, node.value)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            bind(node.target, node.iter)
+        elif isinstance(node, ast.comprehension):
+            bind(node.target, node.iter)
+        elif isinstance(node, ast.NamedExpr):
+            bind(node.target, node.value)
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            bind(node.optional_vars, node.context_expr)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)):
+            for argument in list(node.args) + [k.value for k in node.keywords]:
+                injected.setdefault(node.func.value.id, []).append(argument)
+    return assigned, injected
+
+
+class _Reach:
+    """What values can reach an expression, read out of the module's own source.
+
+    The whole point of this class is what it does NOT do. It never asks
+    which string mechanism a node is. It descends into whatever children
+    the node has and reports the leaves, so a mechanism nobody has written
+    yet -- a `+` with no literal operand, a `%`, a `.format`, a t-string, a
+    walrus, a conditional, a comprehension -- carries its operands into the
+    walk for free, because operands are children whatever the parent is.
+
+    Four kinds of node stop the descent, and each one stops it for a
+    reason that is about the VALUE rather than about the syntax:
+
+      * anything inside `_x(...)` is escaped, which is the property under
+        test;
+      * a literal is this module's own text;
+      * a name is resolved through the module's own dataflow -- local
+        assignments, `for` targets, injected list members, and, when it is
+        a parameter, the expressions its in-module callers actually pass;
+      * anything else that cannot be descended into -- an attribute read, a
+        subscript, a call this module cannot see inside -- IS the value,
+        and is reported.
+
+    Two narrowings, both deliberate, both in the direction of reporting
+    less rather than more, and so both stated here rather than buried:
+    a conditional's TEST is not one of the values it selects between, and
+    a comprehension's `if` clauses are not values it yields. Everything
+    else is descended into generically.
+    """
+
+    def __init__(self, tree):
+        import ast
+
+        self.ast = ast
+        self.escaped = _escaped_region(tree)
+        self.owner = _enclosing_functions(tree)
+        self.module = _bindings(tree)
+        self.scopes = {
+            id(node): _bindings(node) for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        #: every _x(...) region the descent actually stopped at, which is
+        #: how this test measures that it is still reading a module full of
+        #: escaped values rather than an empty one.
+        self.reached_escapes = set()
+        self.calls = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                self.calls.setdefault(node.func.id, []).append(node)
+
+    def _passed_as(self, function, parameter):
+        """Every expression this module passes as `parameter` to `function`.
+
+        None when that cannot be answered for every call site -- no call
+        site in this module, a `*args` call, or a call that leaves the
+        parameter at its default -- in which case the parameter is reported
+        rather than resolved.
+        """
+        ast = self.ast
+        sites = self.calls.get(function.name, [])
+        if not sites:
+            return None
+        names = [a.arg for a in function.args.posonlyargs + function.args.args]
+        index = names.index(parameter) if parameter in names else None
+        passed = []
+        for call in sites:
+            keyed = [k.value for k in call.keywords if k.arg == parameter]
+            if keyed:
+                passed.extend(keyed)
+                continue
+            if index is None or index >= len(call.args):
+                return None
+            if isinstance(call.args[index], ast.Starred):
+                return None
+            passed.append(call.args[index])
+        return passed
+
+    def _name(self, node, seen):
+        function = self.owner.get(id(node))
+        assigned, injected = self.scopes.get(id(function), ({}, {}))
+        sources = list(assigned.get(node.id, ()))
+        if not sources:
+            sources = list(self.module[0].get(node.id, ()))
+        if not sources:
+            passed = self._passed_as(function, node.id) if function else None
+            if passed:
+                sources = passed
+            else:
+                # A parameter nothing in this module passes, or an imported
+                # name: this is where the value comes from.
+                yield self.ast.unparse(node)
+        for value in sources + list(injected.get(node.id, ())) \
+                + list(self.module[1].get(node.id, ())):
+            yield from self.values(value, seen)
+
+    def values(self, node, seen=frozenset()):
+        ast = self.ast
+        if id(node) in seen:
+            return
+        if id(node) in self.escaped:
+            self.reached_escapes.add(id(node))
+            return
+        seen = seen | {id(node)}
+        if isinstance(node, ast.Constant):
+            return
+        if isinstance(node, ast.Name):
+            yield from self._name(node, seen)
+            return
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                # A method's result comes from its receiver and its
+                # arguments; there is nowhere else for a provider value to
+                # enter. `', '.join(tags)` is `tags`.
+                for child in ([node.func.value] + list(node.args)
+                              + [k.value for k in node.keywords]):
+                    yield from self.values(child, seen)
+                return
+            # A plain call is opaque -- this walk does not read the callee's
+            # body -- so the call IS the value.
+            yield ast.unparse(node)
+            return
+        if isinstance(node, ast.IfExp):
+            yield from self.values(node.body, seen)
+            yield from self.values(node.orelse, seen)
+            return
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            yield ast.unparse(node)
+            return
+        if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            yield from self.values(node.elt, seen)
+            for generator in node.generators:
+                yield from self.values(generator.iter, seen)
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                yield from self.values(child, seen)
+
+
+def _paragraph_texts(tree):
+    """Every expression render/pdf.py hands a Paragraph as content.
+
+    Not "the first positional argument". Round 2's guard read `node.args[0]`
+    and skipped the call entirely when there was none, so reportlab's
+    documented `Paragraph(text=..., style=...)` form was never counted and
+    never checked. This takes every argument EXCEPT the style -- positional
+    index 1, or the `style` keyword -- so an argument in a position this
+    test did not anticipate is examined rather than ignored.
+    """
+    import ast
+
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and getattr(node.func, "id", None) == "Paragraph"):
+            continue
+        for index, argument in enumerate(node.args):
+            if index == 1 or isinstance(argument, ast.Starred):
+                continue
+            yield node, argument
+        for keyword in node.keywords:
+            if keyword.arg in (None, "style"):
+                continue
+            yield node, keyword.value
 
 
 def test_no_provider_value_reaches_a_paragraph_unescaped():
-    """Rule 1, read out of the source rather than out of a run.
+    """Rule 1, checked by descent rather than by enumerating forms.
 
-    Escaping is not testable end-to-end for most of these values any more:
-    models.py coerces every payload number at the type, so a hostile
-    `suspicious` cannot be constructed through the extractor OR by hand. A
-    source-level enumeration is what is left, and it is the stronger guard
-    anyway: it reddens for an interpolation nobody has written a payload for
-    yet.
+    render/pdf.py's first rule is that every provider value written into a
+    Paragraph goes through _x(). Paragraph does not render a stray '<'
+    oddly -- it raises -- so an unescaped signer name or CA name takes down
+    `-o report.pdf` after every provider has already answered.
 
-    Two ways an interpolation can be safe, and this asserts both sets
-    exactly rather than either alone:
+    This is the third guard written for that rule. The first two were lists
+    of syntactic forms, and each was defeated by a form the list did not
+    have: `str.format` for round 1, and for round 2 both `a + b` with no
+    literal operand and the keyword call form `Paragraph(text=...)`, each
+    of which left the suite fully green while writing a raw provider value
+    into the document. Widening the list a third time would only move the
+    hole.
 
-      1. it is inside an _x() call, or
-      2. it is inside a _*_cell helper or a _table(...) call, so the string
-         reaches its Paragraph through _fitted, which escapes it -- rule 2's
-         factory doing rule 1's work.
+    So the question changed shape. Instead of asking "is this one of the
+    mechanisms that carry a value into a string", it asks "what values can
+    reach this Paragraph", and answers it by descending through the source:
+    into f-strings, concatenations, formats, joins, conditionals,
+    comprehensions and anything else with children, and through the
+    module's own dataflow -- local names, `for` targets, list members put
+    in by `.append`, and the arguments callers actually pass to a
+    parameter. What the descent bottoms out on is either escaped, or a
+    literal this module wrote, or a value that has to be justified in
+    MODULE_OWN_PARAGRAPH_VALUES above.
 
-    Anything else is on MODULE_OWN_INTERPOLATIONS above, with a reason.
+    A mechanism this test has never heard of is covered because its
+    operands are still its children. That is the property the two previous
+    versions did not have.
     """
     import ast
 
     tree = _pdf_source_tree()
 
+    # The subject has to exist for any of this to mean anything.
     escapers = [n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name == "_x"]
     assert len(escapers) == 1, (
         "render/pdf.py defines no single _x escaper -- rule 1 has no subject")
+    aliases = [alias for node in ast.walk(tree)
+               if isinstance(node, ast.ImportFrom)
+               for alias in node.names if alias.name == "Paragraph"]
+    assert [a.asname for a in aliases] == [None], (
+        "render/pdf.py imports Paragraph under an alias, so the query below "
+        "no longer sees the calls it is checking")
 
-    escaped_region, through_the_factory = _regions(tree)
-    assert through_the_factory, (
-        "no _*_cell helper and no _table call found -- the query matched "
-        "nothing, which would let every raw interpolation below through")
-    assert escaped_region, "no _x() call found -- the query matched nothing"
+    reach = _Reach(tree)
+    assert reach.escaped, "no _x() call found -- the query matched nothing"
 
-    escaped, fitted, bare = [], [], []
-    mechanisms = {}
-    for mechanism, value in _interpolations(tree):
-        mechanisms[mechanism] = mechanisms.get(mechanism, 0) + 1
-        expression = ast.unparse(value)
-        if id(value) in escaped_region:
-            escaped.append(expression)
-        elif id(value) in through_the_factory:
-            fitted.append(expression)
-        else:
-            bare.append(expression)
+    texts = list(_paragraph_texts(tree))
+    paragraphs = {id(call) for call, _ in texts}
+    assert len(paragraphs) >= 35, (
+        f"only {len(paragraphs)} Paragraph(...) calls found in render/pdf.py; "
+        f"the ast query has stopped seeing the module it is checking")
 
-    # The self-check round 1's version could not make. `assert len(
-    # interpolations) >= 40` proved the query still saw A module; it could not
-    # notice that the module had grown a site of a KIND the query does not
-    # classify. This asserts the kinds.
-    assert {"f-string", "str.format", "str.join", "concatenation"} <= set(mechanisms), (
-        f"render/pdf.py no longer exercises every interpolation mechanism "
-        f"this guard classifies ({sorted(mechanisms)}); either the module "
-        f"changed or the classifier has narrowed back to f-strings")
-    assert sum(mechanisms.values()) >= 55, (
-        f"only {sum(mechanisms.values())} interpolations found in "
-        f"render/pdf.py; the ast query has stopped seeing the module it is "
-        f"checking")
-    assert mechanisms["str.format"] >= 3, (
-        f"only {mechanisms['str.format']} str.format() interpolations seen; "
-        f"this is the mechanism the round-1 guard was blind to and the one "
-        f"the KEV unreachable note uses")
+    unproven = []
+    for _, text in texts:
+        unproven.extend(reach.values(text))
 
-    assert len(escaped) >= 30, (
-        f"only {len(escaped)} interpolations go through _x(); rule 1 covers "
-        f"every provider value this module writes into a Paragraph")
-    assert set(bare) == set(MODULE_OWN_INTERPOLATIONS), (
-        f"render/pdf.py interpolates {sorted(set(bare) - set(MODULE_OWN_INTERPOLATIONS))} "
-        f"raw, outside the cell factory. Either escape it with _x() or add "
-        f"it to MODULE_OWN_INTERPOLATIONS with the reason it is not a "
-        f"provider value.\n"
-        f"(gone from the allowlist: "
-        f"{sorted(set(MODULE_OWN_INTERPOLATIONS) - set(bare))})")
-    assert set(fitted) == {
-        # _cve_cell
-        "len(vulns)", "CVE_DISPLAY_LIMIT", "shown", "', '.join(shown)",
-        # _ports_cell / _greynoise_cell
-        "(str(p) for p in shodan.value.ports)",
-        "(x for x in (noise.value.classification or 'seen', noise.value.name) if x)",
-        # _threatfox_cell
-        "result.value.malware or 'unnamed'", "result.value.confidence",
-        "tags", "f' -- {tags}' if tags else ''",
-        # the AbuseIPDB table body, built inline in build_story
-        "i.confidence",
-        # the Censys and KEV table bodies, likewise
-        "(str(p) for p in h.ports)",
-        "(x for x in (e.vendor, e.product) if x)",
-        # the verdict signals table body -- scoring.py's own int, but it
-        # reaches its Paragraph through the factory all the same
-        "s.points",
-    }, (
-        f"the set of interpolations relying on the cell factory to escape "
-        f"them changed: {sorted(set(fitted))}")
+    # Vacuity floors, both set well below their actuals rather than on
+    # them: an ordinary refactor should not redden this test for a reason
+    # that has nothing to do with escaping. Round 2's guard asserted
+    # `mechanisms["str.format"] >= 3` against an actual of exactly 3, so
+    # rewriting one .format() as an f-string would have reddened it.
+    assert len(reach.reached_escapes) >= 30, (
+        f"the descent from render/pdf.py's Paragraphs reached only "
+        f"{len(reach.reached_escapes)} _x() calls; either the module stopped "
+        f"escaping or this walk has stopped seeing it")
+
+    assert set(unproven) == set(MODULE_OWN_PARAGRAPH_VALUES), (
+        f"render/pdf.py writes {sorted(set(unproven) - set(MODULE_OWN_PARAGRAPH_VALUES))} "
+        f"into a Paragraph without escaping it. Either wrap it in _x() or "
+        f"add it to MODULE_OWN_PARAGRAPH_VALUES with the reason it is not a "
+        f"provider value.\n(gone from the allowlist: "
+        f"{sorted(set(MODULE_OWN_PARAGRAPH_VALUES) - set(unproven))})")
 
 
-def test_no_value_reaches_a_paragraph_without_going_through_a_mechanism_at_all():
-    """The hole the widened classifier still leaves, closed separately.
+def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all():
+    """The guard above, run against sources that smuggle a value past it.
 
-    `Paragraph(provider_value)` writes a provider string into the document
-    with no interpolation of any kind, so no mechanism-based guard however
-    wide can see it -- and it is the simplest possible instance of rule 1.
-    So this enumerates the Paragraph first arguments themselves and requires
-    each to be one of: this module's own string literal, an _x() call, an
-    interpolation (which the test above then classifies), or an entry on
-    MODULE_OWN_PARAGRAPH_ARGUMENTS with a reason.
+    A source-reading guard is only worth what it catches, and the last two
+    versions of this one were each believed to catch everything until a
+    reviewer wrote three lines that it did not. So the forms are exercised
+    here instead of argued about: each entry below is render/pdf.py with one
+    extra line, and every one of them must be reported. Two of them --
+    `report.indicator + report.generated_at` and
+    `Paragraph(text=report.indicator, style=...)` -- are the exact mutants
+    that left round 2's guard fully green.
+
+    The list is not the guard. The guard is the descent, which does not
+    know these forms apart; this list is evidence about the descent, and a
+    form missing from it is not a hole in the check the way a form missing
+    from an allowlist was a hole in the last two.
     """
     import ast
+    import inspect
 
-    tree = _pdf_source_tree()
+    from hash_searcher.render import pdf as pdf_module
 
-    def literal_text(node):
-        return isinstance(node, ast.Constant) and isinstance(node.value, str)
+    source = inspect.getsource(pdf_module)
+    anchor = "    story.append(Spacer(1, 12))\n\n    if verdict is not None:"
+    assert source.count(anchor) == 1, "build_story's shape changed; re-anchor"
 
-    def interpolating(node):
-        return (isinstance(node, ast.JoinedStr)
-                or (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("format", "format_map", "join"))
-                or isinstance(node, ast.BinOp))
+    smuggled = {
+        "concatenation with no literal operand":
+            "    story.append(Paragraph(report.indicator + report.generated_at, s))\n",
+        "reportlab's documented keyword form":
+            "    story.append(Paragraph(text=report.indicator, style=s))\n",
+        "no mechanism at all":
+            "    story.append(Paragraph(report.indicator, s))\n",
+        "%-format with a provider template":
+            "    story.append(Paragraph(report.indicator % report.generated_at, s))\n",
+        "laundered through a local name":
+            "    t = report.indicator\n    story.append(Paragraph(t, s))\n",
+        "laundered into a list by .append":
+            "    parts = []\n    parts.append(report.indicator)\n"
+            "    story.append(Paragraph(' '.join(parts), s))\n",
+        "selected by a conditional":
+            "    story.append(Paragraph(report.indicator if report else '', s))\n",
+        "nested inside another f-string":
+            "    story.append(Paragraph(f'{f\"{report.indicator}\"}', s))\n",
+        "built by a helper this module defines":
+            "    story.append(Paragraph(_smuggle(report), s))\n",
+    }
 
-    arguments, unclassified = 0, []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call)
-                and getattr(node.func, "id", None) == "Paragraph" and node.args):
-            continue
-        first = node.args[0]
-        arguments += 1
-        if literal_text(first) or interpolating(first):
-            continue
-        if isinstance(first, ast.Call) and getattr(first.func, "id", None) == "_x":
-            continue
-        unclassified.append(ast.unparse(first))
+    def unproven(text):
+        tree = ast.parse(text)
+        reach = _Reach(tree)
+        found = set()
+        for _, argument in _paragraph_texts(tree):
+            found |= set(reach.values(argument))
+        return found - set(MODULE_OWN_PARAGRAPH_VALUES)
 
-    assert arguments >= 40, (
-        f"only {arguments} Paragraph(...) calls found in render/pdf.py; the "
-        f"ast query has stopped seeing the module it is checking")
-    assert set(unclassified) == set(MODULE_OWN_PARAGRAPH_ARGUMENTS), (
-        f"render/pdf.py builds a Paragraph from "
-        f"{sorted(set(unclassified) - set(MODULE_OWN_PARAGRAPH_ARGUMENTS))} "
-        f"with no escaping and no interpolation. Either wrap it in _x() or "
-        f"add it to MODULE_OWN_PARAGRAPH_ARGUMENTS with the reason it is not "
-        f"a provider value.\n(gone from the allowlist: "
-        f"{sorted(set(MODULE_OWN_PARAGRAPH_ARGUMENTS) - set(unclassified))})")
+    assert unproven(source) == set(), (
+        "render/pdf.py itself is not clean, so this test proves nothing")
+
+    for label, line in smuggled.items():
+        mutated = source.replace(anchor, line + anchor, 1)
+        if "_smuggle" in line:
+            mutated = mutated.replace(
+                "def build_story(",
+                "def _smuggle(r):\n    return f'{r.indicator}'\n\n\ndef build_story(", 1)
+        assert unproven(mutated), (
+            f"the escaping guard does not see a provider value reaching a "
+            f"Paragraph by {label}")
+
+    # And it must still see an _x() that was simply deleted.
+    assert unproven(source.replace('f"Hash: {_x(report.indicator)}"',
+                                   'f"Hash: {report.indicator}"')), (
+        "the escaping guard does not see a dropped _x()")
