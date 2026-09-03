@@ -1327,6 +1327,16 @@ def _bindings(scope):
 
     assigned, injected = {}, {}
 
+    def lexical_nodes():
+        pending = list(reversed(scope.body))
+        while pending:
+            node = pending.pop()
+            yield node
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda, ast.ClassDef)):
+                continue
+            pending.extend(reversed(list(ast.iter_child_nodes(node))))
+
     def bind(target, value):
         if isinstance(target, ast.Name):
             assigned.setdefault(target.id, []).append(value)
@@ -1336,7 +1346,7 @@ def _bindings(scope):
             for element in target.elts:
                 bind(element, value)
 
-    for node in ast.walk(scope):
+    for node in lexical_nodes():
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 bind(target, node.value)
@@ -1679,6 +1689,21 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
     assert missed == [], (
         f"the escaping guard does not see provider values reaching a "
         f"Paragraph by {missed}")
+
+    lexical = source.replace(
+        "def build_story(",
+        "def _smuggle(level):\n"
+        "    return Paragraph(level, getSampleStyleSheet()['Normal'])\n\n\n"
+        "def build_story(",
+        1,
+    ).replace(
+        anchor,
+        "    story.append(_smuggle(report.indicator))\n" + anchor,
+        1,
+    )
+    assert unproven(lexical) == {"report.indicator"}, (
+        "a same-named binding in another function certified the raw provider "
+        "argument passed to _smuggle")
 
     # And it must still see an _x() that was simply deleted.
     assert unproven(source.replace('f"Hash: {_x(report.indicator)}"',
