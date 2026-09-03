@@ -139,3 +139,24 @@ def test_the_file_ends_with_exactly_one_newline(tmp_path):
 
     text = path.read_text(encoding="utf-8")
     assert text.endswith("\n") and not text.endswith("\n\n")
+
+
+def test_a_queried_source_with_no_value_renders_as_no_record():
+    """`SourceResult.value` is Optional even on a success, and a renderer
+    must never be the thing that crashes on it. No value and no error is
+    the same answer as found=False -- not an AttributeError three frames
+    down naming neither the source nor the report.
+    """
+    report = _bare_report()
+    report.bazaar = SourceResult(queried=True)
+    report.threatfox = SourceResult(queried=True)
+    report.certs = SourceResult(queried=True)
+    report.kev = SourceResult(queried=True)
+
+    text = to_markdown(report)
+
+    assert "abuse.ch has no record of this sample." in text
+    assert "ThreatFox has no record of this indicator." in text
+    assert "No certificates found for the contacted domains." in text
+    # KEV stays silent: nothing known-exploited is not worth a section.
+    assert "## Known exploited vulnerabilities" not in text

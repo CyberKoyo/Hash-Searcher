@@ -141,7 +141,10 @@ def _bazaar_lines(report: Report) -> list[str]:
     lines = ["## MalwareBazaar", ""]
     if bazaar.error:
         return lines + [f"Lookup failed: {cell(bazaar.error)}"]
-    if not bazaar.value.found:
+    # `value` is Optional on the type even when the lookup succeeded, and a
+    # renderer must not be the thing that crashes on it: no value and no
+    # error is the same answer as found=False.
+    if not bazaar.value or not bazaar.value.found:
         return lines + ["abuse.ch has no record of this sample."]
     lines.append(f"- Family: {cell(bazaar.value.family or 'unnamed')}")
     if bazaar.value.file_type:
@@ -162,7 +165,7 @@ def _threatfox_lines(report: Report) -> list[str]:
     lines = ["## ThreatFox", ""]
     if threatfox.error:
         return lines + [f"Lookup failed: {cell(threatfox.error)}"]
-    if not threatfox.value.found:
+    if not threatfox.value or not threatfox.value.found:
         return lines + ["ThreatFox has no record of this indicator."]
     lines.append(f"- Malware: {cell(threatfox.value.malware or 'unnamed')} "
                  f"({cell(threatfox.value.confidence)}% confidence)")
@@ -243,7 +246,7 @@ def _kev_lines(report: Report) -> list[str]:
         unchecked = kev.value.unchecked if kev.value else 0
         return heading + [f"CISA KEV was unreachable ({cell(kev.error)}) -- "
                           f"{cell(unchecked)} CVEs went unchecked."]
-    if not kev.value.entries:
+    if not kev.value or not kev.value.entries:
         return []
     rows = [(e.cve, " ".join(x for x in (e.vendor, e.product) if x) or "unknown",
              e.name or "no title", e.date_added or "N/A",
@@ -266,7 +269,7 @@ def _cert_lines(report: Report) -> list[str]:
     lines = ["## Certificate transparency", ""]
     if certs.error:
         return lines + [f"Lookup failed: {cell(certs.error)}"]
-    if not certs.value.siblings:
+    if not certs.value or not certs.value.siblings:
         return lines + ["No certificates found for the contacted domains."]
     shown = len(certs.value.siblings)
     tail = f" (showing {shown})" if shown < certs.value.count else ""
