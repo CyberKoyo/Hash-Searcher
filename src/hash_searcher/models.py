@@ -197,11 +197,7 @@ def as_declared_text(value, nothing: str = "") -> str:
     ANNOTATION that opts out, the same way `int | None` opts out of
     as_count: a field that genuinely has no value says so in its type.
     """
-    if isinstance(value, str):
-        return value
-    if value is None:
-        return nothing
-    return str(value)
+    return value if isinstance(value, str) else nothing
 
 
 def _as_optional_text(value):

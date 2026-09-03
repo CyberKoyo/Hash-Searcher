@@ -167,18 +167,16 @@ DECLARED_DEFAULT = _DeclaredDefault()
 #: Hostile values per declared annotation, and what the declaration must
 #: turn each into. Literal, not computed from the coercion functions.
 #:
-#: EVERY annotation carries a None case, and that is the round-3 change.
-#: Round 2's only hostile value for a `str` field was 12345, so the test
-#: whose NAME asserts a universal -- every field holds the type it declares
-#: -- could not reach the counter-example: a provider null walks straight
-#: through `.get(key, default)`, whose default fires on an ABSENT key and
-#: on nothing else, into a bare `str` field. A fixture that cannot express
-#: the failure is how round 1's CRITICAL survived; this was the same
-#: artifact one declared type over.
+#: EVERY annotation carries a None case. Bare `str` additionally carries
+#: every JSON scalar/container shape that Python's str() would otherwise
+#: turn into an invented provider claim.
 _HOSTILE = {
     "int": (("<script>", 0), (None, 0)),
     "list[int]": ((["8080/tcp", 443, None, True, -1], [443]), (None, [])),
-    "str": ((12345, "12345"), (None, DECLARED_DEFAULT)),
+    "str": ((False, DECLARED_DEFAULT), (0, DECLARED_DEFAULT),
+            (["not text"], DECLARED_DEFAULT),
+            ({"not": "text"}, DECLARED_DEFAULT),
+            (None, DECLARED_DEFAULT)),
     "str | None": ((12345, "12345"), (None, None)),
     # Pinned literally, because this is the pair round 2 got wrong in the
     # other direction: it asserted ([1, None], ["1", "None"]) and so
@@ -367,6 +365,18 @@ def test_a_null_where_a_str_is_declared_becomes_the_declared_nothing():
     # None is one of the two things the union declares, so it survives.
     assert SourceResult(error=None).error is None
     assert SourceResult(error=12345).error == "12345"
+
+
+def test_a_wrong_type_where_str_is_declared_becomes_the_declared_nothing():
+    """Wrong JSON types are absence, never Python-spelled provider text."""
+    from hash_searcher.models import CensysHost, SigmaRule
+
+    rule = SigmaRule(title=False, description=0, level=["high"])
+    host = CensysHost(ip={"address": "198.51.100.10"}, country=False)
+
+    assert (rule.title, rule.description, rule.level) == ("", "", "")
+    assert host.ip == ""
+    assert host.country == "N/A"
 
 
 def test_the_declaration_holds_after_assignment_and_not_only_at_construction():

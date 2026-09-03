@@ -135,6 +135,19 @@ def test_json_carries_the_new_vt_blocks(sample_report, tmp_path):
     assert vt["contacted_domains"] == ["evil.example"]
 
 
+def test_wrong_typed_vt_text_is_absent_instead_of_python_spelled(sample_report):
+    from hash_searcher.models import SandboxVerdict, ThreatClass
+
+    sample_report.vt.threat = ThreatClass(label=False)
+    sample_report.vt.sandbox = [
+        SandboxVerdict(sandbox=0, category="malicious"),
+    ]
+
+    vt = to_dict(sample_report)["report"]["vt"]
+    assert vt["threat"]["label"] == ""
+    assert vt["sandbox"][0]["sandbox"] == ""
+
+
 def test_json_vt_blocks_vt_never_returned_are_null(sample_report, tmp_path):
     """A key that is present-but-null says 'VT had nothing here'. Omitting it
     would make a consumer guess whether the tool looked at all."""
