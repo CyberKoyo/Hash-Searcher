@@ -21,7 +21,14 @@ def test_schema_keys_are_preserved(sample_report):
                                    # "shodan"/"greynoise" are; "threatfox"
                                    # keeps its meaning (the sample lookup)
                                    # untouched.
-                                   "threatfox_ips"}
+                                   "threatfox_ips",
+                                   # Phase 5 Part B: the tool accepts an IP,
+                                   # a domain, or a URL now, so "hash" alone
+                                   # no longer says what its value is. Added
+                                   # beside it rather than replacing it --
+                                   # "hash" keeps its name, its position, and
+                                   # its meaning (the looked-up indicator).
+                                   "indicator_kind"}
 
 
 def test_censys_entry_has_no_hostnames_key(sample_report):
@@ -564,3 +571,20 @@ def test_a_failed_otx_lookup_is_distinguishable_from_one_that_never_ran(sample_r
     assert failed["report"]["otx"] != never_asked["report"]["otx"]
     # And it survives the serializer, not just the dict builder.
     assert '"error": "OTX key not set"' in json.dumps(failed, indent=4)
+
+
+def test_indicator_kind_says_what_the_hash_key_holds(sample_report):
+    """The "hash" key holds whatever was looked up, which since Part B can
+    be an address. It keeps its name for its consumers; this says what the
+    value actually is."""
+    sample_report.indicator = "198.51.100.10"
+    sample_report.indicator_kind = "ip"
+    body = to_dict(sample_report)["report"]
+    assert body["hash"] == "198.51.100.10"
+    assert body["indicator_kind"] == "ip"
+
+
+def test_a_report_built_without_a_kind_still_reads_as_a_hash(sample_report):
+    # Every Report built before Part B meant "hash", and the default keeps
+    # meaning that -- this key is additive in value as well as in name.
+    assert to_dict(sample_report)["report"]["indicator_kind"] == "hash"

@@ -26,7 +26,11 @@ def test_readme_does_not_advertise_a_missing_script():
     scripts = tomllib.loads((root / "pyproject.toml").read_text())["project"]["scripts"]
     name = next(iter(scripts))
     assert "python hash-searcher.py" not in readme
-    assert f"    {name} <file_path_or_hash> [-o report.json | report.pdf]" in readme
+    # Part B widened the argument from a hash-or-file to any indicator, and
+    # added "-" for a stdin batch. Still the whole line rather than a prefix:
+    # a rename must redden this, which is the reason it reads the name out of
+    # pyproject instead of spelling it here.
+    assert f"    {name} <indicator | - > [-o report.json | report.pdf]" in readme
 
 
 def test_readme_does_not_claim_every_archive_member_is_analyzed():

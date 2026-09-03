@@ -215,7 +215,14 @@ def _phase4_dict(report: Report) -> dict:
 
 def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
+        # "hash" keeps its name and its position. It has held the looked-up
+        # indicator since Phase 0 and consumers key on it; renaming it to
+        # match Part B's wider input surface would break every one of them
+        # to fix a label. "indicator_kind" is additive and says what the
+        # value actually is, so a consumer that cares can tell an address
+        # from a digest without guessing from the shape of the string.
         "hash": report.indicator,
+        "indicator_kind": report.indicator_kind,
         "otx": _otx_dict(report.otx),
         "censys": [_censys_dict(h) for h in report.hosts],
         "whois": [_whois_dict(w) for w in report.whois],

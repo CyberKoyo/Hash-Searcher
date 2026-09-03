@@ -1269,6 +1269,14 @@ MODULE_OWN_PARAGRAPH_VALUES = {
         "separately rather than trusting this entry to cover them.",
     "VT_UNAVAILABLE_NOTE":
         "the same, for the VT caveat both surfaces print.",
+    "report.indicator_kind":
+        "the KEY of an INDICATOR_LABELS lookup, never the value written. "
+        "What reaches the Paragraph is one of that dict's own literals -- "
+        "'Hash', 'IP', 'Domain', 'URL' -- or the literal default 'Indicator' "
+        "when the kind is unrecognized, so no provider text can arrive by "
+        "this route however odd the kind string is. The indicator VALUE "
+        "beside it is escaped at the call, and the descent checks that "
+        "separately.",
 }
 
 
@@ -1719,8 +1727,20 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
         "argument passed to _smuggle")
 
     # And it must still see an _x() that was simply deleted.
-    assert unproven(source.replace('f"Hash: {_x(report.indicator)}"',
-                                   'f"Hash: {report.indicator}"')), (
+    #
+    # The mutation is anchored on a literal from render/pdf.py, so it must
+    # assert that literal is still there. Part B rewrote this line -- the
+    # header labels an IP "IP:" rather than "Hash:" now -- and a str.replace
+    # whose target has gone is a no-op: the "mutant" would be the unmodified
+    # source, `unproven` would return the empty set, and this case would go
+    # green having tested nothing. The same failure the shadowing case above
+    # documents, arriving through a rename instead of a shadow.
+    dropped_escape = 'f"{label}: {_x(report.indicator)}"'
+    assert dropped_escape in source, (
+        "render/pdf.py no longer spells the escaped indicator header this "
+        "way, so the mutation below would silently apply to nothing")
+    assert unproven(source.replace(dropped_escape,
+                                   'f"{label}: {report.indicator}"')), (
         "the escaping guard does not see a dropped _x()")
 
 
@@ -1783,3 +1803,22 @@ def test_a_failed_otx_error_is_escaped_and_capped_like_every_other_source(
     # Only a real build raises on unescaped markup.
     path = write_pdf(report, str(tmp_path / "otx-error.pdf"))
     assert open(path, "rb").read(5) == b"%PDF-"
+
+
+def test_the_header_labels_an_address_as_an_ip_not_as_a_hash(sample_report):
+    """"Hash: 198.51.100.10" is a label contradicting its own value. Part B
+    made that reachable by accepting an IP at all."""
+    from hash_searcher.render.pdf import build_story
+
+    sample_report.indicator = "198.51.100.10"
+    sample_report.indicator_kind = "ip"
+    rendered = " ".join(str(getattr(f, "text", "")) for f in build_story(sample_report))
+    assert "IP: 198.51.100.10" in rendered
+    assert "Hash: 198.51.100.10" not in rendered
+
+
+def test_the_header_still_says_hash_for_a_hash(sample_report):
+    from hash_searcher.render.pdf import build_story
+
+    rendered = " ".join(str(getattr(f, "text", "")) for f in build_story(sample_report))
+    assert f"Hash: {sample_report.indicator}" in rendered

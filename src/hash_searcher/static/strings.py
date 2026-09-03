@@ -3,12 +3,21 @@
 This closes the loop the spec describes: strings-derived IOCs feed back
 into the enrichment path, so a sample nobody has ever seen still produces
 IPs and domains to look up. No optional dependency, always runs.
+
+The URL and domain grammar itself lives in ``indicators.py`` -- the CLI
+has to recognize exactly the same things when a user pastes one, and a
+second copy of a bounded pattern is a second place to get the bound
+wrong. The ReDoS analysis that produced these patterns travelled with
+them; see the comments there.
 """
 
 import functools
 import ipaddress
 import re
 
+from ..indicators import (
+    DOMAIN_RE, DOMAIN_TOKEN_RE, FILENAME_EXTENSIONS, MAX_DOMAIN, URL_RE,
+)
 from ..models import IOCSet, StringsReport
 from .entropy import MAX_BYTES
 
@@ -24,24 +33,6 @@ IGNORED_DOMAINS = {
     "globalsign.com", "schemas.xmlsoap.org", "example.com",
 }
 
-# Filename extensions that read as a domain TLD to _DOMAIN_RE but are
-# overwhelmingly PE import-table entries or plain filenames in practice --
-# kernel32.dll, readme.txt, setup.exe. Every extension here is checked to
-# NOT be a live TLD; .com is deliberately excluded even though it is also
-# a DOS executable extension, because it is also the most common TLD on
-# earth and excluding it would silently drop genuine .com domains.
-#
-# .zip and .mov ARE live TLDs (Google registered both in 2023) and are
-# kept in this set anyway: a ".zip" or ".mov" string embedded in a binary
-# is overwhelmingly a filename, not a URL shortener's idea of a domain,
-# and the risk of losing a rare genuine .zip/.mov domain IOC is accepted
-# as the smaller cost against the near-certainty of filename noise.
-FILENAME_EXTENSIONS = {
-    "dll", "exe", "sys", "scr", "ocx", "cpl", "bin",
-    "dat", "ini", "txt", "log", "tmp",
-    "zip", "mov",
-}
-
 # RFC 1918 -- the private ranges an analyst never wants looked up. See
 # _is_uninteresting() for why these are checked explicitly instead of via
 # ipaddress.IPv4Address.is_private.
@@ -52,57 +43,6 @@ _RFC1918 = (
 )
 
 _IP_CANDIDATE_RE = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
-_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
-
-# A long dotted chain that never ends in a valid TLD -- "11.11.11...", or any
-# sufficiently long "a.b.c.d..." -- makes the domain grammar below
-# catastrophically slow if it is run directly against the whole text with
-# `finditer`: the trailing [a-zA-Z]{2,} fails, the engine backtracks through
-# every "label." repetition of the `+` group once for the failing match, and
-# finditer then repeats that whole failing attempt from every subsequent
-# starting position -- O(n) backtrack steps times O(n) starting positions is
-# O(n^2). Measured on this branch: 6KB 0.27s, 12KB 1.08s, 24KB 7.09s,
-# 48KB 25.54s; a 100KB crafted file did not finish in 60s. See
-# branch-review.md C2.
-#
-# The fix tokenises first with a linear, non-backtracking character class,
-# then runs the *original* domain grammar (unchanged, still \b-anchored,
-# still backtracks to a shorter match on failure) against each token, capped
-# at MAX_DOMAIN bytes -- the DNS name length limit. Capping the token bounds
-# the backtracking to a constant (O(MAX_DOMAIN)) per token instead of
-# O(len(text)), so the whole pass is O(n) in the number of tokens rather than
-# O(n^2) in the length of the text.
-#
-# An earlier version of this fix ran fullmatch() against the whole token
-# instead, on the theory that "the old pattern's greedy + always prefers the
-# longest run starting at a given position" made the two equivalent. That
-# reasoning was wrong: the old pattern backtracks to a *shorter* match when
-# the longest one fails (e.g. "evil.example.123" -- fullmatch rejects the
-# whole token outright, but the original \b-anchored pattern finds
-# "evil.example" inside it by giving back the ".123" tail). fullmatch cannot
-# do that give-back, so it silently dropped domains followed by a non-TLD
-# trailing label -- a host with a trailing numeric label, a dotted port, a
-# double dot. Differential-tested against the original pattern over 40,000
-# random inputs: 0 differences. It is also faster than the fullmatch version
-# was, since a token that cannot start a domain is rejected by length before
-# any backtracking happens at all (6MB: 0.031s here vs 1.67s for fullmatch).
-MAX_DOMAIN = 253  # RFC 1035 -- the longest a fully-qualified domain name can be.
-#
-# '_' is in this class even though it can never be part of a domain label:
-# \b is defined relative to \w = [a-zA-Z0-9_], so a domain-alphabet run
-# immediately adjacent to an underscore (a mangled symbol, an env-var-style
-# token) has no real \b there in the original pattern's eyes either. A
-# token class that excludes '_' cuts the token right at the underscore and
-# hands _DOMAIN_RE an isolated substring whose edge LOOKS like a boundary
-# but was never one in the full text -- a false positive relative to the
-# original that a differential test without '_' in its fuzz alphabet would
-# never catch. Confirmed by fuzzing 40,000+ underscore-containing inputs
-# against the true \b-anchored-over-the-whole-text original: 0 differences
-# with '_' included in this class, ~1.5% of inputs differing without it.
-_DOMAIN_TOKEN_RE = re.compile(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*")
-_DOMAIN_RE = re.compile(
-    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
-)
 
 
 @functools.lru_cache(maxsize=None)
@@ -145,7 +85,7 @@ def _preceded_by_version_marker(text: str, start: int) -> bool:
     That full-prefix slice-and-lower ran once per dotted-quad candidate
     _find_ips finds, which is O(start) per call; on a long run of
     dotted-quad-shaped text (the same "11.11.11..." adversarial input that
-    made _DOMAIN_RE quadratic, reached through a different function here)
+    made DOMAIN_RE quadratic, reached through a different function here)
     that made the whole scan O(n^2): 100KB 0.60s, 200KB 1.96s, 400KB 5.28s,
     800KB 29.43s. Bounding the slice makes each call O(1).
     """
@@ -199,7 +139,7 @@ def _find_ips(text: str) -> list[str]:
 
 
 def _find_urls(text: str) -> list[str]:
-    return _URL_RE.findall(text)
+    return URL_RE.findall(text)
 
 
 def _is_ignored_domain(domain: str) -> bool:
@@ -216,9 +156,9 @@ def _is_ignored_domain(domain: str) -> bool:
 
 def _find_domains(text: str) -> list[str]:
     found = []
-    for token_match in _DOMAIN_TOKEN_RE.finditer(text):
-        # Capping at MAX_DOMAIN bounds _DOMAIN_RE's backtracking to a
-        # constant per token -- see the comment above _DOMAIN_TOKEN_RE.
+    for token_match in DOMAIN_TOKEN_RE.finditer(text):
+        # Capping at MAX_DOMAIN bounds DOMAIN_RE's backtracking to a
+        # constant per token -- see the comment above DOMAIN_TOKEN_RE.
         #
         # The cap truncates rather than skips, so a domain sitting past
         # byte 253 of a single unbroken domain-alphabet run is missed:
@@ -231,7 +171,7 @@ def _find_domains(text: str) -> list[str]:
         # failure as the wrong equivalence claim above: it tells the next
         # reader there is nothing to check.
         token = token_match.group(0)[:MAX_DOMAIN]
-        for candidate in _DOMAIN_RE.findall(token):
+        for candidate in DOMAIN_RE.findall(token):
             domain = candidate.lower()
             tld = domain.rsplit(".", 1)[-1]
             if tld in FILENAME_EXTENSIONS:
@@ -277,11 +217,11 @@ def harvest_iocs(strings: list[str]) -> IOCSet:
         # more than once. Measured before this fix: 724KB 2.82s, 1.46MB
         # 12.14s, 2.96MB 51.36s -- clean 4x per 2x, quadratic; a real 2.7MB
         # file took 40.75s end to end through analyze_strings, ~370s at the
-        # 8 MiB MAX_BYTES cap. _URL_RE.sub() does the same job -- blank out
+        # 8 MiB MAX_BYTES cap. URL_RE.sub() does the same job -- blank out
         # every URL span -- in one linear pass regardless of how many
         # distinct URLs there are. Differential-tested against the old loop
         # over 20,000 mixed strings: 0 differences.
-        remainder = _URL_RE.sub(" ", text)
+        remainder = URL_RE.sub(" ", text)
         ips.extend(_find_ips(remainder))
         domains.extend(_find_domains(remainder))
     return IOCSet(

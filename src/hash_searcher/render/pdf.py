@@ -446,6 +446,17 @@ def _threatfox_cell(result) -> str:
             f"{f' -- {tags}' if tags else ''}")
 
 
+#: What to call the thing this report is about. "Hash" was hard-coded, and
+#: was right for as long as a hash was the only thing the tool accepted;
+#: printing "Hash: 198.51.100.10" is a label that contradicts its own value.
+INDICATOR_LABELS = {
+    "hash": "Hash", "ip": "IP", "domain": "Domain", "url": "URL",
+    # A file argument is hashed before anything looks it up, so its report
+    # really is about a hash.
+    "file": "Hash",
+}
+
+
 def build_story(report: Report, verdict: Verdict | None = None) -> list:
     """Every flowable, in order. Separate from write_pdf so the content can be
     asserted on directly -- there is no PDF text extractor in the dev
@@ -455,7 +466,8 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
     story = []
 
     story.append(Paragraph("Threat Intelligence Report", styles['Title']))
-    story.append(Paragraph(f"Hash: {_x(report.indicator)}", styles['Normal']))
+    label = INDICATOR_LABELS.get(report.indicator_kind, "Indicator")
+    story.append(Paragraph(f"{label}: {_x(report.indicator)}", styles['Normal']))
     story.append(Paragraph(f"Generated: {_x(report.generated_at)}", styles['Normal']))
     story.append(Spacer(1, 12))
 

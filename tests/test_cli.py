@@ -7,11 +7,26 @@ from hash_searcher.cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
     build_parser, output_format, run_cli,
 )
+from hash_searcher.indicators import Indicator
 
 
-def test_positional_indicator_is_required():
+def test_an_indicator_or_an_input_file_is_required():
+    """The positional is nargs="?" so --input-file can stand in for it, so
+    argparse alone no longer enforces this -- parse_args does."""
+    from hash_searcher.cli import parse_args
+
     with pytest.raises(SystemExit):
-        build_parser().parse_args([])
+        parse_args([])
+
+
+def test_an_input_file_alone_needs_no_positional():
+    """The form the README documents: `hash-searcher --input-file iocs.txt`.
+    It exited 2 with "the following arguments are required: indicator"."""
+    from hash_searcher.cli import parse_args
+
+    args = parse_args(["--input-file", "iocs.txt"])
+    assert args.indicator is None
+    assert args.input_file == "iocs.txt"
 
 
 def test_output_flag_is_optional():
@@ -52,19 +67,19 @@ def test_yara_rules_flag_is_accepted():
 
 # --- run_cli coverage -------------------------------------------------------
 #
-# data_puller, check_env, and resolve_hash are monkeypatched as they
+# data_puller, check_env, and resolve_indicator are monkeypatched as they
 # are bound into hash_searcher.cli, not at their source modules -- the same
 # pattern tests/test_data_puller.py uses for the fetch coroutines.
 
 
 def _stub_entry(monkeypatch):
-    """Bypass check_env's real key-reading and resolve_hash's real file/hash
-    parsing so these tests are independent of both the filesystem and
-    whatever API keys happen to be set on the machine running them."""
+    """Bypass check_env's real key-reading and resolve_indicator's real
+    file/hash parsing so these tests are independent of both the filesystem
+    and whatever API keys happen to be set on the machine running them."""
     monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
     monkeypatch.setattr(
-        "hash_searcher.cli.resolve_hash",
-        lambda indicator, password: ["deadbeef"],
+        "hash_searcher.cli.resolve_indicator",
+        lambda indicator, password: [Indicator("hash", "deadbeef")],
     )
 
 
@@ -83,7 +98,7 @@ def _stub_data_puller(monkeypatch, raw):
     """
     payload = {**EMPTY_RAW, **raw}
 
-    async def _fake(file_hash, cache, extra_ips=None):
+    async def _fake(indicator, cache, extra_ips=None, pivot_depth=0):
         return payload
     monkeypatch.setattr("hash_searcher.cli.data_puller", _fake)
 
@@ -131,8 +146,8 @@ async def test_censys_and_whois_survive_an_empty_abuseipdb_result(monkeypatch, f
 
 async def test_vt_404_no_longer_bails_before_the_verdict(monkeypatch, capsys):
     """B2(i): a VT 404 with no OTX pulses used to be treated as an invalid
-    hash and bail before score()/render(). resolve_hash already proved this
-    is a well-formed digest, so the run must reach a rendered verdict."""
+    hash and bail before score()/render(). resolve_indicator already proved
+    this is a well-formed digest, so the run must reach a rendered verdict."""
     _stub_entry(monkeypatch)
     raw = {
         "vt": make_error("Hash not found in GetTotal", 404),
@@ -277,8 +292,13 @@ async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
     """`hash-searcher notahash` raised FileNotFoundError out of resolve_hash
     and printed a full traceback. Pre-existing on 43e9f92 and on 129ff8d.
 
-    check_env only is stubbed here -- _stub_entry also replaces resolve_hash,
-    which is the function under test.
+    Still the message for an unclassifiable argument after B2: an argument
+    that is not any recognizable indicator is overwhelmingly a path that is
+    not where the user thought it was, so resolve_indicator hands it to
+    resolve_hash rather than answering with a vaguer message of its own.
+
+    check_env only is stubbed here -- _stub_entry also replaces
+    resolve_indicator, which is the function under test.
     """
     monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
 
@@ -331,7 +351,7 @@ async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatc
     monkeypatch.setattr("hash_searcher.cli.analyze",
                         lambda path, yara_rules=None: order.append("static"))
 
-    async def fake_puller(file_hash, cache, extra_ips=None):
+    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0):
         order.append("network")
         return dict(EMPTY_RAW)
 
@@ -451,8 +471,8 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
 
     monkeypatch.setattr("hash_searcher.cli.check_env", lambda: False)
     monkeypatch.setattr(
-        "hash_searcher.cli.resolve_hash",
-        lambda indicator, password: ["deadbeef"],
+        "hash_searcher.cli.resolve_indicator",
+        lambda indicator, password: [Indicator("hash", "deadbeef")],
     )
 
     fake = StaticReport(
@@ -584,3 +604,159 @@ async def test_a_hash_no_source_has_ever_seen_is_unknown_not_invalid(
     assert exit_code == EXIT_UNKNOWN
     assert "VERDICT: UNKNOWN" in out
     assert "Invalid hash" not in out
+
+
+# --- Task B2: the file argument, pinned -------------------------------------
+#
+# B2 reworked data_puller's entry from "a hash, and everything else derived
+# from VirusTotal" to "whatever kind of indicator this is". The file path is
+# the one that already worked, so it is the one that can regress.
+
+
+def _capture_data_puller(monkeypatch):
+    """Record what data_puller was handed, and return an empty raw dict."""
+    seen = []
+
+    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0):
+        seen.append((indicator, extra_ips))
+        return dict(EMPTY_RAW)
+
+    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    return seen
+
+
+async def test_a_file_argument_is_hashed_and_analyzed_exactly_as_before(
+        tmp_path, monkeypatch, capsys):
+    """A real file on disk: hashed, statically analyzed, and looked up by
+    that digest -- not classified as a domain, not passed through as a
+    string. The whole of B2's regression risk in one test."""
+    import hashlib
+
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"MZ\x90\x00 not a real PE")
+    digest = hashlib.sha256(sample.read_bytes()).hexdigest()
+
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    seen = _capture_data_puller(monkeypatch)
+
+    analyzed = []
+
+    def fake_analyze(path, yara_rules=None):
+        analyzed.append(path)
+        return None
+
+    monkeypatch.setattr("hash_searcher.cli.analyze", fake_analyze)
+
+    await run_cli([str(sample), "--no-cache"])
+
+    assert analyzed == [str(sample)]          # static analysis still runs
+    assert seen == [(Indicator("hash", digest), None)]
+    assert "Traceback" not in capsys.readouterr().out
+
+
+async def test_a_file_whose_name_reads_as_a_domain_is_still_hashed(
+        tmp_path, monkeypatch):
+    """`hash-searcher evil.example` with a file of that name in the working
+    directory. classify() consults the filesystem first for exactly this."""
+    import hashlib
+
+    sample = tmp_path / "evil.example"
+    sample.write_bytes(b"payload")
+    digest = hashlib.sha256(b"payload").hexdigest()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: None)
+    seen = _capture_data_puller(monkeypatch)
+
+    await run_cli(["evil.example", "--no-cache"])
+
+    assert seen == [(Indicator("hash", digest), None)]
+
+
+async def test_a_bare_hash_argument_still_skips_static_analysis(monkeypatch):
+    """There is no file to analyze, and attempting one is a crash rather
+    than a smaller report."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    seen = _capture_data_puller(monkeypatch)
+
+    def fail(path, yara_rules=None):
+        raise AssertionError("static analysis ran on a bare hash")
+
+    monkeypatch.setattr("hash_searcher.cli.analyze", fail)
+
+    await run_cli(["a" * 64, "--no-cache"])
+    assert seen == [(Indicator("hash", "a" * 64), None)]
+
+
+async def test_an_ip_argument_reaches_data_puller_as_an_ip(monkeypatch):
+    """The capability this part exists for: `hash-searcher 198.51.100.10`
+    could not work before B2, because the entry assumed a hash."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    seen = _capture_data_puller(monkeypatch)
+
+    await run_cli(["198.51.100.10", "--no-cache"])
+    assert seen == [(Indicator("ip", "198.51.100.10"), None)]
+
+
+async def test_a_defanged_url_argument_is_refanged_before_lookup(monkeypatch):
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    seen = _capture_data_puller(monkeypatch)
+
+    await run_cli(["hxxps://evil[.]example/path", "--no-cache"])
+    assert seen == [(Indicator("url", "https://evil.example/path"), None)]
+
+
+async def test_a_cidr_argument_is_declined_rather_than_expanded(monkeypatch, capsys):
+    """65,536 rate-limited lookups is not a smaller answer, it is a spent key."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    seen = _capture_data_puller(monkeypatch)
+
+    exit_code = await run_cli(["198.51.100.0/16", "--no-cache"])
+
+    assert exit_code == EXIT_NO_DATA
+    assert seen == []
+    assert "network range" in capsys.readouterr().out
+
+
+async def test_the_report_carries_the_indicator_that_was_looked_up(monkeypatch):
+    """Report.indicator held the sha256 because a sha256 was the only thing
+    the tool could be handed. It now holds whatever was looked up, which is
+    what -o and the batch loop key their output on."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    _capture_data_puller(monkeypatch)
+
+    rendered = []
+    monkeypatch.setattr("hash_searcher.cli.render",
+                        lambda report, verdict: rendered.append(report))
+
+    await run_cli(["evil.example", "--no-cache"])
+    assert [r.indicator for r in rendered] == ["evil.example"]
+    assert rendered[0].source_file == "evil.example"
+
+
+async def test_a_missing_input_file_prints_a_message_not_a_traceback(
+        monkeypatch, capsys):
+    """The same defect analyze_one's FileNotFoundError catch exists for.
+    --input-file opened a second door to it."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+
+    exit_code = await run_cli(["--input-file", "/nonexistent/iocs.txt"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_NO_DATA
+    assert "/nonexistent/iocs.txt" in out
+    assert "Traceback" not in out
+
+
+async def test_an_input_file_is_read_as_utf8_whatever_the_locale_is(
+        monkeypatch, tmp_path):
+    """An IOC list is not local text. Reading it in the locale's encoding
+    makes a punycode-free domain list fail on a non-UTF-8 machine only."""
+    listing = tmp_path / "iocs.txt"
+    listing.write_bytes("# ünicode comment\n198.51.100.10\n".encode("utf-8"))
+
+    from hash_searcher.cli import batch_lines, parse_args
+
+    args = parse_args(["--input-file", str(listing)])
+    assert batch_lines(args) == ["198.51.100.10"]
