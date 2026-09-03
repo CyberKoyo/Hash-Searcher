@@ -493,12 +493,24 @@ def build_story(report: Report, verdict: Verdict | None = None) -> list:
             styles['Normal']))
         story.append(Spacer(1, 12))
 
-    story.append(Paragraph("OTX Intelligence", styles['Heading1']))
-    story.append(Paragraph(
-        f"Recorded Instances: {_x(report.otx.recorded_instances)}", styles['Normal']))
-    for technique in report.otx.attack_techniques:
-        story.append(Paragraph(f"• {_x(technique)}", styles['Normal']))
-    story.append(Spacer(1, 12))
+    if report.otx.error:
+        # The fifth source to get this, and the last: a failed OTX lookup
+        # rendered as a heading over "Recorded Instances: N/A", which is
+        # what a successful lookup finding nothing also renders as. Same
+        # helper as MalwareBazaar, ThreatFox and crt.sh, so the shape
+        # cannot drift and the DETAIL_CHAR_LIMIT cap cannot be forgotten
+        # here the way it was at four sites before _error_flowables
+        # existed.
+        story += _error_flowables(styles, "OTX Intelligence", "OTX",
+                                  report.otx.error)
+    else:
+        story.append(Paragraph("OTX Intelligence", styles['Heading1']))
+        story.append(Paragraph(
+            f"Recorded Instances: {_x(report.otx.recorded_instances)}",
+            styles['Normal']))
+        for technique in report.otx.attack_techniques:
+            story.append(Paragraph(f"• {_x(technique)}", styles['Normal']))
+        story.append(Spacer(1, 12))
 
     story.append(Paragraph("AbuseIPDB", styles['Heading1']))
     # These were bare strings, on the reasoning that a cell which does not

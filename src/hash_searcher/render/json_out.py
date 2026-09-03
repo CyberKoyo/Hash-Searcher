@@ -2,8 +2,9 @@ import json
 from dataclasses import asdict
 
 from ..models import (
-    BazaarReport, CensysHost, CertReport, GreyNoiseReport, Report, ShodanReport,
-    SourceResult, StaticReport, ThreatFoxReport, Verdict, VTReport, WhoisRecord,
+    BazaarReport, CensysHost, CertReport, GreyNoiseReport, OTXReport, Report,
+    ShodanReport, SourceResult, StaticReport, ThreatFoxReport, Verdict,
+    VTReport, WhoisRecord,
 )
 
 
@@ -55,6 +56,27 @@ def _source_dict(result: SourceResult, default) -> dict | None:
         return None
     return {**asdict(result.value if result.value is not None else default),
             "error": result.error}
+
+
+def _otx_dict(otx: OTXReport) -> dict:
+    """OTX's block, with an `error` key once the lookup has failed.
+
+    Added only when set, exactly as _censys_dict and _vt_dict do, so the
+    success shape is byte-identical to what it has always been. Global
+    Constraint 7 forbids moving or repurposing a key; this adds one, under
+    an explicit exception granted for it, because without it a failed OTX
+    lookup serializes identically to one that never ran -- every other
+    source in this document already carries its own error, and OTX was the
+    one asymmetry left. `recorded_instances` is "N/A" in both states, so a
+    consumer had nothing to branch on.
+    """
+    body = {
+        "recorded_instances": otx.recorded_instances,
+        "attack_techniques": otx.attack_techniques,
+    }
+    if otx.error:
+        body["error"] = otx.error
+    return body
 
 
 def _verdict_dict(verdict: Verdict) -> dict:
@@ -194,10 +216,7 @@ def _phase4_dict(report: Report) -> dict:
 def to_dict(report: Report, verdict: Verdict | None = None) -> dict:
     body = {
         "hash": report.indicator,
-        "otx": {
-            "recorded_instances": report.otx.recorded_instances,
-            "attack_techniques": report.otx.attack_techniques,
-        },
+        "otx": _otx_dict(report.otx),
         "censys": [_censys_dict(h) for h in report.hosts],
         "whois": [_whois_dict(w) for w in report.whois],
         "ipdb": [asdict(i) for i in report.ips.values()],

@@ -514,3 +514,40 @@ def test_a_healthy_kev_catalog_reports_nothing_unchecked(sample_report):
     assert body["kev_error"] is None
     assert body["kev_unchecked"] == 0
     assert [e["cve"] for e in body["kev"]] == ["CVE-2021-41617"]
+
+
+def test_a_failed_otx_lookup_is_distinguishable_from_one_that_never_ran(sample_report):
+    """The `error` key OTX did not have, and the shape it matches.
+
+    Every other source in this document already carries its own error --
+    censys entries add one when set, `vt` adds one when set, the Phase 4
+    blocks carry it always. OTX did not, and `recorded_instances` is "N/A"
+    in both states, so a machine consumer had nothing to branch on: a
+    failed lookup serialized byte-identically to one nobody made.
+
+    Added under an explicit exception to Global Constraint 7, and in the
+    shape _censys_dict set: present only when set, so the success document
+    is unchanged. Asserted both ways round -- the key appears on failure
+    and is absent on success -- because "unchanged on success" is half the
+    exception's terms.
+    """
+    import dataclasses
+
+    from hash_searcher.models import OTXReport
+
+    healthy = to_dict(sample_report)
+    assert "error" not in healthy["report"]["otx"]
+    assert set(healthy["report"]["otx"]) == {"recorded_instances",
+                                             "attack_techniques"}
+
+    failed = to_dict(dataclasses.replace(
+        sample_report, otx=OTXReport(recorded_instances="N/A",
+                                     error="OTX key not set")))
+    never_asked = to_dict(dataclasses.replace(
+        sample_report, otx=OTXReport(recorded_instances="N/A")))
+
+    assert failed["report"]["otx"]["error"] == "OTX key not set"
+    assert "error" not in never_asked["report"]["otx"]
+    assert failed["report"]["otx"] != never_asked["report"]["otx"]
+    # And it survives the serializer, not just the dict builder.
+    assert '"error": "OTX key not set"' in json.dumps(failed, indent=4)

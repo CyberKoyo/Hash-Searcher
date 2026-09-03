@@ -1673,3 +1673,64 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
     assert unproven(source.replace('f"Hash: {_x(report.indicator)}"',
                                    'f"Hash: {report.indicator}"')), (
         "the escaping guard does not see a dropped _x()")
+
+
+def test_a_failed_otx_lookup_is_distinguishable_from_one_that_never_ran(sample_report):
+    """The fifth source to say which, and the last.
+
+    A failed OTX lookup rendered as the "OTX Intelligence" heading over
+    "Recorded Instances: N/A" -- which is exactly what a successful lookup
+    that found nothing renders as, on the surface A3's Ruling 6 named as
+    the deliverable an analyst actually files. It goes through
+    _error_flowables like MalwareBazaar, ThreatFox and crt.sh, so the shape
+    cannot drift and DETAIL_CHAR_LIMIT cannot be forgotten at this site.
+    """
+    import dataclasses
+
+    from hash_searcher.models import OTXReport
+
+    def texts(otx):
+        return _texts(build_story(
+            dataclasses.replace(sample_report, otx=otx), None))
+
+    failed = texts(OTXReport(recorded_instances="N/A", error="OTX key not set"))
+    never_asked = texts(OTXReport(recorded_instances="N/A"))
+
+    assert "OTX: OTX key not set" in failed
+    assert "Recorded Instances: N/A" not in failed
+    assert "Recorded Instances: N/A" in never_asked
+    assert "OTX: OTX key not set" not in never_asked
+    assert failed != never_asked
+    # The heading is still there, so the section does not vanish.
+    assert "OTX Intelligence" in failed and "OTX Intelligence" in never_asked
+
+
+def test_a_failed_otx_error_is_escaped_and_capped_like_every_other_source(
+        sample_report, tmp_path):
+    """Rule 1 and the DETAIL_CHAR_LIMIT cap, at the new call site.
+
+    The error string is provider-influenced and unbounded, so this is the
+    same pair of properties _error_flowables exists to give the other four
+    sections -- asserted here rather than assumed from the shared helper,
+    because "it goes through the helper" is the claim the helper was
+    written after four call sites failed to honour.
+    """
+    import dataclasses
+
+    from hash_searcher.models import OTXReport
+    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+
+    huge = "Contoso <Root CA " + "the quick brown fox " * 20000
+    report = dataclasses.replace(
+        sample_report,
+        otx=OTXReport(recorded_instances="N/A", error=huge))
+
+    note = next(t for t in _texts(build_story(report, None))
+                if t.startswith("OTX: "))
+    assert f"truncated at {DETAIL_CHAR_LIMIT} of {len(huge)} characters" in note
+    assert len(note) < 2 * DETAIL_CHAR_LIMIT
+    assert "&lt;Root CA" in note and "<Root CA" not in note
+
+    # Only a real build raises on unescaped markup.
+    path = write_pdf(report, str(tmp_path / "otx-error.pdf"))
+    assert open(path, "rb").read(5) == b"%PDF-"

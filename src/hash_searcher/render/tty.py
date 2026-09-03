@@ -100,6 +100,15 @@ def render_whois(report: Report) -> None:
 
 def render_otx(report: Report) -> None:
     _header("OTX DATA")
+    if report.otx.error:
+        # A failed OTX lookup used to be byte-identical to one that never
+        # ran: both fall through `otx_responded` and print "No OTX data
+        # available.", which is a claim about OTX rather than about this
+        # tool. Every other source in this renderer says which -- `Censys:
+        # <error>`, `MalwareBazaar: <error>`, `crt.sh: <error>` -- and OTX
+        # was the last one that did not.
+        print(f"OTX: {report.otx.error}")
+        return
     # Mirrors the original's `if not pulse_info:` gate. Keying off the
     # recorded_instances string instead would collide with a real count
     # whose value happens to be "N/A".

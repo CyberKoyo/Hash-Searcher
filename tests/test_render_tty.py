@@ -280,21 +280,39 @@ def test_render_otx_pulse_info_present_but_no_count(capsys):
     assert out == expected
 
 
-def test_render_otx_error_path_unaffected(capsys):
-    report = Report(
-        indicator="test", generated_at="x", vt=VTReport(found=False),
-        otx=OTXReport(recorded_instances="N/A", error="OTX key not set"),
-        ips={}, hosts=[], whois=[],
-    )
-    render_otx(report)
-    out = capsys.readouterr().out
-    expected = (
-        "\n==================================================\n"
-        "OTX DATA\n"
-        "==================================================\n"
-        "No OTX data available.\n"
-    )
-    assert out == expected
+def test_a_failed_otx_lookup_says_so_instead_of_reading_as_no_data(capsys):
+    """The assertion this suite could not make until now.
+
+    A failed OTX lookup printed "No OTX data available." -- byte-identical
+    to a lookup that was never made, and a claim about OTX rather than
+    about this tool. Every other source in this renderer already said
+    which: `Censys: <error>`, `MalwareBazaar: <error>`, `crt.sh: <error>`.
+    OTX was the last asymmetry, and the two states are asserted here
+    against each other rather than each against a literal, because being
+    DIFFERENT is the property that was missing.
+    """
+    def rendered(otx):
+        report = Report(
+            indicator="test", generated_at="x", vt=VTReport(found=False),
+            otx=otx, ips={}, hosts=[], whois=[],
+        )
+        render_otx(report)
+        return capsys.readouterr().out
+
+    header = ("\n==================================================\n"
+              "OTX DATA\n"
+              "==================================================\n")
+
+    failed = rendered(OTXReport(recorded_instances="N/A",
+                                error="OTX key not set"))
+    never_asked = rendered(OTXReport(recorded_instances="N/A"))
+    answered = rendered(OTXReport(recorded_instances=4, otx_responded=True,
+                                  attack_techniques=["Process Injection"]))
+
+    assert failed == header + "OTX: OTX key not set\n"
+    assert never_asked == header + "No OTX data available.\n"
+    assert answered == header + "Recorded instances: 4\nProcess Injection\n"
+    assert failed != never_asked
 
 
 def test_render_gates_ip_censys_whois_sections_on_vt_contacted_ips(capsys):
