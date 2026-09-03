@@ -64,10 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
                     "VirusTotal, AbuseIPDB, Censys, OTX, RDAP, and "
                     "several keyless sources.",
     )
+    # nargs="?" because --input-file supplies the indicators instead, and
+    # `hash-searcher --input-file iocs.txt` -- the form the README shows --
+    # is not a command anyone should have to pad with a dummy argument.
+    # parse_args() below rejects the case where neither is given, so the
+    # requirement survives; it just cannot be spelled by argparse alone.
     parser.add_argument(
-        "indicator",
+        "indicator", nargs="?", default=None,
         help="a file path, an MD5/SHA-1/SHA-256 digest, an IP, a domain, "
-             "or a URL -- defanged forms (hxxp://, 1[.]2[.]3[.]4) accepted")
+             "or a URL -- defanged forms (hxxp://, 1[.]2[.]3[.]4) accepted; "
+             "omit it when using --input-file, or pass - to read stdin")
     parser.add_argument("--input-file", dest="input_file",
                         help="read indicators from this file, one per line "
                              "(blank lines and # comments are skipped)")
@@ -122,11 +128,27 @@ def batch_lines(args) -> list[str] | None:
     first. Treating that as a batch would silently change what a ZIP does.
     """
     if args.input_file:
-        with open(args.input_file) as handle:
+        with open(args.input_file, encoding="utf-8") as handle:
             return read_indicators(handle)
     if args.indicator == STDIN_ARGUMENT:
         return read_indicators(sys.stdin)
     return None
+
+
+def parse_args(argv: list[str] | None = None):
+    """Parse argv and enforce what argparse cannot say on its own.
+
+    The indicator is optional only because --input-file can stand in for
+    it. Neither one is still an error, and it is raised through
+    parser.error so it exits 2 with a usage line like every other argument
+    mistake rather than as a message this module invents.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.indicator is None and not args.input_file:
+        parser.error("an indicator is required -- pass one, or --input-file "
+                     "PATH, or - to read a list from stdin")
+    return args
 
 
 def output_format(path: str) -> str | None:
@@ -318,9 +340,18 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
 
 async def run_cli(argv: list[str] | None = None) -> int:
     """Parse the command line and dispatch to one run or to a batch."""
-    args = build_parser().parse_args(argv)
+    args = parse_args(argv)
 
-    lines = batch_lines(args)
+    # --- I2: a list that cannot be read is a message, not a traceback.
+    # cli.py already carries this exact fix for the positional argument
+    # (see the FileNotFoundError catch in analyze_one); --input-file opened
+    # a second door to the same behavior.
+    try:
+        lines = batch_lines(args)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Could not read {args.input_file}: {e}")
+        return EXIT_NO_DATA
+
     if lines is None:
         return await analyze_one(args.indicator, args)
     # Imported here, not at module scope: batch.py runs this module's

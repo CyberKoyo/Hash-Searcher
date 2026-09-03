@@ -134,6 +134,30 @@ async def test_the_whole_batch_shares_one_cache(monkeypatch):
     assert seen[0][1].closed is True   # and closed once the batch is done
 
 
+async def test_one_failing_indicator_does_not_discard_the_rest(monkeypatch, capsys):
+    """A 100-line batch that dies on line 3 has paid for three lookups and
+    produced nothing. The failure is reported, scored EXIT_NO_DATA, and the
+    remaining indicators still run."""
+    seen = []
+
+    async def sometimes_boom(user_input, args, cache=None, output=None):
+        seen.append(user_input)
+        if user_input == "b":
+            raise RuntimeError("provider blew up")
+        return EXIT_CLEAN
+
+    monkeypatch.setattr("hash_searcher.batch.analyze_one", sometimes_boom)
+    monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\n"))
+
+    code = await run_cli(["-", "--no-cache"])
+
+    assert seen == ["a", "b", "c"]
+    assert code == EXIT_NO_DATA          # the failed run is not CLEAN
+    out = capsys.readouterr().out
+    assert "b: run failed" in out
+    assert "provider blew up" in out
+
+
 async def test_the_shared_cache_is_closed_even_when_a_run_raises(monkeypatch):
     class FakeCache:
         def __init__(self, **kwargs):
@@ -152,8 +176,10 @@ async def test_the_shared_cache_is_closed_even_when_a_run_raises(monkeypatch):
     monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\n"))
 
-    with pytest.raises(RuntimeError):
-        await run_cli(["-"])
+    # Every run failing is still a completed batch -- one that found
+    # nothing. What must hold regardless is that the sqlite handle the
+    # batch opened is closed.
+    assert await run_cli(["-"]) == EXIT_NO_DATA
     assert made[0].closed is True
 
 
@@ -219,3 +245,19 @@ async def test_a_single_indicator_run_is_not_a_batch(monkeypatch):
 
     assert await run_cli(["198.51.100.10", "--no-cache"]) == EXIT_CLEAN
     assert seen == ["198.51.100.10"]
+
+
+async def test_a_batch_rejects_an_unusable_output_extension_before_any_lookup(
+        monkeypatch, capsys):
+    """A single run prints "Unrecognized output extension" after the work is
+    done and still shows its verdict. A batch would print it once per
+    indicator, having spent every rate-limited lookup on reports it cannot
+    write -- so it is checked once, first."""
+    seen = _stub_analyze(monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO("198.51.100.10\nevil.example\n"))
+
+    code = await run_cli(["-", "-o", "report.txt", "--no-cache"])
+
+    assert seen == []
+    assert code == EXIT_NO_DATA
+    assert capsys.readouterr().out.count("Unrecognized output extension") == 1

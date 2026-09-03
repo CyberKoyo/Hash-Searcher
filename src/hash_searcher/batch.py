@@ -14,7 +14,7 @@ import re
 from .cache import ResponseCache
 from .cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
-    analyze_one,
+    analyze_one, output_format,
 )
 
 #: How bad each exit code is, which is NOT the order of the codes
@@ -90,6 +90,15 @@ async def run_batch(indicators: list[str], args) -> int:
         print("No indicators to check.")
         return EXIT_NO_DATA
 
+    # Checked once, before the first lookup. A single run prints
+    # "Unrecognized output extension" after the work is done and still
+    # shows its verdict; a batch would print it once per indicator, having
+    # spent every rate-limited lookup on reports it then cannot write.
+    if args.output and output_format(args.output) is None:
+        print(f"Unrecognized output extension: {args.output} "
+              "(use .json or .pdf)")
+        return EXIT_NO_DATA
+
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
     codes = []
     try:
@@ -97,8 +106,20 @@ async def run_batch(indicators: list[str], args) -> int:
             print(f"\n[{index + 1}/{len(indicators)}] {indicator}")
             output = (batch_output_path(args.output, index, indicator)
                       if args.output else None)
-            codes.append(await analyze_one(indicator, args, cache=cache,
-                                           output=output))
+            try:
+                codes.append(await analyze_one(indicator, args, cache=cache,
+                                               output=output))
+            except Exception as e:
+                # A batch is the mode where partial results matter most: a
+                # 100-line run that dies on line 3 has already paid for
+                # three lookups and produced nothing. The same rule
+                # cli.py applies to a failing static analyzer -- one
+                # component's failure must not become a new way the whole
+                # run fails -- and the indicator is named, because a
+                # traceback naming only the provider does not say which
+                # line of the list produced it.
+                print(f"    {indicator}: run failed ({type(e).__name__}: {e})")
+                codes.append(EXIT_NO_DATA)
     finally:
         cache.close()
     return worst_exit_code(codes)

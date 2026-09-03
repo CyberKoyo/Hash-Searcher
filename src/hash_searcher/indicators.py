@@ -47,10 +47,35 @@ KINDS = ("hash", "ip", "domain", "url", "cidr", "file")
 # for the same reason: `hash-searcher kernel32.dll` is a file that is not
 # where the user thought it was, and answering it with a DNS lookup for a
 # domain named kernel32.dll is a wrong answer wearing a confident face.
+#
+# Every entry is checked NOT to be a live TLD, which is what decides
+# membership. That check is why `md` (Moldova), `py` (Paraguay), `sh`
+# (St. Helena), `js` (Jersey), `io`, and `com` are all absent even though
+# each is at least as common a file extension: dropping a genuine domain
+# to catch a typo is the worse trade, and it is the trade `.zip` and `.mov`
+# above are deliberately making in the other direction.
+#
+# Extensions that cannot form a TLD at all -- `7z`, `ps1`, anything with a
+# digit -- are omitted rather than listed: DOMAIN_RE's trailing
+# [a-zA-Z]{2,} already refuses them, and listing them would suggest this
+# set is what stops them.
 FILENAME_EXTENSIONS = {
     "dll", "exe", "sys", "scr", "ocx", "cpl", "bin",
     "dat", "ini", "txt", "log", "tmp",
     "zip", "mov",
+    # Documents, archives, images, and the script/artifact types an analyst
+    # actually hands this tool. Without these, `hash-searcher missing.pdf`
+    # -- a mistyped path, or the right path from the wrong directory -- ran
+    # RDAP and crt.sh against a domain named "missing.pdf" instead of
+    # printing the "this file either doesn't exist" message it has printed
+    # since Phase 0.
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "rtf", "csv",
+    "rar", "gz", "tar", "iso", "cab", "img",
+    "msi", "elf", "jar", "apk", "lnk", "hta", "vbs", "cmd", "bat",
+    "dmp", "pcap", "pcapng", "eml", "msg", "dylib",
+    # ".so" is absent on purpose: it is a shared object AND Somalia's TLD,
+    # so it belongs to the live-TLD group above rather than here. The
+    # guard test caught it in this very set.
 }
 
 
@@ -112,18 +137,39 @@ DOMAIN_RE = re.compile(
 # Defanging is how an indicator survives a mail gateway, a ticket comment,
 # and a PDF, so a pasted one arrives defanged far more often than not.
 #
-# Every rule is a literal-alternation substitution -- no nested quantifier,
-# nothing that can backtrack -- so refang() stays linear in its input. The
-# order matters twice: "[://]" is one token and must be rewritten before
-# the ":" and "/" rules take it apart, and the scheme rule runs first so
-# "hxxps[:]//" reaches the ":" rule already spelled "https[:]//".
+# Every whitespace run in these rules is BOUNDED, and that bound is the
+# whole reason they are safe to run over user input. An earlier version of
+# this block spelled them `\s*` and claimed in this comment to have "no
+# nested quantifier, nothing that can backtrack". That was wrong twice
+# over: `\s*` is a quantifier, and it backtracks. Five of the six rules
+# begin with one, so over a run of whitespace the engine consumed the run
+# at each starting position, failed the bracket class after it, and gave
+# the run back one character at a time -- O(n) backtrack steps from each of
+# O(n) starting positions. Measured on that version: 5,000 spaces 0.80s,
+# 10,000 spaces 3.19s, 20,000 spaces 12.77s. A clean 4x per 2x, and the
+# same O(n^2) shape Phase 3 closed twice in static/strings.py (efd7c49,
+# 97c22d1) -- reintroduced in the module those patterns had just moved to,
+# reachable from the command line, from --input-file, and from a piped
+# batch, which is exactly where untrusted pasted text arrives.
+#
+# WHITESPACE_SLACK bounds each run, so each rule's backtracking is a
+# constant per starting position rather than O(n), which makes the pass
+# linear. Four is well past what a real defanging carries -- "evil [.]
+# example" uses one space a side -- and a longer run simply is not treated
+# as part of the token, which is the correct reading anyway.
+#
+# The order matters twice: "[://]" is one token and must be rewritten
+# before the ":" and "/" rules take it apart, and the scheme rule runs
+# first so "hxxps[:]//" reaches the ":" rule already spelled "https[:]//".
+WHITESPACE_SLACK = 4
+_S = r"\s{0,%d}" % WHITESPACE_SLACK
 _REFANG_RULES = (
     (re.compile(r"h(?:xx|XX)p", re.IGNORECASE), "http"),
-    (re.compile(r"\s*[\[({]\s*:\s*//\s*[\])}]\s*"), "://"),
-    (re.compile(r"\s*[\[({]\s*(?:\.|dot)\s*[\])}]\s*", re.IGNORECASE), "."),
-    (re.compile(r"\s*[\[({]\s*(?::|colon)\s*[\])}]\s*", re.IGNORECASE), ":"),
-    (re.compile(r"\s*[\[({]\s*(?:@|at)\s*[\])}]\s*", re.IGNORECASE), "@"),
-    (re.compile(r"\s*[\[({]\s*(?:/|slash)\s*[\])}]\s*", re.IGNORECASE), "/"),
+    (re.compile(rf"{_S}[\[({{]{_S}:{_S}//{_S}[\])}}]{_S}"), "://"),
+    (re.compile(rf"{_S}[\[({{]{_S}(?:\.|dot){_S}[\])}}]{_S}", re.IGNORECASE), "."),
+    (re.compile(rf"{_S}[\[({{]{_S}(?::|colon){_S}[\])}}]{_S}", re.IGNORECASE), ":"),
+    (re.compile(rf"{_S}[\[({{]{_S}(?:@|at){_S}[\])}}]{_S}", re.IGNORECASE), "@"),
+    (re.compile(rf"{_S}[\[({{]{_S}(?:/|slash){_S}[\])}}]{_S}", re.IGNORECASE), "/"),
 )
 
 

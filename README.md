@@ -94,7 +94,10 @@ looks *those* up too, N levels deep. It is off by default.
 
 The walk is breadth-first with a visited set and a hard ceiling of **20 extra
 domain lookups per run, whatever N is** (`PIVOT_FETCH_BUDGET` in
-`src/hash_searcher/api/api_data_puller.py`). That ceiling is not a
+`src/hash_searcher/api/api_data_puller.py`). That ceiling counts *domains*,
+not requests: each pivoted domain costs one crt.sh call plus one RDAP
+lookup, and RDAP bootstraps through a redirect, so 20 domains is closer to
+60 HTTP requests than to 20. That ceiling is not a
 performance tuning knob: a certificate log routinely names hundreds of
 siblings, so depth 2 over 50 domains is thousands of requests against
 providers that all rate limit, and depth 5 unbounded does not terminate in

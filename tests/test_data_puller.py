@@ -1228,10 +1228,66 @@ async def test_a_non_hash_indicator_says_why_virustotal_has_no_answer(monkeypatc
 
 
 async def test_data_puller_rejects_a_bare_string(monkeypatch):
-    """The pre-B2 form -- data_puller(Indicator("hash", "deadbeef"), cache) -- is still
+    """The pre-B2 form -- data_puller("deadbeef", cache) -- is still
     arity-compatible with today's signature, and a bare hash string reaching
     the kind switch would raise `'str' object has no attribute 'kind'` from
     somewhere inside it, naming neither the caller nor the argument. The
     same courtesy _require_provider extends, for the same reason."""
     with pytest.raises(TypeError, match="classified Indicator"):
         await data_puller("deadbeef" * 8, ResponseCache(enabled=False))
+
+
+# --- OTX is one endpoint per type, and the indicator is a path segment -------
+
+async def test_a_url_indicator_is_percent_encoded_into_the_otx_path(monkeypatch):
+    """Interpolated raw, "https://evil.example/path?q=1" made httpx read the
+    "?" as the start of the query string: the request went to
+    /api/v1/indicators/url/https://evil.example/path with a query of
+    "q=1/general". The endpoint was never reached and the 404 that came
+    back read as "OTX has never seen it"."""
+    import httpx
+
+    from hash_searcher.api import otx as otx_module
+
+    seen = {}
+
+    async def fake_api_get(client, url, headers, **kwargs):
+        seen["url"] = url
+        seen["not_found"] = kwargs.get("not_found")
+        return {}
+
+    monkeypatch.setattr("hash_searcher.api.otx.api_get", fake_api_get)
+
+    await otx_module.get_otx(None, "https://evil.example/path?q=1",
+                             indicator_type="url")
+
+    # raw_path, not .path: httpx decodes percent-escapes back out of .path,
+    # so comparing there would compare the two forms this test exists to
+    # tell apart. raw_path is what goes on the wire.
+    parsed = httpx.URL(seen["url"])
+    assert parsed.raw_path == (
+        b"/api/v1/indicators/url/https%3A%2F%2Fevil.example%2Fpath%3Fq%3D1/general")
+    # The "/general" suffix survived, and nothing leaked into the query --
+    # both were lost when the indicator went in raw.
+    assert parsed.raw_path.endswith(b"/general")
+    assert parsed.query == b""
+
+
+@pytest.mark.parametrize("indicator_type,subject", [
+    ("file", "Hash"), ("IPv4", "IP"), ("domain", "Domain"), ("url", "URL"),
+])
+async def test_the_otx_not_found_message_names_what_was_asked_about(
+        monkeypatch, indicator_type, subject):
+    """A fixed "Hash not found in GetOTX" answered a question nobody asked
+    once this provider became reachable for IPs, domains, and URLs."""
+    from hash_searcher.api import otx as otx_module
+
+    seen = {}
+
+    async def fake_api_get(client, url, headers, **kwargs):
+        seen["not_found"] = kwargs.get("not_found")
+        return {}
+
+    monkeypatch.setattr("hash_searcher.api.otx.api_get", fake_api_get)
+    await otx_module.get_otx(None, "x", indicator_type=indicator_type)
+    assert seen["not_found"] == f"{subject} not found in GetOTX"

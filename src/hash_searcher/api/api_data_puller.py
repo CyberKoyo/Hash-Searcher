@@ -88,6 +88,12 @@ def resolve_indicator(user_input: str,
     return [Indicator("hash", digest) for digest in hashes]
 
 
+#: The kinds data_puller can actually fan out over. `file` and `cidr` are
+#: real Indicator kinds that never reach here: resolve_indicator turns the
+#: first into a hash and declines the second.
+FETCHABLE_KINDS = frozenset({"hash", "ip", "domain", "url"})
+
+
 def _require_indicator(indicator) -> None:
     """Reject anything that is not a classified Indicator.
 
@@ -102,6 +108,18 @@ def _require_indicator(indicator) -> None:
             "data_puller takes a classified Indicator, not a bare string -- "
             "indicators.classify(value), or resolve_indicator(...) at the "
             f"CLI boundary, is what produces one. Got {indicator!r}"
+        )
+    # The kind, not just the type. A `file` Indicator should have become a
+    # hash at resolve_indicator and a `cidr` should have been declined
+    # there, so either one arriving here means a caller skipped that step
+    # -- and without this the failure is a bare KeyError('file') out of the
+    # kind switch, which names neither the caller nor what it did wrong.
+    if indicator.kind not in FETCHABLE_KINDS:
+        raise ValueError(
+            f"data_puller cannot look up a {indicator.kind!r} indicator; "
+            f"it handles {', '.join(sorted(FETCHABLE_KINDS))}. A 'file' "
+            "becomes a hash and a 'cidr' is declined -- both happen in "
+            f"resolve_indicator, above this. Got {indicator!r}"
         )
 
 
@@ -384,6 +402,12 @@ async def _pivot_domains(client, cache, pool, domain_sources, seeded,
     pivoted: list[str] = []
     rdap: list = []
     crtsh: list = []
+    if depth == 0:
+        # The default. Returning before _siblings() rather than after,
+        # because merging every crt.sh row into one de-duplicated report is
+        # real work and nothing below would read it.
+        return pivoted, rdap, crtsh
+
     visited = set(seeded)
     frontier = [d for d in _siblings(crtsh_results) if d not in visited]
     budget = PIVOT_FETCH_BUDGET
@@ -472,8 +496,11 @@ async def data_puller(indicator: Indicator, cache,
         #
         # Skipped for an `ip` indicator, and only for that one: the per-IP
         # fan-out below asks ThreatFox exactly this question about exactly
-        # this address, and a second identical lookup would land the same
-        # answer in two Report fields for scoring to count twice.
+        # this address. What a second lookup would cost is one wasted call
+        # against a rate-limited free tier, and a report stating the same
+        # attribution twice under two headings. NOT a doubled score --
+        # scoring.py emits a single flat W_THREATFOX signal however many
+        # targets hit, and says so in its own docstring.
         threatfox_task = (
             asyncio.create_task(
                 _cached(cache, indicator.value,

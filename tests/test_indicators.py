@@ -175,11 +175,26 @@ def test_looks_like_hash_is_still_exported_here():
 
 # --- the ReDoS regression Phase 3 closed twice ---------------------------
 
+# Explicit ids: pytest builds a case id out of the parameter value, so a
+# 10,000-space input becomes a 10,000-character test name -- and a failure
+# summary that is mostly whitespace.
 @pytest.mark.parametrize("raw", [
-    "1" + ".1" * 5000,          # the dotted chain that made _DOMAIN_RE quadratic
-    "a" * 10000,
-    "a." * 5000,
-    "hxxp://" + "a[.]" * 2500,
+    pytest.param("1" + ".1" * 5000, id="dotted-chain"),   # made DOMAIN_RE quadratic
+    pytest.param("a" * 10000, id="one-long-token"),
+    pytest.param("a." * 5000, id="many-short-labels"),
+    pytest.param("hxxp://" + "a[.]" * 2500, id="many-defanged-dots"),
+    # Whitespace runs, which is what refang()'s own rules backtrack over:
+    # five of the six begin with a whitespace quantifier, so a long run of
+    # spaces is consumed and given back one character at a time from every
+    # starting position. Measured before this was bounded: 10,000 spaces
+    # took 3.19s, 20,000 took 12.77s -- clean 4x per 2x. None of the four
+    # inputs above contains a single space, so the guard was green while
+    # asserting nothing about the rules most able to blow up.
+    pytest.param("a" + " " * 10000 + "b", id="spaces-between-tokens"),
+    pytest.param("a" + "\t" * 10000 + "b", id="tabs-between-tokens"),
+    pytest.param(" " * 10000, id="nothing-but-spaces"),
+    pytest.param(("[" + " " * 200 + "." + " " * 200 + "]") * 30,
+                 id="padded-defanged-dots"),
 ])
 def test_a_ten_thousand_character_input_classifies_promptly(raw):
     """efd7c49 and 97c22d1 closed two ReDoS findings in static/strings.py.
@@ -189,3 +204,41 @@ def test_a_ten_thousand_character_input_classifies_promptly(raw):
     start = time.perf_counter()
     classify(raw)
     assert time.perf_counter() - start < 0.1
+
+
+# --- a mistyped path is not a domain ----------------------------------------
+
+@pytest.mark.parametrize("raw", [
+    "missing.pdf", "sample.docx", "report.xlsx", "payload.elf", "a.rar",
+    "dropper.lnk", "capture.pcap", "installer.msi", "kernel32.dll",
+    "readme.txt", "core.dmp", "phish.eml",
+])
+def test_a_mistyped_file_path_is_not_answered_with_a_domain_lookup(raw):
+    """`hash-searcher missing.pdf` from the wrong directory ran RDAP and
+    crt.sh against a domain named "missing.pdf". A wrong answer wearing a
+    confident face is worse than the "this file doesn't exist" message the
+    tool has printed since Phase 0 -- which is what classify returning None
+    lets resolve_indicator fall through to."""
+    assert classify(raw) is None
+
+
+@pytest.mark.parametrize("raw", [
+    "evil.md", "c2.py", "panel.sh", "beacon.js", "host.io", "evil.com",
+])
+def test_an_extension_that_is_also_a_live_tld_stays_a_domain(raw):
+    """The other side of the same trade. .md is Moldova, .py Paraguay, .sh
+    St. Helena, .js Jersey -- dropping a real domain to catch a typo is the
+    worse error, so these keep the domain reading."""
+    assert classify(raw) == Indicator("domain", raw)
+
+
+def test_no_filename_extension_is_secretly_a_live_tld():
+    """Membership in FILENAME_EXTENSIONS is decided by "not a live TLD",
+    and .zip/.mov are the two documented exceptions to that rule. A future
+    addition that breaks it silently drops a whole TLD's domains."""
+    from hash_searcher.indicators import FILENAME_EXTENSIONS
+
+    live_tlds = {"md", "py", "sh", "js", "io", "com", "zip", "mov", "app",
+                 "dev", "so", "ai", "co", "me", "tv", "cc", "ly", "gg"}
+    documented_exceptions = {"zip", "mov"}
+    assert (FILENAME_EXTENSIONS & live_tlds) == documented_exceptions

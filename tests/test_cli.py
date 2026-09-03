@@ -10,9 +10,23 @@ from hash_searcher.cli import (
 from hash_searcher.indicators import Indicator
 
 
-def test_positional_indicator_is_required():
+def test_an_indicator_or_an_input_file_is_required():
+    """The positional is nargs="?" so --input-file can stand in for it, so
+    argparse alone no longer enforces this -- parse_args does."""
+    from hash_searcher.cli import parse_args
+
     with pytest.raises(SystemExit):
-        build_parser().parse_args([])
+        parse_args([])
+
+
+def test_an_input_file_alone_needs_no_positional():
+    """The form the README documents: `hash-searcher --input-file iocs.txt`.
+    It exited 2 with "the following arguments are required: indicator"."""
+    from hash_searcher.cli import parse_args
+
+    args = parse_args(["--input-file", "iocs.txt"])
+    assert args.indicator is None
+    assert args.input_file == "iocs.txt"
 
 
 def test_output_flag_is_optional():
@@ -719,3 +733,30 @@ async def test_the_report_carries_the_indicator_that_was_looked_up(monkeypatch):
     await run_cli(["evil.example", "--no-cache"])
     assert [r.indicator for r in rendered] == ["evil.example"]
     assert rendered[0].source_file == "evil.example"
+
+
+async def test_a_missing_input_file_prints_a_message_not_a_traceback(
+        monkeypatch, capsys):
+    """The same defect analyze_one's FileNotFoundError catch exists for.
+    --input-file opened a second door to it."""
+    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+
+    exit_code = await run_cli(["--input-file", "/nonexistent/iocs.txt"])
+
+    out = capsys.readouterr().out
+    assert exit_code == EXIT_NO_DATA
+    assert "/nonexistent/iocs.txt" in out
+    assert "Traceback" not in out
+
+
+async def test_an_input_file_is_read_as_utf8_whatever_the_locale_is(
+        monkeypatch, tmp_path):
+    """An IOC list is not local text. Reading it in the locale's encoding
+    makes a punycode-free domain list fail on a non-UTF-8 machine only."""
+    listing = tmp_path / "iocs.txt"
+    listing.write_bytes("# ünicode comment\n198.51.100.10\n".encode("utf-8"))
+
+    from hash_searcher.cli import batch_lines, parse_args
+
+    args = parse_args(["--input-file", str(listing)])
+    assert batch_lines(args) == ["198.51.100.10"]
