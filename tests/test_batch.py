@@ -392,3 +392,97 @@ async def test_a_csv_batch_asks_analyze_one_for_rows_not_a_file(
     (_, output, rows) = seen[0]
     assert output is None          # analyze_one writes no file of its own
     assert rows is not None        # it accumulates instead
+
+
+async def test_an_interrupted_batch_keeps_the_rows_it_finished(monkeypatch, tmp_path):
+    """Ctrl-C on line 3 of a long list must not discard lines 1 and 2.
+
+    This is the module's own rule -- "a 100-line run that dies on line 3 has
+    already paid for three lookups" -- and aggregation is what put it at
+    risk: the per-indicator files were on disk the moment each run ended,
+    whereas one table is written once, at the end. A KeyboardInterrupt is a
+    BaseException, so it walks straight past `except Exception`; the write
+    has to be in the `finally` or it does not happen at all.
+    """
+    from hash_searcher.models import OTXReport, Report, Verdict, VTReport
+
+    seen = []
+
+    async def interrupt_on_third(user_input, args, cache=None, output=None,
+                                 budget=None, rows=None):
+        seen.append(user_input)
+        if len(seen) == 3:
+            raise KeyboardInterrupt("user hit ctrl-c")
+        rows.append((
+            Report(indicator=user_input, generated_at="2026-09-03 12:00:00",
+                   vt=VTReport(found=False),
+                   otx=OTXReport(recorded_instances="N/A"),
+                   ips={}, hosts=[], whois=[]),
+            Verdict(level="CLEAN", score=0),
+        ))
+        return EXIT_CLEAN
+
+    monkeypatch.setattr("hash_searcher.batch.analyze_one", interrupt_on_third)
+    monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\nd\n"))
+    out = tmp_path / "report.csv"
+
+    with pytest.raises(KeyboardInterrupt):
+        await run_cli(["-", "-o", str(out), "--no-cache"])
+
+    # The interrupt still reaches the caller -- it is not swallowed -- but
+    # the two lookups already paid for are on disk.
+    assert out.exists()
+    assert [r[0] for r in _read_csv(out)[1:]] == ["a", "b"]
+
+
+async def test_an_output_path_that_cannot_be_written_is_refused_up_front(
+        monkeypatch, tmp_path, capsys):
+    """The same rule the extension pre-flight follows one branch above: a
+    batch must not spend every rate-limited lookup and only then discover it
+    cannot write the file. Under per-indicator output the first indicator
+    failed and the user learned immediately; one table would not fail until
+    after the hundredth."""
+    seen = _csv_stub_analyze(monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\n"))
+
+    code = await run_cli(["-", "-o", str(tmp_path / "nope" / "report.csv"),
+                          "--no-cache"])
+
+    assert code == EXIT_NO_DATA
+    assert seen == []                       # nothing was looked up
+    assert "report.csv" in capsys.readouterr().out
+
+
+async def test_a_failing_final_write_does_not_become_a_traceback(
+        monkeypatch, tmp_path, capsys):
+    """A hundred good lookups must not exit as an unhandled OSError because
+    the directory went away mid-run. The loop already applies this rule to a
+    failing indicator; the write deserves it too."""
+    _csv_stub_analyze(monkeypatch)
+    monkeypatch.setattr("sys.stdin", io.StringIO("a\n"))
+
+    def explode(rows, path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("hash_searcher.batch.write_rendered_rows", explode)
+
+    code = await run_cli(["-", "-o", str(tmp_path / "report.csv"), "--no-cache"])
+
+    assert code == EXIT_NO_DATA
+    assert "disk full" in capsys.readouterr().out
+
+
+async def test_a_failure_row_names_the_line_in_the_same_column_a_success_does(
+        monkeypatch, tmp_path):
+    """Joining the table back to the input list has to work across both
+    kinds of row, and `source_file` is the column that always holds the
+    line -- `indicator` holds a resolved digest on the success side."""
+    _csv_stub_analyze(monkeypatch, failures={"evil.example"})
+    monkeypatch.setattr("sys.stdin", io.StringIO("evil.example\n"))
+    out = tmp_path / "report.csv"
+
+    await run_cli(["-", "-o", str(out), "--no-cache"])
+
+    header, body = _read_csv(out)[0], _read_csv(out)[1]
+    values = dict(zip(header, body))
+    assert values["source_file"] == "evil.example"

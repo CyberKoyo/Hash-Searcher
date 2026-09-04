@@ -13,7 +13,7 @@ from hash_searcher.models import (
     ThreatClass, ThreatFoxReport, Verdict, VTReport,
 )
 from hash_searcher.render.csv_out import (
-    CSV_HEADER, failure_row, row, write_csv, write_row_values, write_rows,
+    CSV_HEADER, failure_row, row, write_csv, write_rendered_rows, write_rows,
 )
 
 
@@ -167,12 +167,12 @@ def test_a_source_nobody_asked_contributes_no_error():
 # --- a batch's aggregate table ----------------------------------------------
 
 
-def test_write_row_values_takes_already_rendered_rows(tmp_path):
+def test_write_rendered_rows_takes_already_rendered_rows(tmp_path):
     """The seam a batch needs: it accumulates rows across runs, and some of
     them (failed indicators) never had a Report to render from."""
     path = tmp_path / "report.csv"
 
-    write_row_values([row(_bare_report("abc123"), None),
+    write_rendered_rows([row(_bare_report("abc123"), None),
                       failure_row("evil.example", "run failed (boom)")],
                      str(path))
 
@@ -182,14 +182,14 @@ def test_write_row_values_takes_already_rendered_rows(tmp_path):
     assert [r[0] for r in rows[1:]] == ["abc123", "evil.example"]
 
 
-def test_write_rows_and_write_row_values_agree(tmp_path):
+def test_write_rows_and_write_rendered_rows_agree(tmp_path):
     """One writer, not two. write_rows renders and delegates; if it ever
     grew its own copy of the header-and-loop these two would drift."""
     first, second = tmp_path / "a.csv", tmp_path / "b.csv"
     entries = [(_bare_report("abc123"), None), (_bare_report("x.example"), None)]
 
     write_rows(entries, str(first))
-    write_row_values([row(r, v) for r, v in entries], str(second))
+    write_rendered_rows([row(r, v) for r, v in entries], str(second))
 
     assert _read(first) == _read(second)
 
@@ -221,3 +221,25 @@ def test_a_failure_row_claims_no_verdict():
     assert values["score"] == ""
     assert values["vt_malicious"] == ""
     assert values["bazaar_family"] == ""
+
+
+def test_a_failure_row_carries_the_input_line_the_way_a_success_row_does():
+    """cli.py builds every Report with source_file=user_input, whatever the
+    indicator kind. A successful file lookup therefore reports the resolved
+    digest in `indicator` and the line in `source_file`; a failed one has no
+    digest and puts the line in `indicator`. Carrying it in both columns is
+    what lets a consumer join the table back to the list it fed in.
+    """
+    values = dict(zip(CSV_HEADER,
+                      failure_row("sample.zip", "boom", source_file="sample.zip")))
+
+    assert values["indicator"] == "sample.zip"
+    assert values["source_file"] == "sample.zip"
+
+
+def test_a_failure_row_omits_the_source_file_when_none_was_given():
+    """The parameter defaults to empty rather than to the indicator: a
+    caller that has no line to attribute must not have one invented."""
+    values = dict(zip(CSV_HEADER, failure_row("198.51.100.10", "boom")))
+
+    assert values["source_file"] == ""

@@ -832,3 +832,62 @@ async def test_an_input_file_is_read_as_utf8_whatever_the_locale_is(
 
     args = parse_args(["--input-file", str(listing)])
     assert batch_lines(args) == ["198.51.100.10"]
+
+
+async def test_rows_wins_over_output_so_a_batch_owns_the_single_write(
+        monkeypatch, tmp_path):
+    """analyze_one falls back to `args.output` when its caller passes none,
+    which is what makes a single run work -- so an aggregating batch passing
+    `output=None` does NOT actually clear it. The pair being appended and no
+    file appearing at that path is the property that matters, and asserting
+    it at run_batch's call site cannot see this: the fallback happens
+    inside analyze_one, after the argument is read.
+
+    Reordering deliver()'s two branches used to leave the whole suite green
+    while every indicator overwrote the aggregate path mid-run.
+    """
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {})
+    out = tmp_path / "report.csv"
+    args = build_parser().parse_args(["deadbeef", "-o", str(out), "--no-cache"])
+    rows = []
+
+    from hash_searcher.cli import analyze_one
+    await analyze_one("deadbeef", args, rows=rows)
+
+    assert len(rows) == 1                 # the pair was collected
+    assert not out.exists()               # and no file was written
+
+
+async def test_collecting_rows_clears_the_output_path_rather_than_outranking_it(
+        monkeypatch, tmp_path):
+    """The invariant itself, not just today's visible consequence of it.
+
+    `deliver` checks `rows` before `output`, so the assertions above hold
+    even when both are live -- which means they cannot tell "the batch's
+    path was cleared" from "it survived and deliver happened to prefer
+    rows". Those are one reordering apart from writing the aggregate file
+    once per indicator, underneath the batch's own final write, and neither
+    mutation alone reddens anything.
+
+    So this pins the contract at the seam: given `rows`, analyze_one hands
+    deliver no path at all, and anything later added here that keys off
+    `output` cannot come to believe it owns the file the batch will write.
+    """
+    _stub_entry(monkeypatch)
+    _stub_data_puller(monkeypatch, {})
+    seen = {}
+
+    import hash_searcher.cli as cli
+
+    def spy(report, verdict, output, rows):
+        seen["output"], seen["rows"] = output, rows
+
+    monkeypatch.setattr(cli, "deliver", spy)
+    args = build_parser().parse_args(
+        ["deadbeef", "-o", str(tmp_path / "report.csv"), "--no-cache"])
+
+    await cli.analyze_one("deadbeef", args, rows=[])
+
+    assert seen["output"] is None
+    assert seen["rows"] == []

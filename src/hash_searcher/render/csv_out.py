@@ -132,7 +132,8 @@ def row(report: Report, verdict: Verdict | None = None) -> list[str]:
     ]
 
 
-def failure_row(indicator: str, reason: str) -> list[str]:
+def failure_row(indicator: str, reason: str,
+                source_file: str = "") -> list[str]:
     """A row for an indicator that never produced a Report at all.
 
     A batch line can die before there is anything to render: an unreadable
@@ -146,15 +147,24 @@ def failure_row(indicator: str, reason: str) -> list[str]:
     so a column appended to the header cannot leave this row one field
     short -- which would shift every column after it, on this line only.
 
+    `source_file` carries the input line, so both kinds of row identify it
+    the same way. A successful file lookup reports the resolved digest in
+    `indicator` and the line in `source_file` -- cli.py sets that for every
+    indicator kind, not only for paths -- while a failed one has no digest
+    to report and puts the line in `indicator` instead. Without this the
+    two rows name the same input by different columns, and a consumer
+    joining the table back to the list it fed in matches neither.
+
     Every other column stays empty, `verdict` above all: a row that could
     not be analyzed must not read as one that was analyzed and found
     nothing. That is the same rule `_errors` exists for, one level up.
     """
-    known = {"indicator": indicator, "errors": reason}
+    known = {"indicator": indicator, "errors": reason,
+             "source_file": source_file}
     return [_text(known.get(name, "")) for name in CSV_HEADER]
 
 
-def write_row_values(rows, path: str) -> str:
+def write_rendered_rows(rows, path: str) -> str:
     """A header and the rows given, already rendered.
 
     The seam a batch writes through: it accumulates rows across runs, and
@@ -178,7 +188,7 @@ def write_rows(entries, path: str) -> str:
     copy of the header-and-loop is how the two writers would drift, and
     the header is the one thing in this module that consumers pin.
     """
-    return write_row_values(
+    return write_rendered_rows(
         [row(report, verdict) for report, verdict in entries], path)
 
 

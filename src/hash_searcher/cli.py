@@ -275,11 +275,18 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
     - `rows`, for a batch writing ONE table rather than a file per
       indicator. Given a list, this appends its `(report, verdict)` pair to
       it and writes no file of its own; the batch owns the single write.
-      Mutually exclusive with `output` by construction -- run_batch passes
-      one or the other, never both, because two writers aiming at one path
-      would race for it.
+      It takes precedence over `output`, and the line below is what makes
+      that true rather than merely documented -- see the comment there.
     """
-    output = output or args.output
+    # `rows` and `output` are alternatives, and this is the line that makes
+    # that so. run_batch passes output=None when it is accumulating a
+    # table, but the fallback to args.output would immediately resurrect
+    # the aggregate path it deliberately withheld -- leaving both
+    # destinations live, and the whole thing resting on deliver() testing
+    # `rows` first. Anything added here that keys off `output` (a "wrote
+    # report to X" line, a writability check) would then believe it owns a
+    # path the batch is going to write itself.
+    output = None if rows is not None else (output or args.output)
 
     # Static analysis runs before any network call and before check_env() --
     # both above the point that used to bail early. A sample nobody has ever

@@ -131,7 +131,16 @@ what its format can actually express. A line that fails before it produces a
 report still gets a row, carrying the reason in the `errors` column and no
 verdict at all, so the table's row count always matches the list's; a table
 that silently dropped the indicators that failed would read as an all-clear
-for something nobody checked.
+for something nobody checked. **An interrupted batch keeps the rows it
+finished** — Ctrl-C on line 40 of 100 leaves a table of the 39 lookups you
+already paid for. If the path cannot be written, you are told before the
+first lookup rather than after the last, and a write that fails anyway exits
+non-zero rather than reporting a clean run against a file that is not there.
+
+One caveat the table inherits: a ZIP holding several files contributes one
+row, for the first file, because that is what a single run analyzes. The
+others are named on the console as `not analyzed` and appear nowhere in the
+CSV.
 
 The exit code is the **most severe** of the runs, not the last: a batch that
 found one malicious sample exits `2` even if everything after it was clean.
