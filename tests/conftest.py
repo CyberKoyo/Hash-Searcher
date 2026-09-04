@@ -67,6 +67,26 @@ def block_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo)
 
 
+@pytest.fixture(autouse=True)
+def isolated_cache_dir(tmp_path, monkeypatch):
+    """No test may touch the developer's real cache directory.
+
+    ResponseCache has always defaulted to $XDG_CACHE_HOME/hash-searcher, and
+    any test running analyze_one without --no-cache quietly created a
+    responses.db there. RateBudget makes that worse in a way --no-cache no
+    longer avoids: the budget deliberately ignores that flag, so a cli test
+    can now WRITE rows into the real database and spend quota the developer
+    has not spent.
+
+    Redirecting the root rather than stubbing either class keeps this true
+    for whatever next puts a file in the cache dir. A test that wants a
+    specific path still passes one, and test_cache_path_lands_under_xdg_
+    cache_home sets XDG_CACHE_HOME itself -- monkeypatch.setenv in a test
+    body lands after this fixture, so it wins.
+    """
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+
 @pytest.fixture
 def fixture_json():
     """Load a recorded provider response from tests/fixtures/<name>.json."""

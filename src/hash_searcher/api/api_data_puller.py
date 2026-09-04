@@ -1,7 +1,13 @@
 import os
 import asyncio
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    # Deferred purely to keep the runtime import graph flat; there is no
+    # cycle here (budget -> cache -> api.base_call, which imports neither).
+    from ..budget import RateBudget
 
 from ..analysis.censys import extract_hosts
 from ..analysis.crtsh import merge_crtsh
@@ -147,7 +153,8 @@ VT_HASH_ONLY = "VirusTotal answers for file hashes only"
 VT_DISPLAY = "VirusTotal"
 
 
-async def _budgeted(budget, provider: str, display: str, fetch):
+async def _budgeted(budget: "RateBudget | None", provider: str, display: str,
+                    fetch):
     """`fetch()`, unless `provider` has no rate budget left.
 
     Wrapped around the fetch _cached calls, not around _cached itself, and
@@ -166,9 +173,19 @@ async def _budgeted(budget, provider: str, display: str, fetch):
     if budget is None:
         return await fetch()
     if not budget.allows(provider):
-        return make_error(
-            f"{display} rate budget exhausted; retry in "
-            f"{budget.wait_seconds(provider):.0f}s")
+        wait = budget.wait_seconds(provider)
+        # Said out loud, not left to the renderers. The TTY only mentions an
+        # unavailable VirusTotal when the verdict came out UNKNOWN -- so a
+        # sample MalwareBazaar calls malicious would render a VT section
+        # indistinguishable from "VT had nothing", with no sign the tool
+        # declined to ask. That was tolerable while a VT failure meant an
+        # outage; a locally refused call is routine, self-inflicted, and
+        # reached by design on the sixth line of a batch. It is also the
+        # only place --ignore-budget becomes discoverable.
+        print(f"Skipping {display}: rate budget exhausted, retry in "
+              f"{wait:.0f}s (--ignore-budget overrides this).")
+        return make_error(f"{display} rate budget exhausted; "
+                          f"retry in {wait:.0f}s")
     # Recorded before the call rather than after: the request is about to
     # leave whatever comes back, and a 404 counts against the quota exactly
     # as a hit does. Recording afterwards would also lose the call entirely
@@ -471,7 +488,7 @@ async def _pivot_domains(client, cache, pool, domain_sources, seeded,
 async def data_puller(indicator: Indicator, cache,
                       extra_ips: list[str] | None = None,
                       pivot_depth: int = 0,
-                      budget=None):
+                      budget: "RateBudget | None" = None):
     """Every source that can answer for `indicator`, fanned out once.
 
     The entry is keyed by the indicator's kind rather than assuming a hash
@@ -562,11 +579,17 @@ async def data_puller(indicator: Indicator, cache,
             # address there has ever been.
             vt_data, vt_ips = make_error(VT_HASH_ONLY), []
         elif "virustotal" in hash_sources:
+            # Resolved once, and the budget counts against that entry's own
+            # name rather than a second literal beside it -- _cached's
+            # docstring argues at length that writing a provider's name out
+            # again at the call site is the duplication that let the
+            # registry-vs-pool disagreement exist in the first place.
+            vt_provider = by_name("virustotal", pool)
             vt_data = await _cached(
                 cache, indicator.value,
-                lambda: _budgeted(budget, "virustotal", VT_DISPLAY,
+                lambda: _budgeted(budget, vt_provider.name, VT_DISPLAY,
                                   lambda: get_vt(client, indicator.value)),
-                provider=by_name("virustotal", pool)
+                provider=vt_provider
             )
             vt_ips = contacted_ips(vt_data)
         else:

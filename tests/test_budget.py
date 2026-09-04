@@ -170,7 +170,101 @@ def test_a_zero_limit_refuses_everything(tmp_path):
     calls first, and a real setting for a key with no quota left."""
     budget = _budget(tmp_path, per_minute=0)
     assert budget.allows(VT) is False
+    # It never frees up, so there is no honest "retry in" number. The full
+    # window is the chosen lie, and it is pinned here rather than left to
+    # whatever the arithmetic happens to produce -- an unpinned zero limit
+    # is how this would come back as an IndexError on an empty table.
+    assert budget.wait_seconds(VT) == MINUTE_WINDOW
     budget.close()
+
+
+def test_more_calls_than_the_limit_still_report_the_right_wait(tmp_path):
+    """Two processes can both pass allows() before either records, so the
+    table can legitimately hold more calls in a window than the limit
+    allows. wait_seconds must still answer from the call that has to leave
+    -- which is no longer the newest one."""
+    clock = _Clock()
+    budget = _budget(tmp_path, clock=clock, per_minute=4)
+    # Six calls, one second apart, recorded past the point allows() would
+    # have stopped -- exactly what a race produces.
+    for _ in range(6):
+        budget.record(VT)
+        clock.advance(1)
+
+    # now = t0 + 6. Six present, four allowed: three must expire, the last
+    # of those recorded at t0 + 2, which leaves the window at t0 + 62.
+    assert budget.allows(VT) is False
+    assert budget.wait_seconds(VT) == pytest.approx(56.0)
+    budget.close()
+
+
+# --- degrading at runtime, not just at open ---------------------------------
+
+
+def test_a_database_that_breaks_after_opening_degrades(tmp_path, capsys):
+    """open_db only covers the open. A read-only file passes CREATE TABLE IF
+    NOT EXISTS -- it needs no write against a table that already exists --
+    and raises on the first INSERT. Uncaught, that was a traceback for a
+    single run and, through run_batch's per-indicator handler, EXIT_NO_DATA
+    on every line of a batch: a locked database turning into "nothing could
+    be looked up", which is the outcome failing open exists to prevent."""
+    path = tmp_path / "budget.db"
+    RateBudget(path).close()          # create the table while we still can
+    path.chmod(0o444)
+    try:
+        budget = RateBudget(path)
+        assert budget._conn is not None   # it really did open
+        budget.record(VT)                 # must not raise
+        assert budget.allows(VT) is True  # and must fail open afterwards
+        assert budget.wait_seconds(VT) == 0.0
+        budget.close()
+    finally:
+        path.chmod(0o644)
+
+    out = capsys.readouterr().out
+    assert "rate budget" in out.lower()
+    assert "readonly" in out.lower() or "read-only" in out.lower()
+
+
+def test_the_degradation_warning_is_printed_once(tmp_path, capsys):
+    """_degrade drops the connection, so every later call takes the
+    already-degraded branch rather than re-raising and re-printing. A
+    warning per lookup would bury the report it is warning about."""
+    path = tmp_path / "budget.db"
+    RateBudget(path).close()
+    path.chmod(0o444)
+    try:
+        budget = RateBudget(path)
+        for _ in range(5):
+            budget.record(VT)
+        budget.close()
+    finally:
+        path.chmod(0o644)
+
+    assert capsys.readouterr().out.lower().count("rate budget stopped") == 1
+
+
+def test_using_a_closed_budget_raises_rather_than_reading_as_unlimited(tmp_path):
+    """close() and "the database failed" both leave _conn None, and they
+    must not answer alike: a caller that kept a reference past the finally
+    which closed it would otherwise get an unlimited budget, silently."""
+    budget = _budget(tmp_path)
+    budget.close()
+
+    with pytest.raises(RuntimeError, match="closed"):
+        budget.allows(VT)
+    with pytest.raises(RuntimeError, match="closed"):
+        budget.record(VT)
+    with pytest.raises(RuntimeError, match="closed"):
+        budget.wait_seconds(VT)
+
+
+def test_close_is_idempotent(tmp_path):
+    """It runs in finally blocks, including ones that are already unwinding
+    an exception. Raising there would replace the real failure."""
+    budget = _budget(tmp_path)
+    budget.close()
+    budget.close()  # must not raise
 
 
 def test_a_negative_limit_is_rejected_at_construction(tmp_path):
@@ -274,6 +368,77 @@ async def test_no_cache_does_not_disable_the_budget(monkeypatch, tmp_path):
     assert is_error(raw["vt"])
     assert "rate budget exhausted" in error_message(raw["vt"])
     budget.close()
+
+
+async def test_an_exhausted_budget_stops_virustotal_and_nothing_else(
+        monkeypatch, tmp_path):
+    """"Wire in at the VT call site only." Every other source is keyless or
+    on a limit this does not model, and a budget that quietly gated them
+    would turn one exhausted VirusTotal quota into a run that reports
+    nothing at all -- which is the failure mode Task A1 exists to prevent."""
+    real_vt, real_otx = by_name(VT), by_name("otx")
+    monkeypatch.setattr(
+        "hash_searcher.api.api_data_puller.available",
+        lambda: [Provider(name=VT, key_env=None,
+                          indicator_types=real_vt.indicator_types, fetch=None,
+                          cache_ttl=42, serial_delay=0.0),
+                 Provider(name="otx", key_env=None,
+                          indicator_types=real_otx.indicator_types, fetch=None,
+                          cache_ttl=42, serial_delay=0.0)],
+    )
+    vt_stub = _Recorder(FAKE_VT_DATA)
+    otx_stub = _Recorder({"pulse_info": {"count": 3}})
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+
+    budget = _budget(tmp_path, per_minute=0)
+    raw = await data_puller(Indicator("hash", "deadbeef"),
+                            ResponseCache(enabled=False), budget=budget)
+
+    assert vt_stub.calls == []                       # VT refused
+    assert len(otx_stub.calls) == 1                  # OTX untouched
+    assert raw["otx"] == {"pulse_info": {"count": 3}}
+    budget.close()
+
+
+async def test_the_refusal_is_announced_when_it_happens(monkeypatch, tmp_path,
+                                                        capsys):
+    """The TTY only mentions an unavailable VirusTotal when the verdict came
+    out UNKNOWN, so a sample MalwareBazaar calls malicious would render a VT
+    section indistinguishable from "VT had nothing". Say it at the point of
+    refusal instead, where it is true regardless of the verdict -- and name
+    the flag that turns it off."""
+    _only_virustotal(monkeypatch)
+    budget = _budget(tmp_path, per_minute=0)
+
+    await data_puller(Indicator("hash", "deadbeef"),
+                      ResponseCache(enabled=False), budget=budget)
+
+    out = capsys.readouterr().out
+    assert "Skipping VirusTotal" in out
+    assert "rate budget exhausted" in out
+    assert "--ignore-budget" in out
+    budget.close()
+
+
+async def test_a_refresh_forced_miss_still_charges(monkeypatch, tmp_path):
+    """--refresh ignores a hit and calls anyway. That call is as real as any
+    other, so it must be counted -- a cache hit costs nothing because it
+    made no request, not because a cached value exists."""
+    vt_stub = _only_virustotal(monkeypatch)
+    cache = ResponseCache(tmp_path / "responses.db")
+    cache.put(VT, "deadbeef", FAKE_VT_DATA)
+    cache.close()
+
+    fresh = ResponseCache(tmp_path / "responses.db", refresh=True)
+    budget = _budget(tmp_path, per_minute=1)
+
+    await data_puller(Indicator("hash", "deadbeef"), fresh, budget=budget)
+
+    assert len(vt_stub.calls) == 1        # the hit was ignored
+    assert budget.allows(VT) is False     # and the real call was charged
+    budget.close()
+    fresh.close()
 
 
 async def test_no_budget_at_all_calls_virustotal(monkeypatch, tmp_path):
@@ -457,6 +622,29 @@ def test_the_readme_states_the_limits_it_enforces():
     assert "--ignore-budget" in readme
     assert f"{VT_PER_MINUTE} requests/minute" in readme
     assert f"{VT_PER_DAY}/day" in readme
+
+
+async def test_the_shared_budget_is_closed_even_when_a_run_raises(monkeypatch):
+    """The sqlite handle the batch opened must not outlive it, and a run
+    that blows up mid-list is exactly when a finally gets forgotten. The
+    cache already had this guard; the budget is a second handle on the same
+    file and needs its own."""
+    import io
+
+    from hash_searcher.cli import run_cli
+
+    seen = _stub_cli(monkeypatch)
+
+    async def boom(user_input, args, cache=None, output=None, budget=None):
+        raise RuntimeError("provider blew up")
+
+    monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)
+    monkeypatch.setattr("sys.stdin", io.StringIO("a\n"))
+
+    await run_cli(["-", "--no-cache"])
+
+    assert len(seen["opened"]) == 1
+    assert seen["opened"][0].closed is True
 
 
 async def test_a_batch_with_ignore_budget_opens_none(monkeypatch):
