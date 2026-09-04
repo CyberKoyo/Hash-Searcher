@@ -10,12 +10,12 @@ import sqlite3
 
 import pytest
 
-from hash_searcher.api.api_data_puller import data_puller
-from hash_searcher.api.base_call import error_message, is_error
-from hash_searcher.api.registry import Provider, by_name
-from hash_searcher.budget import DAY_WINDOW, MINUTE_WINDOW, RateBudget
-from hash_searcher.cache import ResponseCache
-from hash_searcher.indicators import Indicator
+from ioc_inquest.api.api_data_puller import data_puller
+from ioc_inquest.api.base_call import error_message, is_error
+from ioc_inquest.api.registry import Provider, by_name
+from ioc_inquest.budget import DAY_WINDOW, MINUTE_WINDOW, RateBudget
+from ioc_inquest.cache import ResponseCache
+from ioc_inquest.indicators import Indicator
 
 VT = "virustotal"
 
@@ -109,7 +109,7 @@ def test_the_daily_ceiling_refuses_even_with_the_minute_window_clear(tmp_path):
 def test_the_daily_counter_survives_a_process_restart(tmp_path):
     """The whole reason this is a table and not an attribute. Written,
     closed, and reopened at the same path -- which is what a second
-    `hash-searcher` invocation is."""
+    `ioc-inquest` invocation is."""
     clock = _Clock()
     first = RateBudget(tmp_path / "budget.db", per_day=4, clock=clock)
     _spend(first, VT, 4)
@@ -315,13 +315,13 @@ class _Recorder:
 def _only_virustotal(monkeypatch) -> _Recorder:
     real = by_name(VT)
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [Provider(name=VT, key_env=None,
                           indicator_types=real.indicator_types, fetch=None,
                           cache_ttl=42, serial_delay=0.0)],
     )
     vt_stub = _Recorder(FAKE_VT_DATA)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
     return vt_stub
 
 
@@ -378,7 +378,7 @@ async def test_an_exhausted_budget_stops_virustotal_and_nothing_else(
     nothing at all -- which is the failure mode Task A1 exists to prevent."""
     real_vt, real_otx = by_name(VT), by_name("otx")
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [Provider(name=VT, key_env=None,
                           indicator_types=real_vt.indicator_types, fetch=None,
                           cache_ttl=42, serial_delay=0.0),
@@ -388,8 +388,8 @@ async def test_an_exhausted_budget_stops_virustotal_and_nothing_else(
     )
     vt_stub = _Recorder(FAKE_VT_DATA)
     otx_stub = _Recorder({"pulse_info": {"count": 3}})
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", otx_stub)
 
     budget = _budget(tmp_path, per_minute=0)
     raw = await data_puller(Indicator("hash", "deadbeef"),
@@ -487,8 +487,8 @@ def test_an_exhausted_budget_reads_as_unavailable_not_as_no_record():
     """The distinction Task A3 built, and the reason Part D depends on Part
     A. "We could not ask" must never render as "VirusTotal has no record" --
     the second is a claim about the sample, and this is a claim about us."""
-    from hash_searcher.analysis.vt import extract_vt
-    from hash_searcher.api.base_call import make_error
+    from ioc_inquest.analysis.vt import extract_vt
+    from ioc_inquest.api.base_call import make_error
 
     report = extract_vt(make_error("VirusTotal rate budget exhausted; "
                                    "retry in 40s"))
@@ -520,13 +520,13 @@ class _FakeBudget:
 def _stub_cli(monkeypatch) -> dict:
     """Bypass key reading and hash resolution, and record what data_puller
     was handed. Same pattern as tests/test_cli.py's _stub_entry."""
-    from hash_searcher.indicators import Indicator
+    from ioc_inquest.indicators import Indicator
 
     seen = {"budgets": [], "opened": []}
 
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     monkeypatch.setattr(
-        "hash_searcher.cli.resolve_indicator",
+        "ioc_inquest.cli.resolve_indicator",
         lambda indicator, password: [Indicator("hash", "deadbeef")],
     )
 
@@ -535,19 +535,19 @@ def _stub_cli(monkeypatch) -> dict:
         seen["budgets"].append(budget)
         return EMPTY_RAW
 
-    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", fake_puller)
 
     def fake_budget(*args, **kwargs):
         seen["opened"].append(_FakeBudget())
         return seen["opened"][-1]
 
-    monkeypatch.setattr("hash_searcher.cli.RateBudget", fake_budget)
-    monkeypatch.setattr("hash_searcher.batch.RateBudget", fake_budget)
+    monkeypatch.setattr("ioc_inquest.cli.RateBudget", fake_budget)
+    monkeypatch.setattr("ioc_inquest.batch.RateBudget", fake_budget)
     return seen
 
 
 def test_the_ignore_budget_flag_defaults_to_off():
-    from hash_searcher.cli import build_parser
+    from ioc_inquest.cli import build_parser
 
     parser = build_parser()
     assert parser.parse_args(["abc"]).ignore_budget is False
@@ -555,7 +555,7 @@ def test_the_ignore_budget_flag_defaults_to_off():
 
 
 async def test_a_plain_run_opens_a_budget_and_closes_it(monkeypatch):
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
     await run_cli(["deadbeef", "--no-cache"])
@@ -569,7 +569,7 @@ async def test_no_cache_still_hands_data_puller_a_budget(monkeypatch):
     """The flag combination Part D's own step 1 calls out: bypassing the
     cache makes every lookup a real request, so it must not also bypass the
     thing counting them."""
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
     await run_cli(["deadbeef", "--no-cache"])
@@ -580,7 +580,7 @@ async def test_no_cache_still_hands_data_puller_a_budget(monkeypatch):
 async def test_ignore_budget_enforces_nothing(monkeypatch):
     """For a paid key, which is not bound by the free tier's four a
     minute."""
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
     await run_cli(["deadbeef", "--no-cache", "--ignore-budget"])
@@ -595,7 +595,7 @@ async def test_a_batch_shares_one_budget_across_every_indicator(monkeypatch):
     one minute -- exactly what a four-a-minute ceiling forbids."""
     import io
 
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\n"))
@@ -616,7 +616,7 @@ def test_the_readme_states_the_limits_it_enforces():
     here, so changing one reddens this."""
     from pathlib import Path
 
-    from hash_searcher.budget import VT_PER_DAY, VT_PER_MINUTE
+    from ioc_inquest.budget import VT_PER_DAY, VT_PER_MINUTE
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     assert "--ignore-budget" in readme
@@ -631,7 +631,7 @@ async def test_the_shared_budget_is_closed_even_when_a_run_raises(monkeypatch):
     file and needs its own."""
     import io
 
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
 
@@ -639,7 +639,7 @@ async def test_the_shared_budget_is_closed_even_when_a_run_raises(monkeypatch):
                    rows=None):
         raise RuntimeError("provider blew up")
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", boom)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\n"))
 
     await run_cli(["-", "--no-cache"])
@@ -651,7 +651,7 @@ async def test_the_shared_budget_is_closed_even_when_a_run_raises(monkeypatch):
 async def test_a_batch_with_ignore_budget_opens_none(monkeypatch):
     import io
 
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = _stub_cli(monkeypatch)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\n"))

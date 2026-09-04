@@ -42,7 +42,7 @@ SCO_NAMESPACE = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 #: UUIDv5 of the project URL under the DNS namespace: stable forever,
 #: derived rather than invented, and distinct from any other producer's.
 TOOL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS,
-                            "hash-searcher.github.io/CyberKoyo")
+                            "ioc-inquest.github.io/CyberKoyo")
 
 #: Hash digest length to the STIX hash algorithm name. The dict is the
 #: whole of the type detection: a 64-character indicator classified as a
@@ -183,7 +183,7 @@ def to_bundle(report: Report, verdict: Verdict | None = None) -> dict:
         }
         if verdict is not None:
             indicator["description"] = (f"{verdict.level} (score {verdict.score}) "
-                                        f"-- hash-searcher")
+                                        f"-- ioc-inquest")
         objects.append(indicator)
         if sample is not None:
             objects.append(_relationship("based-on", indicator["id"],

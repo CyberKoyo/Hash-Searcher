@@ -20,19 +20,19 @@ provider answered successfully.
 
 import copy
 
-from hash_searcher.analysis.attack import (
+from ioc_inquest.analysis.attack import (
     resolve, technique_ids_from_otx, technique_ids_from_vt)
-from hash_searcher.analysis.bazaar import extract_bazaar
-from hash_searcher.analysis.censys import extract_hosts
-from hash_searcher.analysis.crtsh import extract_crtsh, merge_crtsh
-from hash_searcher.analysis.greynoise import extract_greynoise
-from hash_searcher.analysis.ipdb import extract_ips
-from hash_searcher.analysis.kev import known_exploited
-from hash_searcher.analysis.otx import extract_otx
-from hash_searcher.analysis.shodan import extract_shodan
-from hash_searcher.analysis.threatfox import extract_threatfox
-from hash_searcher.analysis.vt import extract_vt
-from hash_searcher.analysis.whois import extract_whois
+from ioc_inquest.analysis.bazaar import extract_bazaar
+from ioc_inquest.analysis.censys import extract_hosts
+from ioc_inquest.analysis.crtsh import extract_crtsh, merge_crtsh
+from ioc_inquest.analysis.greynoise import extract_greynoise
+from ioc_inquest.analysis.ipdb import extract_ips
+from ioc_inquest.analysis.kev import known_exploited
+from ioc_inquest.analysis.otx import extract_otx
+from ioc_inquest.analysis.shodan import extract_shodan
+from ioc_inquest.analysis.threatfox import extract_threatfox
+from ioc_inquest.analysis.vt import extract_vt
+from ioc_inquest.analysis.whois import extract_whois
 
 #: One hostile value per JSON shape a provider can actually send, plus the
 #: three numeric edges. Every one of these was measured against HEAD before
@@ -292,7 +292,7 @@ def test_a_relationship_id_that_is_not_a_string_is_not_a_contacted_address():
     `list[str]` invariant would then have made it the string "123" -- a
     lookup against an address no provider named.
     """
-    from hash_searcher.analysis.vt import relationship_ids
+    from ioc_inquest.analysis.vt import relationship_ids
 
     def ids(entries):
         return relationship_ids(

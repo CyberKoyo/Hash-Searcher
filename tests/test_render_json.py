@@ -1,7 +1,7 @@
 import json
 
-from hash_searcher.models import WhoisRecord
-from hash_searcher.render.json_out import to_dict, write_json
+from ioc_inquest.models import WhoisRecord
+from ioc_inquest.render.json_out import to_dict, write_json
 
 
 def test_schema_keys_are_preserved(sample_report):
@@ -73,8 +73,8 @@ def test_write_json_round_trips(tmp_path, sample_report):
 
 def test_json_carries_the_verdict_and_its_signals(sample_report, tmp_path):
     import json
-    from hash_searcher.models import Signal, Verdict
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.models import Signal, Verdict
+    from ioc_inquest.render.json_out import write_json
 
     verdict = Verdict(level="MALICIOUS", score=50,
                       signals=[Signal("detection", 50, "48/72 engines flagged this file")])
@@ -93,7 +93,7 @@ def test_json_without_a_verdict_omits_the_key_entirely(sample_report, tmp_path):
     """Backward compatibility: a consumer of the Phase 1 schema must not
     start seeing a null it never had to handle."""
     import json
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.render.json_out import write_json
 
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
@@ -104,7 +104,7 @@ def test_json_keeps_every_phase_1_key(sample_report, tmp_path):
     """_censys_dict and _whois_dict exist to reproduce the pre-refactor
     shapes exactly. Adding keys must not perturb the ones already there."""
     import json
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.render.json_out import write_json
 
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
@@ -115,8 +115,8 @@ def test_json_keeps_every_phase_1_key(sample_report, tmp_path):
 
 def test_json_carries_the_new_vt_blocks(sample_report, tmp_path):
     import json
-    from hash_searcher.models import Detection, PEInfo, Signature, ThreatClass
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.models import Detection, PEInfo, Signature, ThreatClass
+    from ioc_inquest.render.json_out import write_json
 
     sample_report.vt.detection = Detection(malicious=48, suspicious=2, undetected=20, timeout=2)
     sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet",
@@ -143,7 +143,7 @@ def test_json_carries_the_new_vt_blocks(sample_report, tmp_path):
 
 
 def test_wrong_typed_vt_text_is_absent_instead_of_python_spelled(sample_report):
-    from hash_searcher.models import SandboxVerdict, ThreatClass
+    from ioc_inquest.models import SandboxVerdict, ThreatClass
 
     sample_report.vt.threat = ThreatClass(label=False)
     sample_report.vt.sandbox = [
@@ -159,7 +159,7 @@ def test_json_vt_blocks_vt_never_returned_are_null(sample_report, tmp_path):
     """A key that is present-but-null says 'VT had nothing here'. Omitting it
     would make a consumer guess whether the tool looked at all."""
     import json
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.render.json_out import write_json
 
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
@@ -176,9 +176,9 @@ def test_a_404_and_a_503_no_longer_serialize_identically(sample_report, tmp_path
     one consumer, a script branching on exit 3, this whole task exists to
     inform. `unavailable` is explicit on both -- `false` on the 404, not a
     missing key a consumer has to read meaning into."""
-    from hash_searcher.analysis.vt import extract_vt
-    from hash_searcher.api.base_call import make_error
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.analysis.vt import extract_vt
+    from ioc_inquest.api.base_call import make_error
+    from ioc_inquest.render.json_out import write_json
 
     sample_report.vt = extract_vt(make_error("Hash not found in GetTotal", 404))
     path_404 = tmp_path / "404.json"
@@ -214,8 +214,8 @@ def test_a_failed_censys_lookup_is_visible_in_the_json(sample_report, tmp_path):
     as a host with null org, null asn, and no ports -- indistinguishable from
     a real host Censys knew nothing about."""
     import json
-    from hash_searcher.models import CensysHost
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.models import CensysHost
+    from ioc_inquest.render.json_out import write_json
 
     sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
     path = tmp_path / "out.json"
@@ -232,7 +232,7 @@ def test_static_block_is_omitted_when_report_static_is_none(sample_report, tmp_p
     """Backward compatibility, the same rule Phase 2's verdict block
     established: a consumer of the pre-Phase-3 schema must not start seeing
     a new key -- null or otherwise -- it never had to handle."""
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.render.json_out import write_json
 
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
@@ -240,8 +240,8 @@ def test_static_block_is_omitted_when_report_static_is_none(sample_report, tmp_p
 
 
 def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
-    from hash_searcher.models import EntropyReport, StaticReport, YaraHit
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.models import EntropyReport, StaticReport, YaraHit
+    from ioc_inquest.render.json_out import write_json
 
     sample_report.static = StaticReport(
         path="/tmp/sample.exe", size=2048, sha256="a" * 64,
@@ -275,8 +275,8 @@ def test_static_block_carries_every_analyzer_field(sample_report, tmp_path):
 def test_static_pe_block_carries_the_section_entropy_note(sample_report, tmp_path):
     """branch-review.md I1: a silently truncated number is worse than a
     stated one -- the note must actually reach the JSON consumer."""
-    from hash_searcher.models import PEStaticReport, StaticReport
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.models import PEStaticReport, StaticReport
+    from ioc_inquest.render.json_out import write_json
 
     sample_report.static = StaticReport(
         path="/tmp/sample.exe", size=2048, sha256="a" * 64,
@@ -297,7 +297,7 @@ def test_static_pe_block_carries_the_section_entropy_note(sample_report, tmp_pat
 def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):
     """Phase 1 schema compatibility: the success shape is unchanged."""
     import json
-    from hash_searcher.render.json_out import write_json
+    from ioc_inquest.render.json_out import write_json
 
     path = tmp_path / "out.json"
     write_json(sample_report, str(path))
@@ -307,11 +307,11 @@ def test_a_successful_censys_host_has_no_error_key(sample_report, tmp_path):
 def test_the_phase_4_sources_reach_the_json(tmp_path, sample_report):
     """A field that renders in the terminal and vanishes from -o report.json
     is the drift this test exists to catch."""
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         BazaarReport, CertReport, GreyNoiseReport, KEVEntry, KEVReport,
         ShodanReport, SourceResult, ThreatFoxReport,
     )
-    from hash_searcher.render.json_out import to_dict
+    from ioc_inquest.render.json_out import to_dict
 
     sample_report.bazaar = SourceResult(
         value=BazaarReport(found=True, family="Emotet", tags=["exe"]), queried=True)
@@ -341,7 +341,7 @@ def test_the_phase_4_sources_reach_the_json(tmp_path, sample_report):
 def test_a_source_that_never_ran_is_null_rather_than_missing(tmp_path, sample_report):
     """Present-but-null is the rule the rest of this module follows: a
     consumer can tell "the source had nothing" from "this tool never asked"."""
-    from hash_searcher.render.json_out import to_dict
+    from ioc_inquest.render.json_out import to_dict
 
     body = to_dict(sample_report)["report"]
     assert body["bazaar"] is None
@@ -355,7 +355,7 @@ def test_per_ip_threatfox_reaches_the_json(sample_report):
     an analyst can read the TTY, a script branching on exit codes cannot.
     Never-asked stays present-but-null, the rule the rest of the module
     follows, so "ThreatFox had nothing" never reads as "nobody asked"."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
 
     sample_report.threatfox_ips = {
         "198.51.100.10": SourceResult(
@@ -375,7 +375,7 @@ def test_the_sample_level_threatfox_key_still_means_the_sample(sample_report):
     """Constraint 7: an existing key never changes meaning. A per-IP hit
     must not leak into the key a consumer already reads as the sample's
     own answer."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
 
     sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
         value=ThreatFoxReport(found=True, malware="Emotet"), queried=True)}
@@ -393,7 +393,7 @@ def test_the_sample_level_threatfox_key_still_means_the_sample(sample_report):
 #: SUCCESSFUL entry, which is exactly what that mutant produces.
 def _errored_phase4(report):
     """Every _source_dict-wrapped source in the queried-and-failed state."""
-    from hash_searcher.models import SourceResult
+    from ioc_inquest.models import SourceResult
 
     report.bazaar = SourceResult(error="MalwareBazaar API Error 502", queried=True)
     report.threatfox = SourceResult(error="ThreatFox API Error 502", queried=True)
@@ -455,7 +455,7 @@ def test_the_three_source_states_stay_distinguishable_in_the_json(sample_report)
     states must be three different JSON values for every source, not for the
     one a finding happened to name.
     """
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         BazaarReport, CertReport, GreyNoiseReport, ShodanReport, SourceResult,
         ThreatFoxReport,
     )
@@ -511,7 +511,7 @@ def test_an_unreachable_kev_catalog_says_so_and_says_how_much_went_unchecked(
     empty `kev` list beside a null `kev_error` is exactly the Phase 4 bug:
     "nobody could ask" reading as "nothing is exploited".
     """
-    from hash_searcher.models import KEVReport, SourceResult
+    from ioc_inquest.models import KEVReport, SourceResult
 
     sample_report.kev = SourceResult(value=KEVReport(unchecked=3),
                                      error="CISA KEV API Error 503", queried=True)
@@ -525,7 +525,7 @@ def test_a_healthy_kev_catalog_reports_nothing_unchecked(sample_report):
     """The other side of the same two keys: a successful catalog fetch leaves
     `kev_error` null and `kev_unchecked` at zero, so the assertion above is
     pinning the failure state rather than a constant."""
-    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.models import KEVEntry, KEVReport, SourceResult
 
     sample_report.kev = SourceResult(
         value=KEVReport(entries=[KEVEntry(cve="CVE-2021-41617")], unchecked=0),
@@ -553,7 +553,7 @@ def test_a_failed_otx_lookup_is_distinguishable_from_one_that_never_ran(sample_r
     """
     import dataclasses
 
-    from hash_searcher.models import OTXReport
+    from ioc_inquest.models import OTXReport
 
     healthy = to_dict(sample_report)
     assert "error" not in healthy["report"]["otx"]

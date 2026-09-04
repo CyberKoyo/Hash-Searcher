@@ -1,12 +1,49 @@
 import time
 
-from hash_searcher.api.base_call import make_error
-from hash_searcher.cache import ResponseCache, cache_path
+from ioc_inquest.api.base_call import make_error
+from ioc_inquest.cache import ResponseCache, cache_path
 
 
 def test_cache_path_lands_under_xdg_cache_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    assert cache_path().parent == tmp_path / "hash-searcher"
+    assert cache_path().parent == tmp_path / "ioc-inquest"
+
+
+def test_a_pre_rename_database_is_carried_over(tmp_path, monkeypatch):
+    """The rename must not silently reset the budget tally living in it."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    legacy = tmp_path / "hash-searcher" / "responses.db"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"old database")
+
+    path = cache_path()
+
+    assert path.read_bytes() == b"old database"
+    assert not legacy.exists()
+
+
+def test_an_existing_database_outranks_the_pre_rename_one(tmp_path, monkeypatch):
+    """Adoption happens once; the current file is never overwritten."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    current = tmp_path / "ioc-inquest" / "responses.db"
+    current.parent.mkdir(parents=True)
+    current.write_bytes(b"current database")
+    legacy = tmp_path / "hash-searcher" / "responses.db"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"old database")
+
+    assert cache_path().read_bytes() == b"current database"
+    assert legacy.read_bytes() == b"old database"
+
+
+def test_no_pre_rename_database_invents_nothing(tmp_path, monkeypatch):
+    """A first-ever run has nothing to adopt and leaves the dir to open_db."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    path = cache_path()
+
+    assert not path.exists()
+    assert not path.parent.exists()
 
 
 def test_round_trip(tmp_path):

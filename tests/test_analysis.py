@@ -1,10 +1,10 @@
-from hash_searcher.analysis.censys import extract_hosts
-from hash_searcher.analysis.ipdb import extract_ips
-from hash_searcher.analysis.otx import extract_otx
-from hash_searcher.analysis.vt import extract_vt
-from hash_searcher.analysis.whois import extract_whois
-from hash_searcher.api.base_call import make_error
-from hash_searcher.models import IPReport
+from ioc_inquest.analysis.censys import extract_hosts
+from ioc_inquest.analysis.ipdb import extract_ips
+from ioc_inquest.analysis.otx import extract_otx
+from ioc_inquest.analysis.vt import extract_vt
+from ioc_inquest.analysis.whois import extract_whois
+from ioc_inquest.api.base_call import make_error
+from ioc_inquest.models import IPReport
 
 
 def test_extract_vt_partitions_sigma_and_reads_both_relationships(fixture_json):
@@ -142,7 +142,7 @@ def test_the_two_otx_flags_answer_different_questions():
 
 
 def test_contacted_ips_reads_the_relationship_block():
-    from hash_searcher.api.virustotal import contacted_ips
+    from ioc_inquest.api.virustotal import contacted_ips
 
     payload = {"data": {"relationships": {"contacted_ips": {"data": [
         {"id": "198.51.100.10"}, {"id": "203.0.113.7"},
@@ -151,14 +151,14 @@ def test_contacted_ips_reads_the_relationship_block():
 
 
 def test_contacted_ips_is_empty_on_an_error_payload():
-    from hash_searcher.api.base_call import make_error
-    from hash_searcher.api.virustotal import contacted_ips
+    from ioc_inquest.api.base_call import make_error
+    from ioc_inquest.api.virustotal import contacted_ips
 
     assert contacted_ips(make_error("Hash not found in GetTotal", 404)) == []
 
 
 def test_detection_ratio_counts_only_the_verdict_buckets(fixture_json):
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     report = extract_vt(fixture_json("vt_full_report"))
     assert report.detection.malicious == 48
@@ -169,14 +169,14 @@ def test_detection_ratio_counts_only_the_verdict_buckets(fixture_json):
 
 
 def test_detection_is_none_when_the_payload_has_no_stats():
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     assert extract_vt({"data": {"attributes": {}}}).detection is None
 
 
 def test_detection_is_none_on_an_error_payload():
-    from hash_searcher.api.base_call import make_error
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.api.base_call import make_error
+    from ioc_inquest.analysis.vt import extract_vt
 
     assert extract_vt(make_error("Hash not found in GetTotal", 404)).detection is None
 
@@ -185,7 +185,7 @@ def test_threat_classification_takes_the_most_popular_family(fixture_json):
     """The payload's lists are not pre-sorted, so the first entry is not
     reliably the most popular one. The fixture's first entry is the LOWER
     count on purpose."""
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     threat = extract_vt(fixture_json("vt_full_report")).threat
     assert threat.label == "trojan.emotet/heurgeneric"
@@ -194,13 +194,13 @@ def test_threat_classification_takes_the_most_popular_family(fixture_json):
 
 
 def test_threat_is_none_when_vt_has_no_classification():
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     assert extract_vt({"data": {"attributes": {}}}).threat is None
 
 
 def test_submission_history_is_rendered_as_a_utc_iso_date(fixture_json):
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     submission = extract_vt(fixture_json("vt_full_report")).submission
     assert submission.first_seen == "2019-04-02"
@@ -209,7 +209,7 @@ def test_submission_history_is_rendered_as_a_utc_iso_date(fixture_json):
 
 
 def test_submission_first_seen_is_none_without_a_timestamp():
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     submission = extract_vt({"data": {"attributes": {"times_submitted": 3}}}).submission
     assert submission.first_seen is None
@@ -221,7 +221,7 @@ def test_signature_verified_is_a_bool_derived_from_vts_string(fixture_json):
     signature'), not a boolean. Any truthiness check on it reports every
     signed-but-INVALID file as verified -- and the verdict layer subtracts
     points for a verified signature, so that error flips real results."""
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     sig = extract_vt(fixture_json("vt_full_report")).signature
     assert sig.verified is True
@@ -230,7 +230,7 @@ def test_signature_verified_is_a_bool_derived_from_vts_string(fixture_json):
 
 
 def test_signature_with_an_invalid_verification_string_is_not_verified():
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     raw = {"data": {"attributes": {"signature_info": {
         "verified": "Signed file, but the signature is invalid",
@@ -242,7 +242,7 @@ def test_signature_with_an_invalid_verification_string_is_not_verified():
 def test_sandbox_verdicts_keep_only_the_flagged_ones(fixture_json):
     """A dozen sandboxes reporting 'undetected' is noise; the one that
     reported 'malicious' is the finding."""
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     verdicts = extract_vt(fixture_json("vt_full_report")).sandbox
     assert [v.sandbox for v in verdicts] == ["Zenbox"]
@@ -251,7 +251,7 @@ def test_sandbox_verdicts_keep_only_the_flagged_ones(fixture_json):
 
 
 def test_yara_matches_are_extracted(fixture_json):
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     yara = extract_vt(fixture_json("vt_full_report")).yara
     assert [y.rule for y in yara] == ["Emotet_Loader"]
@@ -259,7 +259,7 @@ def test_yara_matches_are_extracted(fixture_json):
 
 
 def test_pe_info_counts_sections_and_dates_the_build(fixture_json):
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     pe = extract_vt(fixture_json("vt_full_report")).pe
     assert pe.imphash == "5f0b1e9a8c3d4e2f1a0b9c8d7e6f5a4b"
@@ -268,13 +268,13 @@ def test_pe_info_counts_sections_and_dates_the_build(fixture_json):
 
 
 def test_a_non_pe_sample_has_no_pe_info():
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     assert extract_vt({"data": {"attributes": {}}}).pe is None
 
 
 def test_otx_report_carries_resolved_techniques():
-    from hash_searcher.analysis.otx import extract_otx
+    from ioc_inquest.analysis.otx import extract_otx
 
     raw = {"pulse_info": {"count": 3, "pulses": [
         {"attack_ids": [{"id": "T1055", "display_name": "T1055 - Process Injection"}]},
@@ -289,8 +289,8 @@ def test_otx_report_carries_resolved_techniques():
 def test_a_failed_censys_lookup_becomes_a_host_carrying_its_error():
     """S2: main printed 'Censys: <error>' per entry. Purifying the extractor
     dropped it because CensysHost had nowhere to put it."""
-    from hash_searcher.analysis.censys import extract_hosts
-    from hash_searcher.api.base_call import make_error
+    from ioc_inquest.analysis.censys import extract_hosts
+    from ioc_inquest.api.base_call import make_error
 
     _, hosts = extract_hosts([make_error("Censys 403: forbidden", 403)], {})
     assert len(hosts) == 1
@@ -301,8 +301,8 @@ def test_a_failed_censys_lookup_names_the_ip_when_the_fetcher_tagged_it():
     """The original could only print 'Censys: <error>' -- the error payload
     had no IP in it. fetch_censys knows which IP it was asking about, so it
     tags the failure and the report can name it."""
-    from hash_searcher.analysis.censys import extract_hosts
-    from hash_searcher.api.base_call import make_error, tag_indicator
+    from ioc_inquest.analysis.censys import extract_hosts
+    from ioc_inquest.api.base_call import make_error, tag_indicator
 
     _, hosts = extract_hosts(
         [tag_indicator(make_error("Censys 403: forbidden", 403), "198.51.100.10")], {})
@@ -325,8 +325,8 @@ def test_an_empty_censys_country_code_is_normalized_at_the_boundary():
 
 def test_an_errored_censys_entry_contributes_no_domains():
     """A failure must not widen the WHOIS lookup set."""
-    from hash_searcher.analysis.censys import extract_hosts
-    from hash_searcher.api.base_call import make_error
+    from ioc_inquest.analysis.censys import extract_hosts
+    from ioc_inquest.api.base_call import make_error
 
     domains, _ = extract_hosts([make_error("Rate limited", 429)], {})
     assert domains == []
@@ -335,7 +335,7 @@ def test_an_errored_censys_entry_contributes_no_domains():
 def test_an_entry_without_an_ip_address_is_skipped():
     """Closes a coverage gap, not a defect: a reviewer hand-traced this
     branch in Phase 1 and found it correct, but nothing pinned it."""
-    from hash_searcher.analysis.ipdb import extract_ips
+    from ioc_inquest.analysis.ipdb import extract_ips
 
     assert extract_ips([{"data": {"abuseConfidenceScore": 90}}]) == {}
 
@@ -357,7 +357,7 @@ def test_a_scalar_hostnames_value_is_discarded_the_way_every_other_list_key_is()
     their declarations in the first place. A `hostnames` that is a string
     is a schema change worth noticing, not data worth reinterpreting.
     """
-    from hash_searcher.analysis.ipdb import extract_ips
+    from ioc_inquest.analysis.ipdb import extract_ips
 
     ips = extract_ips([{"data": {"ipAddress": "198.51.100.10", "hostnames": "host.example"}}])
     assert ips["198.51.100.10"].hostnames == []
@@ -370,7 +370,7 @@ def test_a_scalar_hostnames_value_is_discarded_the_way_every_other_list_key_is()
 
 
 def test_a_non_dict_ipdb_entry_is_skipped():
-    from hash_searcher.analysis.ipdb import extract_ips
+    from ioc_inquest.analysis.ipdb import extract_ips
 
     assert extract_ips(["not a dict", None]) == {}
 
@@ -380,7 +380,7 @@ def test_contacted_ips_skips_an_entry_with_no_id():
     `if "id" in entry` while api/virustotal.py did an unguarded entry['id'],
     so a malformed entry killed the run in the puller but was silently
     skipped by the extractor. One implementation now, the guarded one."""
-    from hash_searcher.api.virustotal import contacted_ips
+    from ioc_inquest.api.virustotal import contacted_ips
 
     payload = {"data": {"relationships": {"contacted_ips": {"data": [
         {"id": "198.51.100.10"}, {"no_id": "here"}, {"id": "203.0.113.7"},
@@ -394,7 +394,7 @@ def test_vt_techniques_are_resolved_and_attached(fixture_json):
     green. technique_ids_from_vt was unit-tested in isolation; the wiring
     was not. (Plan gap, Task 5 Step 1 -- it asked for the OTX side only.)
     """
-    from hash_searcher.analysis.vt import extract_vt
+    from ioc_inquest.analysis.vt import extract_vt
 
     report = extract_vt(fixture_json("vt_full_report"))
     assert [t.id for t in report.techniques] == ["T1055", "T1497", "T1059"], (
@@ -488,9 +488,9 @@ def test_a_hostile_payload_number_reaches_every_surface_without_raising():
     import io
     import tempfile
 
-    from hash_searcher import scoring
-    from hash_searcher.models import OTXReport, Report
-    from hash_searcher.render import json_out, pdf, tty
+    from ioc_inquest import scoring
+    from ioc_inquest.models import OTXReport, Report
+    from ioc_inquest.render import json_out, pdf, tty
 
     report = Report(
         indicator="a" * 64, generated_at="2026-09-02 00:00:00",
@@ -550,9 +550,9 @@ def test_the_payload_numbers_left_uncoerced_are_inert():
     import io
     import tempfile
 
-    from hash_searcher import scoring
-    from hash_searcher.models import OTXReport, Report
-    from hash_searcher.render import json_out, pdf, tty
+    from ioc_inquest import scoring
+    from ioc_inquest.models import OTXReport, Report
+    from ioc_inquest.render import json_out, pdf, tty
 
     hosts = extract_hosts([{"result": {"resource": {
         "ip": "198.51.100.10",

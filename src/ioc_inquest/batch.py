@@ -219,7 +219,7 @@ async def run_batch(indicators: list[str], args) -> int:
 
     if write_failed:
         # Not CLEAN. Every lookup may have succeeded, but the user asked for
-        # a file and does not have one, and `hash-searcher ... -o out.csv &&
+        # a file and does not have one, and `ioc-inquest ... -o out.csv &&
         # process out.csv` would otherwise run the second half against a
         # file that is not there. EXIT_NO_DATA is what this tool already
         # says for a run a script cannot act on.

@@ -118,7 +118,7 @@ def _build_malformed_pe(num_sections: int, body_size: int) -> bytes:
 
 
 def test_analyze_pe_returns_none_for_a_non_pe(tmp_path):
-    from hash_searcher.static.pe import analyze_pe
+    from ioc_inquest.static.pe import analyze_pe
 
     target = tmp_path / "notpe.txt"
     target.write_text("hello")
@@ -127,7 +127,7 @@ def test_analyze_pe_returns_none_for_a_non_pe(tmp_path):
 
 def test_analyze_pe_returns_none_without_pefile(tmp_path, monkeypatch):
     """Global Constraint 3: absent library, smaller report, no crash."""
-    from hash_searcher.static import pe
+    from ioc_inquest.static import pe
 
     monkeypatch.setattr(pe.capabilities, "have", lambda name: False)
     target = tmp_path / "x.exe"
@@ -137,7 +137,7 @@ def test_analyze_pe_returns_none_without_pefile(tmp_path, monkeypatch):
 
 def test_suspicious_imports_are_named_not_just_counted():
     """A count tells an analyst nothing. The API names are the finding."""
-    from hash_searcher.static.pe import suspicious
+    from ioc_inquest.static.pe import suspicious
 
     found = suspicious({
         "kernel32.dll": ["VirtualAllocEx", "WriteProcessMemory", "lstrlenA"],
@@ -148,13 +148,13 @@ def test_suspicious_imports_are_named_not_just_counted():
 
 def test_suspicious_import_matching_is_case_insensitive_and_canonicalizes():
     """Import tables are not consistently cased; the report must be."""
-    from hash_searcher.static.pe import suspicious
+    from ioc_inquest.static.pe import suspicious
 
     assert suspicious({"kernel32.dll": ["virtualallocex"]}) == ["VirtualAllocEx"]
 
 
 def test_a_benign_import_table_yields_nothing():
-    from hash_searcher.static.pe import suspicious
+    from ioc_inquest.static.pe import suspicious
 
     assert suspicious({"msvcrt.dll": ["printf", "malloc", "free"]}) == []
 
@@ -164,7 +164,7 @@ def test_a_malformed_pe_is_reported_not_raised(tmp_path):
     """Global Constraint 5: hostile input is the expected case here, not the
     exceptional one. pefile raises PEFormatError on a truncated header, and
     that must never reach the user as a traceback."""
-    from hash_searcher.static.pe import analyze_pe
+    from ioc_inquest.static.pe import analyze_pe
 
     target = tmp_path / "broken.exe"
     target.write_bytes(b"MZ" + b"\xff" * 200)
@@ -185,7 +185,7 @@ def test_section_entropy_never_hashes_more_than_the_cap(tmp_path, monkeypatch):
     assertion alone can pass for a degenerate reason (a fast machine) or
     fail for one (a loaded CI runner) without the bound itself moving.
     """
-    from hash_searcher.static import pe as pe_module
+    from ioc_inquest.static import pe as pe_module
 
     target = tmp_path / "malformed.exe"
     target.write_bytes(_build_malformed_pe(num_sections=50, body_size=4 * 1024 * 1024))
@@ -215,7 +215,7 @@ def test_a_pe_with_a_malformed_section_table_does_not_hang(tmp_path):
     above pins the actual mechanism."""
     import time
 
-    from hash_searcher.static.pe import analyze_pe
+    from ioc_inquest.static.pe import analyze_pe
 
     target = tmp_path / "malformed.exe"
     target.write_bytes(_build_malformed_pe(num_sections=300, body_size=4 * 1024 * 1024))
@@ -235,7 +235,7 @@ def test_section_entropy_note_is_empty_when_nothing_was_truncated(tmp_path):
     """A silently truncated number is worse than a stated one -- and a note
     printed on every well-formed PE, truncated or not, would be just as
     silently useless. The note must say something only when it is true."""
-    from hash_searcher.static.pe import analyze_pe
+    from ioc_inquest.static.pe import analyze_pe
 
     target = tmp_path / "wellformed.exe"
     target.write_bytes(_build_pe(num_sections=2, section_body=b"A" * 100))

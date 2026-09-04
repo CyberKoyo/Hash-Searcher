@@ -1,4 +1,4 @@
-from hash_searcher.models import BazaarReport, SourceResult
+from ioc_inquest.models import BazaarReport, SourceResult
 
 
 def test_the_three_states_are_distinguishable():

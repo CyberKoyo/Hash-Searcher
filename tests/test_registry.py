@@ -1,6 +1,6 @@
 import pytest
 
-from hash_searcher.api.registry import Provider, available, by_name, missing_keys
+from ioc_inquest.api.registry import Provider, available, by_name, missing_keys
 
 
 def _providers():
@@ -41,7 +41,7 @@ def test_real_registry_covers_every_current_source():
     """Pinned by name: a source added to PROVIDERS without a decision about
     its indicator types, TTL, and rate limit is exactly what Constraints 5-7
     forbid, and this list is where that decision becomes visible."""
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
     assert {p.name for p in PROVIDERS} == {
         "virustotal", "otx", "abuseipdb", "censys", "malwarebazaar",
         "rdap", "shodan", "greynoise", "crtsh", "threatfox",
@@ -79,7 +79,7 @@ def test_by_name_raises_against_the_global_registry_default(monkeypatch):
     names "censys", are both still made below, directly, against the thing
     that's actually responsible for them.
     """
-    monkeypatch.setattr("hash_searcher.api.registry.PROVIDERS", [])
+    monkeypatch.setattr("ioc_inquest.api.registry.PROVIDERS", [])
     with pytest.raises(LookupError, match="no provider named 'censys'"):
         by_name("censys")
 
@@ -104,7 +104,7 @@ def test_a_new_provider_needs_only_a_registry_entry():
     word would be pedantry -- but the POSITION is the actual contract."""
     import inspect
 
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
 
     for provider in PROVIDERS:
         assert provider.fetch is not None, f"{provider.name} has no fetch"
@@ -128,7 +128,7 @@ def test_every_provider_fetch_takes_client_and_indicator():
     """Obs. B: the registry's promise -- append a Provider, add a source --
     only holds if every fetch agrees on its call shape."""
     import inspect
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
 
     for provider in PROVIDERS:
         # inspect.signature(None) raises TypeError; a placeholder entry
@@ -153,7 +153,7 @@ def test_every_provider_fetch_takes_client_and_indicator():
 
 
 def test_for_indicator_selects_only_providers_that_handle_the_type(monkeypatch):
-    from hash_searcher.api.registry import for_indicator
+    from ioc_inquest.api.registry import for_indicator
 
     monkeypatch.setenv("TOTAL_KEY", "set")
     monkeypatch.setenv("CENSYS_KEY", "set")
@@ -165,7 +165,7 @@ def test_for_indicator_selects_only_providers_that_handle_the_type(monkeypatch):
 def test_for_indicator_still_respects_key_availability(monkeypatch):
     """A provider whose key is unset must not be selected just because it
     declares the right indicator type."""
-    from hash_searcher.api.registry import for_indicator
+    from ioc_inquest.api.registry import for_indicator
 
     monkeypatch.delenv("TOTAL_KEY", raising=False)
     assert [p.name for p in for_indicator("hash", _providers())] == []
@@ -174,7 +174,7 @@ def test_for_indicator_still_respects_key_availability(monkeypatch):
 def test_every_registered_provider_declares_at_least_one_indicator_type():
     """Constraint 5: an empty tuple makes a provider unreachable through
     for_indicator, so it would silently never run."""
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
 
     for provider in PROVIDERS:
         assert provider.indicator_types, f"{provider.name} declares no indicator types"
@@ -231,7 +231,7 @@ def test_the_registry_declares_the_timings_it_says_it_declares():
     reddens here too; that is the same promise
     test_real_registry_covers_every_current_source makes about names.
     """
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
 
     assert {p.name: (p.serial_delay, p.cache_ttl) for p in PROVIDERS} \
         == DECLARED_TIMINGS
@@ -243,7 +243,7 @@ def test_the_three_rate_limited_sources_are_the_serial_ones():
     hard enough to need this" -- and a table equality would still pass if the
     set of serial sources changed and the table were updated to match.
     """
-    from hash_searcher.api.registry import PROVIDERS
+    from ioc_inquest.api.registry import PROVIDERS
 
     assert {p.name for p in PROVIDERS if p.serial_delay > 0} \
         == {"censys", "crtsh", "greynoise"}

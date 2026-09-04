@@ -9,8 +9,8 @@ import io
 
 import pytest
 
-from hash_searcher.batch import batch_output_path, run_batch, worst_exit_code
-from hash_searcher.cli import (
+from ioc_inquest.batch import batch_output_path, run_batch, worst_exit_code
+from ioc_inquest.cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
     build_parser, read_indicators, run_cli,
 )
@@ -30,7 +30,7 @@ def _stub_analyze(monkeypatch, codes=None):
         seen.append((user_input, cache, output))
         return answers.pop(0) if answers else EXIT_CLEAN
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", fake_analyze_one)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", fake_analyze_one)
     return seen
 
 
@@ -123,7 +123,7 @@ async def test_the_whole_batch_shares_one_cache(monkeypatch):
         def close(self):
             self.closed = True
 
-    monkeypatch.setattr("hash_searcher.batch.ResponseCache", FakeCache)
+    monkeypatch.setattr("ioc_inquest.batch.ResponseCache", FakeCache)
     seen = _stub_analyze(monkeypatch)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\n"))
 
@@ -148,7 +148,7 @@ async def test_one_failing_indicator_does_not_discard_the_rest(monkeypatch, caps
             raise RuntimeError("provider blew up")
         return EXIT_CLEAN
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", sometimes_boom)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", sometimes_boom)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\n"))
 
     code = await run_cli(["-", "--no-cache"])
@@ -169,14 +169,14 @@ async def test_the_shared_cache_is_closed_even_when_a_run_raises(monkeypatch):
             self.closed = True
 
     made = []
-    monkeypatch.setattr("hash_searcher.batch.ResponseCache",
+    monkeypatch.setattr("ioc_inquest.batch.ResponseCache",
                         lambda **kw: made.append(FakeCache()) or made[-1])
 
     async def boom(user_input, args, cache=None, output=None, budget=None,
                    rows=None):
         raise RuntimeError("provider blew up")
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", boom)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\n"))
 
     # Every run failing is still a completed batch -- one that found
@@ -237,7 +237,7 @@ async def test_a_single_indicator_run_is_not_a_batch(monkeypatch):
     async def fail(*a, **k):
         raise AssertionError("run_batch ran for a single indicator")
 
-    monkeypatch.setattr("hash_searcher.batch.run_batch", fail)
+    monkeypatch.setattr("ioc_inquest.batch.run_batch", fail)
     seen = []
 
     async def fake_analyze_one(user_input, args, cache=None, output=None,
@@ -245,7 +245,7 @@ async def test_a_single_indicator_run_is_not_a_batch(monkeypatch):
         seen.append(user_input)
         return EXIT_CLEAN
 
-    monkeypatch.setattr("hash_searcher.cli.analyze_one", fake_analyze_one)
+    monkeypatch.setattr("ioc_inquest.cli.analyze_one", fake_analyze_one)
 
     assert await run_cli(["198.51.100.10", "--no-cache"]) == EXIT_CLEAN
     assert seen == ["198.51.100.10"]
@@ -278,7 +278,7 @@ def _csv_stub_analyze(monkeypatch, codes=None, failures=()):
     only recorded its arguments could not tell a one-table batch from N
     single-row ones.
     """
-    from hash_searcher.models import OTXReport, Report, Verdict, VTReport
+    from ioc_inquest.models import OTXReport, Report, Verdict, VTReport
 
     seen = []
     answers = list(codes or [])
@@ -300,7 +300,7 @@ def _csv_stub_analyze(monkeypatch, codes=None, failures=()):
             ))
         return answers.pop(0) if answers else EXIT_CLEAN
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", fake_analyze_one)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", fake_analyze_one)
     return seen
 
 
@@ -404,7 +404,7 @@ async def test_an_interrupted_batch_keeps_the_rows_it_finished(monkeypatch, tmp_
     BaseException, so it walks straight past `except Exception`; the write
     has to be in the `finally` or it does not happen at all.
     """
-    from hash_searcher.models import OTXReport, Report, Verdict, VTReport
+    from ioc_inquest.models import OTXReport, Report, Verdict, VTReport
 
     seen = []
 
@@ -422,7 +422,7 @@ async def test_an_interrupted_batch_keeps_the_rows_it_finished(monkeypatch, tmp_
         ))
         return EXIT_CLEAN
 
-    monkeypatch.setattr("hash_searcher.batch.analyze_one", interrupt_on_third)
+    monkeypatch.setattr("ioc_inquest.batch.analyze_one", interrupt_on_third)
     monkeypatch.setattr("sys.stdin", io.StringIO("a\nb\nc\nd\n"))
     out = tmp_path / "report.csv"
 
@@ -464,7 +464,7 @@ async def test_a_failing_final_write_does_not_become_a_traceback(
     def explode(rows, path):
         raise OSError("disk full")
 
-    monkeypatch.setattr("hash_searcher.batch.write_rendered_rows", explode)
+    monkeypatch.setattr("ioc_inquest.batch.write_rendered_rows", explode)
 
     code = await run_cli(["-", "-o", str(tmp_path / "report.csv"), "--no-cache"])
 

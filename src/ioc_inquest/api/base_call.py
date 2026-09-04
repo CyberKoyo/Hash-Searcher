@@ -67,7 +67,7 @@ def error_status(payload) -> int | None:
     return payload.get(STATUS_KEY) if isinstance(payload, dict) else None
 
 
-USER_AGENT = "hash-searcher/0.1 (+https://github.com/CyberKoyo/Hash-Searcher)"
+USER_AGENT = "ioc-inquest/0.1 (+https://github.com/CyberKoyo/IOC-Inquest)"
 
 
 async def _request(

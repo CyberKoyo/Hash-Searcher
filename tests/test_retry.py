@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from hash_searcher.api.base_call import api_get, error_status, is_error
+from ioc_inquest.api.base_call import api_get, error_status, is_error
 
 URL = "https://example.test/thing"
 

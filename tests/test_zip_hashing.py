@@ -3,7 +3,7 @@ import zipfile
 
 import pyzipper
 
-from hash_searcher.hashing import get_zip_hash
+from ioc_inquest.hashing import get_zip_hash
 
 # password="" everywhere below, never omitted: get_zip_hash prompts on
 # stdin when password is None, and reading stdin while pytest captures

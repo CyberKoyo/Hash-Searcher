@@ -64,13 +64,13 @@ def _depth(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="hash-searcher",
+        prog="ioc-inquest",
         description="Check a file, hash, IP, domain, or URL against "
                     "VirusTotal, AbuseIPDB, Censys, OTX, RDAP, and "
                     "several keyless sources.",
     )
     # nargs="?" because --input-file supplies the indicators instead, and
-    # `hash-searcher --input-file iocs.txt` -- the form the README shows --
+    # `ioc-inquest --input-file iocs.txt` -- the form the README shows --
     # is not a command anyone should have to pad with a dummy argument.
     # parse_args() below rejects the case where neither is given, so the
     # requirement survives; it just cannot be spelled by argparse alone.
@@ -317,7 +317,7 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
         resolved = resolve_indicator(user_input, args.zip_password)
     except FileNotFoundError as e:
         # The exception is constructed with a perfectly good user-facing
-        # string and was simply never caught, so `hash-searcher notahash`
+        # string and was simply never caught, so `ioc-inquest notahash`
         # printed a traceback. Pre-existing on 43e9f92 and on 129ff8d.
         print(e)
         return EXIT_NO_DATA

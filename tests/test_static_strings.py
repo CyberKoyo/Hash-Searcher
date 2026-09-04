@@ -1,5 +1,5 @@
 def test_printable_runs_are_extracted_and_short_noise_is_not():
-    from hash_searcher.static.strings import extract_strings
+    from ioc_inquest.static.strings import extract_strings
 
     data = b"\x00\x01hello world\x00ab\x00another string here\xff"
     assert extract_strings(data, min_length=6) == ["hello world", "another string here"]
@@ -8,14 +8,14 @@ def test_printable_runs_are_extracted_and_short_noise_is_not():
 def test_utf16le_strings_are_found_too():
     """Windows binaries carry most of their interesting strings as UTF-16LE;
     an ASCII-only scan misses nearly every path and URL in a PE."""
-    from hash_searcher.static.strings import extract_strings
+    from ioc_inquest.static.strings import extract_strings
 
     data = "http://evil.example/x".encode("utf-16-le")
     assert "http://evil.example/x" in extract_strings(data, min_length=6)
 
 
 def test_iocs_are_harvested_from_strings():
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     iocs = harvest_iocs([
         "GET http://evil.example/payload.bin HTTP/1.1",
@@ -30,7 +30,7 @@ def test_iocs_are_harvested_from_strings():
 
 def test_version_numbers_are_not_mistaken_for_ip_addresses():
     """The single most common false positive in strings-based IOC work."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs(["product version 1.2.3.4", "999.999.999.999"]).ips == []
 
@@ -38,7 +38,7 @@ def test_version_numbers_are_not_mistaken_for_ip_addresses():
 def test_private_and_loopback_addresses_are_dropped():
     """Nothing is gained by looking up 127.0.0.1 in AbuseIPDB, and every
     lookup costs a request against a rate-limited free tier."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs([
         "127.0.0.1", "10.0.0.5", "192.168.1.1", "172.16.0.1", "203.0.113.7",
@@ -48,14 +48,14 @@ def test_private_and_loopback_addresses_are_dropped():
 def test_common_library_domains_are_filtered():
     """These appear in nearly every signed Windows binary. Reporting them is
     noise that buries the one domain that matters."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     domains = harvest_iocs(["microsoft.com", "w3.org", "evil.example"]).domains
     assert domains == ["evil.example"]
 
 
 def test_iocs_are_deduplicated_and_capped():
-    from hash_searcher.static.strings import IOC_LIMIT, harvest_iocs
+    from ioc_inquest.static.strings import IOC_LIMIT, harvest_iocs
 
     strings = [f"203.0.113.{n % 250}" for n in range(400)]
     ips = harvest_iocs(strings).ips
@@ -66,7 +66,7 @@ def test_iocs_are_deduplicated_and_capped():
 def test_pe_import_filenames_are_not_reported_as_domains():
     """kernel32.dll and friends cluster early in a PE's string table and,
     uncapped, would crowd the one genuine domain IOC out of IOC_LIMIT."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     domains = harvest_iocs([
         "KERNEL32.dll", "USER32.dll", "ADVAPI32.dll", "readme.txt", "setup.exe",
@@ -78,20 +78,20 @@ def test_a_genuine_dot_com_domain_is_still_reported():
     """Guards against an over-broad filename blocklist: .com is both the
     most common TLD and a DOS executable extension, and must stay a
     reportable domain."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs(["evil-domain.com"]).domains == ["evil-domain.com"]
 
 
 def test_subdomains_of_ignored_domains_are_filtered():
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     domains = harvest_iocs(["www.microsoft.com", "crl.digicert.com"]).domains
     assert domains == []
 
 
 def test_subdomain_of_a_non_ignored_domain_is_still_reported():
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs(["c2.evil.example"]).domains == ["c2.evil.example"]
 
@@ -106,7 +106,7 @@ def test_a_dotted_chain_with_no_valid_tld_does_not_hang():
     quadratic; a 100KB file did not finish in 60s."""
     import time
 
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     started = time.monotonic()
     result = harvest_iocs(["11." * 20000])
@@ -130,7 +130,7 @@ def test_many_dotted_quads_do_not_make_ip_matching_quadratic():
     gets dramatically worse (not just 6x slower) at this size."""
     import time
 
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     started = time.monotonic()
     harvest_iocs(["11." * 166_667])  # ~500KB
@@ -152,7 +152,7 @@ def test_many_distinct_urls_do_not_make_stripping_quadratic():
     ~838KB): 3.28s; the fixed code measures ~0.03s here."""
     import time
 
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     text = " ".join(f"http://example{i}.test/path/to/thing{i}" for i in range(20_000))
     started = time.monotonic()
@@ -173,7 +173,7 @@ def test_domains_followed_by_a_non_tld_trailing_label_are_still_found():
     pattern's behaviour under that version. The fix runs the original
     pattern's own backtracking inside each token instead, so these must
     still be found."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs(["evil.example.123"]).domains == ["evil.example"]
     assert harvest_iocs(["host.evil.example.99"]).domains == ["host.evil.example"]
@@ -198,7 +198,7 @@ def test_a_domain_run_that_bleeds_into_an_underscore_is_not_a_false_positive():
     preserves the adjacency the word-boundary anchor needs to see, at no
     cost to the ReDoS fix -- MAX_DOMAIN still bounds the backtracking to a
     constant regardless of how the token is delimited."""
-    from hash_searcher.static.strings import harvest_iocs
+    from ioc_inquest.static.strings import harvest_iocs
 
     assert harvest_iocs(["1.kyzas__su"]).domains == []
     assert harvest_iocs(["_bgg 93hlqp17.kv_r"]).domains == []
@@ -212,7 +212,7 @@ def test_analyze_strings_returns_a_report_with_the_expected_count_and_iocs(tmp_p
     directly for the first time -- everything above this line tests
     extract_strings/harvest_iocs, never the function that wires them
     together and reads the file."""
-    from hash_searcher.static.strings import analyze_strings
+    from ioc_inquest.static.strings import analyze_strings
 
     target = tmp_path / "sample.bin"
     target.write_bytes(
@@ -246,7 +246,7 @@ def test_analyze_strings_reads_at_most_max_bytes(tmp_path, monkeypatch):
     call, so patching the module attribute has the same effect entropy's
     test gets by passing `cap=4096` directly.
     """
-    from hash_searcher.static import strings
+    from ioc_inquest.static import strings
 
     monkeypatch.setattr(strings, "MAX_BYTES", 4096)
     target = tmp_path / "big.bin"
