@@ -12,7 +12,9 @@ from hash_searcher.models import (
     BazaarReport, Detection, IPReport, OTXReport, Report, SourceResult,
     ThreatClass, ThreatFoxReport, Verdict, VTReport,
 )
-from hash_searcher.render.csv_out import CSV_HEADER, row, write_csv, write_rows
+from hash_searcher.render.csv_out import (
+    CSV_HEADER, failure_row, row, write_csv, write_row_values, write_rows,
+)
 
 
 def _bare_report(indicator: str = "abc123") -> Report:
@@ -159,4 +161,63 @@ def test_a_source_nobody_asked_contributes_no_error():
     values = dict(zip(CSV_HEADER, row(report)))
 
     assert values["errors"] == ""
+    assert values["bazaar_family"] == ""
+
+
+# --- a batch's aggregate table ----------------------------------------------
+
+
+def test_write_row_values_takes_already_rendered_rows(tmp_path):
+    """The seam a batch needs: it accumulates rows across runs, and some of
+    them (failed indicators) never had a Report to render from."""
+    path = tmp_path / "report.csv"
+
+    write_row_values([row(_bare_report("abc123"), None),
+                      failure_row("evil.example", "run failed (boom)")],
+                     str(path))
+
+    rows = _read(path)
+    assert rows[0] == list(CSV_HEADER)
+    assert len(rows) == 3
+    assert [r[0] for r in rows[1:]] == ["abc123", "evil.example"]
+
+
+def test_write_rows_and_write_row_values_agree(tmp_path):
+    """One writer, not two. write_rows renders and delegates; if it ever
+    grew its own copy of the header-and-loop these two would drift."""
+    first, second = tmp_path / "a.csv", tmp_path / "b.csv"
+    entries = [(_bare_report("abc123"), None), (_bare_report("x.example"), None)]
+
+    write_rows(entries, str(first))
+    write_row_values([row(r, v) for r, v in entries], str(second))
+
+    assert _read(first) == _read(second)
+
+
+def test_a_failure_row_is_the_full_width_of_the_header(tmp_path):
+    """Short by one field and every column after it shifts, which is worse
+    than the missing information it is reporting."""
+    assert len(failure_row("evil.example", "boom")) == len(CSV_HEADER)
+
+
+def test_a_failure_row_names_the_indicator_and_carries_the_reason():
+    """A triage table that silently dropped the three indicators which
+    failed would give a false all-clear -- the analyst has no way to see
+    something went unchecked. The reason lands in the `errors` column,
+    beside every other source's failure."""
+    values = dict(zip(CSV_HEADER, failure_row("evil.example", "run failed (boom)")))
+
+    assert values["indicator"] == "evil.example"
+    assert values["errors"] == "run failed (boom)"
+
+
+def test_a_failure_row_claims_no_verdict():
+    """Empty, never CLEAN. A row that could not be analyzed must not read
+    as one that was analyzed and found nothing -- that is the same "asked
+    and failed is not no record" rule the errors column exists for."""
+    values = dict(zip(CSV_HEADER, failure_row("evil.example", "boom")))
+
+    assert values["verdict"] == ""
+    assert values["score"] == ""
+    assert values["vt_malicious"] == ""
     assert values["bazaar_family"] == ""

@@ -132,8 +132,34 @@ def row(report: Report, verdict: Verdict | None = None) -> list[str]:
     ]
 
 
-def write_rows(entries, path: str) -> str:
-    """A header and one row per (report, verdict) pair.
+def failure_row(indicator: str, reason: str) -> list[str]:
+    """A row for an indicator that never produced a Report at all.
+
+    A batch line can die before there is anything to render: an unreadable
+    archive, an indicator that resolves to nothing, a provider raising. The
+    alternative to this row is omitting the line, and a triage table that
+    silently drops the three indicators that failed reads as an all-clear
+    for three things nobody checked. The row count matching the input
+    list's line count is what makes the table trustworthy.
+
+    Built by walking CSV_HEADER rather than by writing out N empty strings,
+    so a column appended to the header cannot leave this row one field
+    short -- which would shift every column after it, on this line only.
+
+    Every other column stays empty, `verdict` above all: a row that could
+    not be analyzed must not read as one that was analyzed and found
+    nothing. That is the same rule `_errors` exists for, one level up.
+    """
+    known = {"indicator": indicator, "errors": reason}
+    return [_text(known.get(name, "")) for name in CSV_HEADER]
+
+
+def write_row_values(rows, path: str) -> str:
+    """A header and the rows given, already rendered.
+
+    The seam a batch writes through: it accumulates rows across runs, and
+    some of them never had a Report behind them (see failure_row), so it
+    cannot hand over (report, verdict) pairs for all of them.
 
     `newline=""` is not optional: without it csv.writer's \\r\\n meets the
     platform's own line ending and every row is separated by a blank one.
@@ -141,13 +167,24 @@ def write_rows(entries, path: str) -> str:
     with open(path, "w", newline="", encoding="utf-8") as out:
         writer = csv.writer(out)
         writer.writerow(CSV_HEADER)
-        for report, verdict in entries:
-            writer.writerow(row(report, verdict))
+        writer.writerows(rows)
     return path
 
 
+def write_rows(entries, path: str) -> str:
+    """A header and one row per (report, verdict) pair.
+
+    Renders and delegates rather than opening the file itself: a second
+    copy of the header-and-loop is how the two writers would drift, and
+    the header is the one thing in this module that consumers pin.
+    """
+    return write_row_values(
+        [row(report, verdict) for report, verdict in entries], path)
+
+
 def write_csv(report: Report, path: str, verdict: Verdict | None = None) -> str:
-    """One report's file. A batch writes one file per indicator today (see
-    batch.batch_output_path), so this is the single-row case of write_rows
-    rather than a second implementation of it."""
+    """One report's file -- a single run, or one indicator of a batch whose
+    -o named some other format. A batch writing CSV aggregates into one
+    table instead (see batch.run_batch), so this is the single-row case of
+    write_rows rather than a second implementation of it."""
     return write_rows([(report, verdict)], path)

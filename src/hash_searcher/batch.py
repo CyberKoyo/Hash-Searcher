@@ -18,6 +18,7 @@ from .cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
     analyze_one, output_format, unrecognized_output_message,
 )
+from .render.csv_out import failure_row, row, write_row_values
 
 #: How bad each exit code is, which is NOT the order of the codes
 #: themselves: UNKNOWN is 3 and MALICIOUS is 2, so max() over the codes
@@ -111,15 +112,34 @@ async def run_batch(indicators: list[str], args) -> int:
     # sees a budget it did not open and does not open one of its own, and
     # data_puller enforces nothing.
     budget = None if args.ignore_budget else RateBudget()
+
+    # CSV is the one format whose whole purpose is a table of N indicators
+    # -- a triage queue sorted by score is what an analyst opens it for --
+    # so a batch writing CSV accumulates and writes once. `-o` therefore
+    # means "the file" for CSV and "the filename stem" for every other
+    # format, which is an inconsistency on purpose: it is what each format
+    # can actually express. A STIX bundle or a MISP event could hold N
+    # indicators too, and deliberately does not yet.
+    aggregating = bool(args.output) and output_format(args.output) == "csv"
+    collected: list | None = [] if aggregating else None
+
     codes = []
     try:
         for index, indicator in enumerate(indicators):
             print(f"\n[{index + 1}/{len(indicators)}] {indicator}")
+            # One or the other, never both: with `collected` set,
+            # analyze_one appends its pair and writes nothing, and this
+            # function owns the single write. Two writers aimed at one path
+            # would race for it.
             output = (batch_output_path(args.output, index, indicator)
-                      if args.output else None)
+                      if args.output and not aggregating else None)
+            before = len(collected) if aggregating else 0
             try:
                 codes.append(await analyze_one(indicator, args, cache=cache,
-                                               output=output, budget=budget))
+                                               output=output, budget=budget,
+                                               rows=collected))
+                reason = "" if not aggregating or len(collected) > before else (
+                    "the run produced no report")
             except Exception as e:
                 # A batch is the mode where partial results matter most: a
                 # 100-line run that dies on line 3 has already paid for
@@ -129,10 +149,30 @@ async def run_batch(indicators: list[str], args) -> int:
                 # run fails -- and the indicator is named, because a
                 # traceback naming only the provider does not say which
                 # line of the list produced it.
-                print(f"    {indicator}: run failed ({type(e).__name__}: {e})")
+                reason = f"run failed ({type(e).__name__}: {e})"
+                print(f"    {indicator}: {reason}")
                 codes.append(EXIT_NO_DATA)
+            # Synthesized here rather than inside analyze_one, which reaches
+            # EXIT_NO_DATA from five different places -- an unreadable
+            # archive, an indicator resolving to nothing, no key and no
+            # static report, an empty pull -- none of which has a Report to
+            # append. This function knows the indicator and the outcome for
+            # all five at once, so the table's row count matches the input
+            # list's line count without threading a placeholder through
+            # every early return.
+            if aggregating and len(collected) == before:
+                collected.append(failure_row(indicator, reason))
     finally:
         cache.close()
         if budget is not None:
             budget.close()
+
+    if aggregating:
+        # A failure row is already a list of cells; a successful run left a
+        # (report, verdict) pair to render.
+        write_row_values(
+            [entry if isinstance(entry, list) else row(*entry)
+             for entry in collected],
+            os.path.abspath(args.output))
+
     return worst_exit_code(codes)
