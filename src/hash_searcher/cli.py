@@ -233,9 +233,27 @@ def write_report(report: Report, output: str,
         print(unrecognized_output_message(output))
 
 
+def deliver(report: Report, verdict: Verdict, output: str | None,
+            rows: list | None) -> None:
+    """Hand a finished report wherever this run's caller wants it.
+
+    Two destinations, never both: a file of its own, or a row in the
+    caller's table. analyze_one reaches its ending twice -- once on the
+    static-only path where no provider is configured, once on the full
+    one -- and the two used to carry independent copies of `if output:
+    write_report(...)`. Adding a second destination to only one of them is
+    exactly the drift this collapses.
+    """
+    if rows is not None:
+        rows.append((report, verdict))
+    elif output:
+        write_report(report, output, verdict)
+
+
 async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
                       output: str | None = None,
-                      budget: RateBudget | None = None) -> int:
+                      budget: RateBudget | None = None,
+                      rows: list | None = None) -> int:
     """One indicator, start to finish: resolve, fetch, score, render, exit.
 
     This is the whole of what `run_cli` used to be, with three arguments
@@ -254,8 +272,21 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
       budget per indicator would let a 100-line batch make 100 first
       requests inside one minute -- the exact failure Part D exists to
       stop.
+    - `rows`, for a batch writing ONE table rather than a file per
+      indicator. Given a list, this appends its `(report, verdict)` pair to
+      it and writes no file of its own; the batch owns the single write.
+      It takes precedence over `output`, and the line below is what makes
+      that true rather than merely documented -- see the comment there.
     """
-    output = output or args.output
+    # `rows` and `output` are alternatives, and this is the line that makes
+    # that so. run_batch passes output=None when it is accumulating a
+    # table, but the fallback to args.output would immediately resurrect
+    # the aggregate path it deliberately withheld -- leaving both
+    # destinations live, and the whole thing resting on deliver() testing
+    # `rows` first. Anything added here that keys off `output` (a "wrote
+    # report to X" line, a writability check) would then believe it owns a
+    # path the batch is going to write itself.
+    output = None if rows is not None else (output or args.output)
 
     # Static analysis runs before any network call and before check_env() --
     # both above the point that used to bail early. A sample nobody has ever
@@ -324,8 +355,7 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
         )
         verdict = score(report)
         render(report, verdict)
-        if output:
-            write_report(report, output, verdict)
+        deliver(report, verdict, output, rows)
         return exit_code(verdict)
 
     print("Pulling data from every source that answers for "
@@ -406,8 +436,7 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
     verdict = score(report)
     render(report, verdict)
 
-    if output:
-        write_report(report, output, verdict)
+    deliver(report, verdict, output, rows)
 
     return exit_code(verdict)
 

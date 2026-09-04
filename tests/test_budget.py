@@ -635,7 +635,8 @@ async def test_the_shared_budget_is_closed_even_when_a_run_raises(monkeypatch):
 
     seen = _stub_cli(monkeypatch)
 
-    async def boom(user_input, args, cache=None, output=None, budget=None):
+    async def boom(user_input, args, cache=None, output=None, budget=None,
+                   rows=None):
         raise RuntimeError("provider blew up")
 
     monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)

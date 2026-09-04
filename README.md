@@ -120,9 +120,30 @@ without ever running two lookups at once, which is what the budget is for.
 
 With `-o`, each indicator gets its own file — `report-1-198.51.100.10.json`,
 `report-2-evil.example.json` — rather than the same path being overwritten
-once per indicator. The exit code is the **most severe** of the runs, not the
-last: a batch that found one malicious sample exits `2` even if everything
-after it was clean.
+once per indicator.
+
+**`.csv` is the exception, and deliberately so.** A batch writing CSV produces
+**one table** at exactly the path you named: a header and one row per
+indicator, which is the triage queue the format exists for and what you would
+otherwise have to reassemble by hand from N single-row files. So `-o` means
+*the file* for CSV and *the filename stem* for every other format — each does
+what its format can actually express. A line that fails before it produces a
+report still gets a row, carrying the reason in the `errors` column and no
+verdict at all, so the table's row count always matches the list's; a table
+that silently dropped the indicators that failed would read as an all-clear
+for something nobody checked. **An interrupted batch keeps the rows it
+finished** — Ctrl-C on line 40 of 100 leaves a table of the 39 lookups you
+already paid for. If the path cannot be written, you are told before the
+first lookup rather than after the last, and a write that fails anyway exits
+non-zero rather than reporting a clean run against a file that is not there.
+
+One caveat the table inherits: a ZIP holding several files contributes one
+row, for the first file, because that is what a single run analyzes. The
+others are named on the console as `not analyzed` and appear nowhere in the
+CSV.
+
+The exit code is the **most severe** of the runs, not the last: a batch that
+found one malicious sample exits `2` even if everything after it was clean.
 
 **Pivoting.** `--pivot-depth N` takes the sibling domains crt.sh reported and
 looks *those* up too, N levels deep. It is off by default.
