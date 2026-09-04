@@ -25,7 +25,8 @@ def _stub_analyze(monkeypatch, codes=None):
     seen = []
     answers = list(codes or [])
 
-    async def fake_analyze_one(user_input, args, cache=None, output=None):
+    async def fake_analyze_one(user_input, args, cache=None, output=None,
+                                budget=None):
         seen.append((user_input, cache, output))
         return answers.pop(0) if answers else EXIT_CLEAN
 
@@ -140,7 +141,8 @@ async def test_one_failing_indicator_does_not_discard_the_rest(monkeypatch, caps
     remaining indicators still run."""
     seen = []
 
-    async def sometimes_boom(user_input, args, cache=None, output=None):
+    async def sometimes_boom(user_input, args, cache=None, output=None,
+                             budget=None):
         seen.append(user_input)
         if user_input == "b":
             raise RuntimeError("provider blew up")
@@ -170,7 +172,7 @@ async def test_the_shared_cache_is_closed_even_when_a_run_raises(monkeypatch):
     monkeypatch.setattr("hash_searcher.batch.ResponseCache",
                         lambda **kw: made.append(FakeCache()) or made[-1])
 
-    async def boom(user_input, args, cache=None, output=None):
+    async def boom(user_input, args, cache=None, output=None, budget=None):
         raise RuntimeError("provider blew up")
 
     monkeypatch.setattr("hash_searcher.batch.analyze_one", boom)
@@ -237,7 +239,8 @@ async def test_a_single_indicator_run_is_not_a_batch(monkeypatch):
     monkeypatch.setattr("hash_searcher.batch.run_batch", fail)
     seen = []
 
-    async def fake_analyze_one(user_input, args, cache=None, output=None):
+    async def fake_analyze_one(user_input, args, cache=None, output=None,
+                                budget=None):
         seen.append(user_input)
         return EXIT_CLEAN
 

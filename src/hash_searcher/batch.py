@@ -1,8 +1,9 @@
 """Running one list of indicators, and answering for the list as a whole.
 
-Two things belong here that a single run has no opinion about: the cache is
-opened once for the batch rather than once per indicator, and the process
-exit code is the most severe of the runs rather than the last of them.
+Two things belong here that a single run has no opinion about: the cache and
+the VirusTotal rate budget are opened once for the batch rather than once
+per indicator, and the process exit code is the most severe of the runs
+rather than the last of them.
 
 Imports cli rather than the other way round. cli.run_cli defers its import
 of this module for exactly that reason -- see the comment there.
@@ -11,6 +12,7 @@ of this module for exactly that reason -- see the comment there.
 import os
 import re
 
+from .budget import RateBudget
 from .cache import ResponseCache
 from .cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
@@ -79,12 +81,18 @@ def batch_output_path(output: str, index: int, indicator: str) -> str:
 
 
 async def run_batch(indicators: list[str], args) -> int:
-    """Every indicator in turn, over one cache, answering as a whole.
+    """Every indicator in turn, over one cache and one budget, answering as
+    a whole.
 
     Serial rather than concurrent, deliberately: every provider here rate
     limits, several are serial within a single run already, and running
     N indicators at once would multiply the request rate by N against
     exactly the free tiers Constraint 8 exists to protect.
+
+    Serial is not on its own enough for VirusTotal, though, which is why
+    the budget is opened here beside the cache and shared: four requests a
+    minute is a ceiling a batch of five reaches without ever running two
+    lookups at once.
     """
     if not indicators:
         print("No indicators to check.")
@@ -99,6 +107,10 @@ async def run_batch(indicators: list[str], args) -> int:
         return EXIT_NO_DATA
 
     cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
+    # None is how --ignore-budget is spelled all the way down: analyze_one
+    # sees a budget it did not open and does not open one of its own, and
+    # data_puller enforces nothing.
+    budget = None if args.ignore_budget else RateBudget()
     codes = []
     try:
         for index, indicator in enumerate(indicators):
@@ -107,7 +119,7 @@ async def run_batch(indicators: list[str], args) -> int:
                       if args.output else None)
             try:
                 codes.append(await analyze_one(indicator, args, cache=cache,
-                                               output=output))
+                                               output=output, budget=budget))
             except Exception as e:
                 # A batch is the mode where partial results matter most: a
                 # 100-line run that dies on line 3 has already paid for
@@ -121,4 +133,6 @@ async def run_batch(indicators: list[str], args) -> int:
                 codes.append(EXIT_NO_DATA)
     finally:
         cache.close()
+        if budget is not None:
+            budget.close()
     return worst_exit_code(codes)

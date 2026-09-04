@@ -166,7 +166,7 @@ async def test_the_flag_reaches_data_puller(monkeypatch):
 
     seen = []
 
-    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0):
+    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         seen.append(pivot_depth)
         return {"vt": {}, "otx": {}, "ipdb": [], "censys": [], "ips": [],
                 "domains": [], "rdap": [], "crtsh": [], "shodan": {},

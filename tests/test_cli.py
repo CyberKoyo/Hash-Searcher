@@ -108,7 +108,7 @@ def _stub_data_puller(monkeypatch, raw):
     """
     payload = {**EMPTY_RAW, **raw}
 
-    async def _fake(indicator, cache, extra_ips=None, pivot_depth=0):
+    async def _fake(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         return payload
     monkeypatch.setattr("hash_searcher.cli.data_puller", _fake)
 
@@ -423,7 +423,7 @@ async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatc
     monkeypatch.setattr("hash_searcher.cli.analyze",
                         lambda path, yara_rules=None: order.append("static"))
 
-    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0):
+    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         order.append("network")
         return dict(EMPTY_RAW)
 
@@ -689,7 +689,7 @@ def _capture_data_puller(monkeypatch):
     """Record what data_puller was handed, and return an empty raw dict."""
     seen = []
 
-    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0):
+    async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         seen.append((indicator, extra_ips))
         return dict(EMPTY_RAW)
 
