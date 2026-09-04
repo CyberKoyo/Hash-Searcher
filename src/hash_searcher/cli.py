@@ -19,6 +19,7 @@ from .api.api_data_puller import (
     PIVOT_FETCH_BUDGET, data_puller, resolve_indicator,
 )
 from .api.base_call import error_status, make_error
+from .budget import VT_PER_DAY, VT_PER_MINUTE, RateBudget
 from .cache import ResponseCache
 from .hashing import check_env
 from .models import Report, Verdict
@@ -87,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zip-password", help="password for an encrypted ZIP")
     parser.add_argument("--no-cache", action="store_true", help="ignore and bypass the cache")
     parser.add_argument("--refresh", action="store_true", help="force fresh calls, then re-cache")
+    parser.add_argument("--ignore-budget", dest="ignore_budget",
+                        action="store_true",
+                        help=f"do not hold VirusTotal to "
+                             f"{VT_PER_MINUTE} requests/minute and "
+                             f"{VT_PER_DAY}/day -- those are the free "
+                             f"tier's limits, and a paid key is not bound "
+                             f"by them")
     parser.add_argument("--pivot-depth", dest="pivot_depth", type=_depth,
                         default=0, metavar="N",
                         help=f"look up domains discovered through crt.sh, N "
@@ -226,7 +234,8 @@ def write_report(report: Report, output: str,
 
 
 async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
-                      output: str | None = None) -> int:
+                      output: str | None = None,
+                      budget: RateBudget | None = None) -> int:
     """One indicator, start to finish: resolve, fetch, score, render, exit.
 
     This is the whole of what `run_cli` used to be, with three arguments
@@ -240,6 +249,11 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
       open one here and close it before returning.
     - `output`, so `-o report.json` over a batch writes one file per
       indicator instead of overwriting the same file N times.
+    - `budget`, for the same reason as `cache` and more urgently: a
+      VirusTotal quota is spent by the run, not by the indicator, and a
+      budget per indicator would let a 100-line batch make 100 first
+      requests inside one minute -- the exact failure Part D exists to
+      stop.
     """
     output = output or args.output
 
@@ -319,14 +333,23 @@ async def analyze_one(user_input: str, args, cache: ResponseCache | None = None,
     own_cache = cache is None
     if own_cache:
         cache = ResponseCache(enabled=not args.no_cache, refresh=args.refresh)
+    # Owned independently of the cache, because the two are not tied: the
+    # budget is deliberately unaffected by --no-cache (a run that caches
+    # nothing makes MORE requests, not fewer), and --ignore-budget is the
+    # only thing that turns it off.
+    own_budget = budget is None and not args.ignore_budget
+    if own_budget:
+        budget = RateBudget()
     try:
         raw = await data_puller(indicator, cache, extra_ips=extra_ips,
-                                pivot_depth=args.pivot_depth)
+                                pivot_depth=args.pivot_depth, budget=budget)
     finally:
-        # Only whoever opened it may close it: a batch's cache outlives
-        # every individual run in it.
+        # Only whoever opened it may close it: a batch's cache and budget
+        # both outlive every individual run in it.
         if own_cache:
             cache.close()
+        if own_budget:
+            budget.close()
     if not raw:
         print("No data was able to be pulled.")
         return EXIT_NO_DATA

@@ -142,6 +142,45 @@ def _otx_type(indicator: Indicator) -> str:
 #: a domain is not one.
 VT_HASH_ONLY = "VirusTotal answers for file hashes only"
 
+#: The display name the budget refusal is written under. "virustotal" is the
+#: registry key the budget counts against; this is what a human reads.
+VT_DISPLAY = "VirusTotal"
+
+
+async def _budgeted(budget, provider: str, display: str, fetch):
+    """`fetch()`, unless `provider` has no rate budget left.
+
+    Wrapped around the fetch _cached calls, not around _cached itself, and
+    that placement is the whole contract: _cached awaits its fetch hook only
+    on a miss, so a cache hit never reaches here and never spends budget.
+    Charging a hit would be charging for a request that was not made.
+
+    `budget=None` enforces nothing -- that is --ignore-budget, and it is
+    also every caller written before this existed.
+
+    The refusal is a plain error dict, so it travels the path Task A3 built:
+    SourceResult reads it as a failure, and VTReport.unavailable reads it as
+    "we could not ask" rather than as "VirusTotal has no record". Those are
+    opposite claims and only one of them is about the sample.
+    """
+    if budget is None:
+        return await fetch()
+    if not budget.allows(provider):
+        return make_error(
+            f"{display} rate budget exhausted; retry in "
+            f"{budget.wait_seconds(provider):.0f}s")
+    # Recorded before the call rather than after: the request is about to
+    # leave whatever comes back, and a 404 counts against the quota exactly
+    # as a hit does. Recording afterwards would also lose the call entirely
+    # if the fetch raised.
+    #
+    # Known undercount: base_call retries a 429 or a 5xx up to MAX_ATTEMPTS
+    # times, so one fetch can be three requests while this charges one. It
+    # errs toward letting a call through, which is the right direction for a
+    # limit whose real enforcement is on the server.
+    budget.record(provider)
+    return await fetch()
+
 
 async def _bounded_gather(limit: int, *coroutines):
     """gather(), but at most `limit` in flight.
@@ -431,7 +470,8 @@ async def _pivot_domains(client, cache, pool, domain_sources, seeded,
 
 async def data_puller(indicator: Indicator, cache,
                       extra_ips: list[str] | None = None,
-                      pivot_depth: int = 0):
+                      pivot_depth: int = 0,
+                      budget=None):
     """Every source that can answer for `indicator`, fanned out once.
 
     The entry is keyed by the indicator's kind rather than assuming a hash
@@ -446,6 +486,11 @@ async def data_puller(indicator: Indicator, cache,
     `pivot_depth` levels of newly discovered domains are looked up after
     the first pass, capped at PIVOT_FETCH_BUDGET lookups in total. 0, the
     default, is exactly the behavior that came before it.
+
+    `budget` is a RateBudget, and it gates the VirusTotal call and nothing
+    else -- VT is the one source here with a published per-minute ceiling
+    low enough (four) for a single batch line to walk into. None enforces
+    nothing, which is both --ignore-budget and every pre-Part-D caller.
     """
     _require_indicator(indicator)
     if pivot_depth < 0:
@@ -519,7 +564,8 @@ async def data_puller(indicator: Indicator, cache,
         elif "virustotal" in hash_sources:
             vt_data = await _cached(
                 cache, indicator.value,
-                lambda: get_vt(client, indicator.value),
+                lambda: _budgeted(budget, "virustotal", VT_DISPLAY,
+                                  lambda: get_vt(client, indicator.value)),
                 provider=by_name("virustotal", pool)
             )
             vt_ips = contacted_ips(vt_data)

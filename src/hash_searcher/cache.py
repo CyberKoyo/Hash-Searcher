@@ -21,6 +21,44 @@ def cache_path() -> Path:
     return Path(root) / "hash-searcher" / "responses.db"
 
 
+def open_db(path: Path, ddl: tuple[str, ...], what: str):
+    """Connect to the shared database and apply `ddl`, or None if we can't.
+
+    Two things keep tables in this one file -- the response cache and the
+    rate budget -- and they open it separately rather than sharing a
+    connection, because --no-cache closes the cache's and the budget has to
+    outlive that. So the open-and-degrade dance lives here rather than in
+    either of them.
+
+    Degrading rather than raising, because a file that is not a valid
+    SQLite database used to come back out of __init__ uncaught and brick
+    every subsequent run until the user found and deleted it by hand.
+    sqlite3.connect() does not itself notice -- the first statement is what
+    raises -- which is why the DDL runs inside this try and not after it.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
+        for statement in ddl:
+            conn.execute(statement)
+        conn.commit()
+        return conn
+    except (sqlite3.Error, OSError) as e:
+        print(f"Warning: could not open the {what} at {path} ({e}); "
+              f"continuing without a {what}.")
+        return None
+
+
+RESPONSES_DDL = (
+    "CREATE TABLE IF NOT EXISTS responses ("
+    " provider TEXT NOT NULL,"
+    " key TEXT NOT NULL,"
+    " stored_at REAL NOT NULL,"
+    " payload TEXT NOT NULL,"
+    " PRIMARY KEY (provider, key))",
+)
+
+
 class ResponseCache:
     def __init__(self, path=None, enabled: bool = True, refresh: bool = False):
         self.enabled = enabled
@@ -29,24 +67,8 @@ class ResponseCache:
         if not enabled:
             return
         path = Path(path) if path else cache_path()
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(path)
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS responses ("
-                " provider TEXT NOT NULL,"
-                " key TEXT NOT NULL,"
-                " stored_at REAL NOT NULL,"
-                " payload TEXT NOT NULL,"
-                " PRIMARY KEY (provider, key))"
-            )
-            conn.commit()
-            self._conn = conn
-        except (sqlite3.Error, OSError) as e:
-            print(f"Warning: could not open cache at {path} ({e}); "
-                  "continuing without a cache.")
-            self.enabled = False
-            self._conn = None
+        self._conn = open_db(path, RESPONSES_DDL, "response cache")
+        self.enabled = self._conn is not None
 
     def get(self, provider: str, key: str, ttl: int = DEFAULT_TTL):
         if not self._conn or self.refresh:

@@ -17,6 +17,8 @@ Report Production: Automatically formatted output — JSON, PDF, CSV, or Markdow
 
 Cache System: Every provider response is cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). The TTL is chosen per source rather than shared — ThreatFox turns over hourly, RDAP registration data on the order of years — and the exact numbers are in the 🔌 Sources table. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
+Rate Budget: VirusTotal calls are counted against **4 requests/minute and 500/day** and refused locally once either ceiling is reached, rather than being sent and rejected. **Those two numbers describe VirusTotal's free tier** — if your key is a paid one, pass `--ignore-budget` and neither applies. The tally is a second table in the same SQLite database, so a daily count survives between runs; only real requests are counted, so a cache hit costs nothing, and `--no-cache` does not turn the budget off (a run that caches nothing makes more requests, not fewer). A refused call is reported as *VirusTotal was not reachable*, never as *VirusTotal has no record* — the first is a fact about this run, the second would be a claim about the sample.
+
 Local Static Analysis: Before any network call, a supplied file (not a bare hash) is inspected locally -- entropy, a file-type-versus-extension check, and printable-string/IOC extraction always run; PE parsing and YARA scanning run when their optional libraries are installed. See 🔬 Static Analysis below.
 
 🛠️ Setup
@@ -41,7 +43,7 @@ recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
     hash-searcher <indicator | - > [-o report.EXT]
                   [--input-file PATH] [--pivot-depth N]
                   [--zip-password PASSWORD] [--no-cache] [--refresh]
-                  [--no-static] [--yara-rules DIR]
+                  [--ignore-budget] [--no-static] [--yara-rules DIR]
 
 Accepts an MD5/SHA-1/SHA-256 digest, a path to a file, an IP address, a
 domain, or a URL. Whichever it is decides which sources run — an IP goes to
@@ -68,6 +70,9 @@ named `evil.example` in the working directory is hashed, not resolved.
     --zip-password PASS   password for an encrypted ZIP; prompts if omitted
     --no-cache            ignore and bypass the cache
     --refresh             force fresh calls, then re-cache
+    --ignore-budget       do not hold VirusTotal to 4 requests/minute and
+                          500/day — those are the free tier's limits, and a
+                          paid key is not bound by them
     --no-static           skip local static analysis (entropy, PE, YARA, strings)
     --yara-rules DIR      scan against this directory of .yar/.yara rules
                           instead of the default (see 🔬 Static Analysis)
@@ -105,10 +110,13 @@ skipped, so a list pasted straight out of a report works:
     cut -f2 iocs.tsv | hash-searcher -
     hash-searcher --input-file iocs.txt -o report.json
 
-A batch opens **one** cache for the whole run, so two indicators that share
-a contacted IP cost one lookup rather than two. It runs serially on purpose:
-every provider here rate limits, and N indicators at once would multiply the
-request rate by N.
+A batch opens **one** cache and **one** rate budget for the whole run, so two
+indicators that share a contacted IP cost one lookup rather than two, and the
+VirusTotal quota is spent by the run rather than by the line. It runs serially
+on purpose: every provider here rate limits, and N indicators at once would
+multiply the request rate by N. Serial is not enough for VirusTotal on its
+own, though — four requests a minute is a ceiling a five-line list reaches
+without ever running two lookups at once, which is what the budget is for.
 
 With `-o`, each indicator gets its own file — `report-1-198.51.100.10.json`,
 `report-2-evil.example.json` — rather than the same path being overwritten
