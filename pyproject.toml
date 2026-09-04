@@ -3,9 +3,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hash_searcher"
+name = "ioc_inquest"
 version = "0.1.0"
-description = "Pulls data about a file or hash from eleven intelligence sources: VirusTotal, AbuseIPDB, Censys, OTX, abuse.ch MalwareBazaar/ThreatFox, Shodan InternetDB, GreyNoise, crt.sh, RDAP, and the CISA KEV catalog."
+description = "Pulls data about a file, hash, IP, domain, or URL from eleven intelligence sources: VirusTotal, AbuseIPDB, Censys, OTX, abuse.ch MalwareBazaar/ThreatFox, Shodan InternetDB, GreyNoise, crt.sh, RDAP, and the CISA KEV catalog."
 authors = [{name = "Koyo Keiter"}]
 requires-python = ">=3.10"
 dependencies = [
@@ -16,13 +16,13 @@ dependencies = [
 ]
 
 [project.scripts]
-hash-searcher = "hash_searcher.cli:run"
+ioc-inquest = "ioc_inquest.cli:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-hash_searcher = ["data/*.json"]
+ioc_inquest = ["data/*.json"]
 
 [project.optional-dependencies]
 dev = [

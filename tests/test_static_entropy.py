@@ -3,31 +3,31 @@ import os
 
 def test_shannon_of_uniform_bytes_is_maximal():
     """256 distinct byte values, each exactly once: 8.0 bits per byte."""
-    from hash_searcher.static.entropy import shannon
+    from ioc_inquest.static.entropy import shannon
 
     assert shannon(bytes(range(256))) == 8.0
 
 
 def test_shannon_of_a_single_repeated_byte_is_zero():
-    from hash_searcher.static.entropy import shannon
+    from ioc_inquest.static.entropy import shannon
 
     assert shannon(b"\x00" * 4096) == 0.0
 
 
 def test_shannon_of_empty_input_is_zero_not_a_zero_division():
-    from hash_searcher.static.entropy import shannon
+    from ioc_inquest.static.entropy import shannon
 
     assert shannon(b"") == 0.0
 
 
 def test_english_text_lands_in_the_expected_middle_band():
-    from hash_searcher.static.entropy import shannon
+    from ioc_inquest.static.entropy import shannon
 
     assert 3.5 < shannon(b"the quick brown fox jumps over the lazy dog. " * 100) < 4.8
 
 
 def test_a_high_entropy_file_is_flagged_as_packed(tmp_path):
-    from hash_searcher.static.entropy import PACKED_AT, analyze_entropy
+    from ioc_inquest.static.entropy import PACKED_AT, analyze_entropy
 
     target = tmp_path / "packed.bin"
     target.write_bytes(os.urandom(64 * 1024))
@@ -39,7 +39,7 @@ def test_a_high_entropy_file_is_flagged_as_packed(tmp_path):
 
 
 def test_a_plain_text_file_is_not_flagged(tmp_path):
-    from hash_searcher.static.entropy import analyze_entropy
+    from ioc_inquest.static.entropy import analyze_entropy
 
     target = tmp_path / "plain.txt"
     target.write_text("hello world\n" * 5000)
@@ -54,7 +54,7 @@ def test_entropy_reads_at_most_the_cap(tmp_path):
     truncated read of a uniform file gives the same number either way, which
     would make this test pass against an uncapped implementation.
     """
-    from hash_searcher.static import entropy
+    from ioc_inquest.static import entropy
 
     target = tmp_path / "big.bin"
     target.write_bytes(os.urandom(1024 * 1024))
@@ -84,7 +84,7 @@ def test_entropy_reads_at_most_the_cap(tmp_path):
 
 def test_entropy_on_zero_byte_file_on_disk(tmp_path):
     """Finding 2: test analyze_entropy / file_entropy against zero-byte file."""
-    from hash_searcher.static.entropy import analyze_entropy
+    from ioc_inquest.static.entropy import analyze_entropy
 
     target = tmp_path / "empty.bin"
     target.write_bytes(b"")
@@ -101,7 +101,7 @@ def test_packed_flag_pins_the_boundary(tmp_path):
     Creates data with mixed entropy levels just under and just over 7.2 to
     ensure the > comparison is enforced.
     """
-    from hash_searcher.static.entropy import PACKED_AT, analyze_entropy
+    from ioc_inquest.static.entropy import PACKED_AT, analyze_entropy
 
     # Data below 7.2: mix 80% random (ent ~8.0) + 20% null bytes (ent 0.0)
     # Expected entropy: ~6.4

@@ -1,18 +1,18 @@
 """Coverage for data_puller's provider-gating logic (Task 13).
 
 These monkeypatch `available` and the four fetch coroutines as they are bound
-into hash_searcher.api.api_data_puller, never touching real environment state
+into ioc_inquest.api.api_data_puller, never touching real environment state
 or the network, so the tests are deterministic regardless of which API keys
 (if any) happen to be set on the machine running them.
 """
 
 import pytest
 
-from hash_searcher.api.api_data_puller import data_puller
-from hash_searcher.api.base_call import error_message, is_error, make_error
-from hash_searcher.api.registry import Provider, by_name
-from hash_searcher.cache import ResponseCache
-from hash_searcher.indicators import Indicator
+from ioc_inquest.api.api_data_puller import data_puller
+from ioc_inquest.api.base_call import error_message, is_error, make_error
+from ioc_inquest.api.registry import Provider, by_name
+from ioc_inquest.cache import ResponseCache
+from ioc_inquest.indicators import Indicator
 
 FAKE_VT_DATA = {
     "data": {"relationships": {"contacted_ips": {"data": [{"id": "198.51.100.10"}]}}}
@@ -83,7 +83,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
     even though `ips` is non-empty.
     """
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider("virustotal")],
     )
 
@@ -92,10 +92,10 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
     ipdb_stub = _Recorder(None)
     censys_stub = _Recorder(None)
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", otx_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", ipdb_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.fetch_censys", censys_stub)
 
     result = await data_puller(Indicator("hash", "deadbeef"), ResponseCache(enabled=False))
 
@@ -133,7 +133,7 @@ async def test_data_puller_runs_with_only_a_virustotal_key(monkeypatch):
 async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkeypatch):
     """Zero keys: every slot degrades to make_error(...) and nothing fires."""
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [],
     )
 
@@ -142,10 +142,10 @@ async def test_data_puller_returns_error_slots_when_no_keys_are_available(monkey
     ipdb_stub = _Recorder(None)
     censys_stub = _Recorder(None)
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", otx_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", ipdb_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.fetch_censys", censys_stub)
 
     result = await data_puller(Indicator("hash", "deadbeef"), ResponseCache(enabled=False))
 
@@ -187,8 +187,8 @@ async def test_a_second_run_serves_virustotal_from_the_cache(monkeypatch, tmp_pa
         calls.append(file_hash)
         return {"data": {"attributes": {}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal")])
 
     cache = ResponseCache(path=tmp_path / "c.db")
@@ -213,11 +213,11 @@ async def test_otx_and_abuseipdb_are_cached_too(monkeypatch, tmp_path):
         ipdb_calls.append(ip)
         return {"data": {"ipAddress": ip, "abuseConfidenceScore": 10}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", fake_get_otx)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_get_ipdb)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", fake_get_otx)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", fake_get_ipdb)
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider("virustotal"), _provider("otx"), _provider("abuseipdb")],
     )
 
@@ -239,8 +239,8 @@ async def test_refresh_bypasses_the_cache_for_every_provider(monkeypatch, tmp_pa
         calls.append(file_hash)
         return {"data": {"attributes": {}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal")])
 
     path = tmp_path / "c.db"
@@ -266,8 +266,8 @@ async def test_no_cache_disables_caching_entirely(monkeypatch, tmp_path):
         calls.append(file_hash)
         return {"data": {"attributes": {}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal")])
 
     for _ in range(2):
@@ -281,8 +281,8 @@ async def test_no_cache_disables_caching_entirely(monkeypatch, tmp_path):
 async def test_ips_harvested_from_strings_reach_abuseipdb(monkeypatch):
     """Closing the loop: a sample nobody has uploaded still yields IPs to
     enrich, which is the entire argument for the strings analyzer."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.cache import ResponseCache
 
     seen = []
 
@@ -290,8 +290,8 @@ async def test_ips_harvested_from_strings_reach_abuseipdb(monkeypatch):
         seen.append(ip)
         return {"data": {"ipAddress": ip, "abuseConfidenceScore": 10}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("abuseipdb")])
 
     await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False),
@@ -302,8 +302,8 @@ async def test_ips_harvested_from_strings_reach_abuseipdb(monkeypatch):
 async def test_extra_ips_merge_with_vts_own_without_duplicating(monkeypatch):
     """An IP that VT reported AND the strings contain must be looked up once,
     not twice -- AbuseIPDB's free tier is 1000 requests/day."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.cache import ResponseCache
 
     seen = []
 
@@ -316,9 +316,9 @@ async def test_extra_ips_merge_with_vts_own_without_duplicating(monkeypatch):
             "data": [{"id": "198.51.100.10"}]
         }}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("abuseipdb")])
 
     await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False),
@@ -331,9 +331,9 @@ async def test_extra_ips_merge_is_capped_at_ioc_limit(monkeypatch):
     report its own IPs. The merge must not concatenate the two into
     something bigger than the cap -- that is the exact failure this task
     exists to prevent."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.api.api_data_puller import IOC_LIMIT
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.api.api_data_puller import IOC_LIMIT
+    from ioc_inquest.cache import ResponseCache
 
     seen = []
 
@@ -346,9 +346,9 @@ async def test_extra_ips_merge_is_capped_at_ioc_limit(monkeypatch):
             "data": [{"id": "10.0.0.1"}, {"id": "10.0.0.2"}]
         }}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", fake_ipdb)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", fake_ipdb)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("abuseipdb")])
 
     extra = [f"203.0.113.{i}" for i in range(IOC_LIMIT)]  # already at the cap
@@ -369,8 +369,8 @@ async def test_a_failed_virustotal_call_is_not_cached(monkeypatch, tmp_path):
         calls.append(file_hash)
         return make_error("VirusTotal API Error 503", 503)
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_get_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_get_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal")])
 
     cache = ResponseCache(path=tmp_path / "c.db")
@@ -385,9 +385,9 @@ async def test_only_providers_for_the_indicator_type_are_called(monkeypatch):
     """Constraint 5: a domain-only source must never be handed a hash. The
     bug this prevents is silent -- crt.sh would answer 200 with an empty
     list for a hash query, so nothing would look wrong."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.api.registry import Provider
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.api.registry import Provider
+    from ioc_inquest.cache import ResponseCache
 
     called = []
 
@@ -399,9 +399,9 @@ async def test_only_providers_for_the_indicator_type_are_called(monkeypatch):
         # No relationships block: no contacted IPs, no contacted domains.
         return {"data": {"attributes": {}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_crtsh", spy_crtsh)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_crtsh", spy_crtsh)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available", lambda: [
         Provider("virustotal", None, ("hash",), fake_vt),
         Provider("crtsh", None, ("domain",), spy_crtsh),
     ])
@@ -414,9 +414,9 @@ async def test_the_kev_catalog_is_not_fetched_when_shodan_found_no_cves(monkeypa
     """KEV is a 1MB download. Pulling it for a sample with nothing to
     intersect it against is the waste the local-intersection design exists
     to avoid."""
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.api.registry import Provider
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.api.registry import Provider
+    from ioc_inquest.cache import ResponseCache
 
     fetched = []
 
@@ -431,10 +431,10 @@ async def test_the_kev_catalog_is_not_fetched_when_shodan_found_no_cves(monkeypa
     async def fake_shodan(client, ip, **kwargs):
         return {"ports": [80], "vulns": []}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_kev", spy_kev)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", fake_shodan)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_kev", spy_kev)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_shodan", fake_shodan)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available", lambda: [
         Provider("virustotal", None, ("hash",), fake_vt),
         Provider("shodan", None, ("ip",), fake_shodan),
     ])
@@ -445,9 +445,9 @@ async def test_the_kev_catalog_is_not_fetched_when_shodan_found_no_cves(monkeypa
 
 
 async def test_the_kev_catalog_is_fetched_once_when_a_cve_turns_up(monkeypatch):
-    from hash_searcher.api.api_data_puller import data_puller
-    from hash_searcher.api.registry import Provider
-    from hash_searcher.cache import ResponseCache
+    from ioc_inquest.api.api_data_puller import data_puller
+    from ioc_inquest.api.registry import Provider
+    from ioc_inquest.cache import ResponseCache
 
     fetched = []
 
@@ -462,10 +462,10 @@ async def test_the_kev_catalog_is_fetched_once_when_a_cve_turns_up(monkeypatch):
     async def fake_shodan(client, ip, **kwargs):
         return {"ports": [22], "vulns": ["CVE-2021-41617"]}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_kev", spy_kev)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", fake_shodan)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available", lambda: [
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_kev", spy_kev)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_shodan", fake_shodan)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available", lambda: [
         Provider("virustotal", None, ("hash",), fake_vt),
         Provider("shodan", None, ("ip",), fake_shodan),
     ])
@@ -502,10 +502,10 @@ async def test_threatfox_is_asked_about_every_contacted_ip_not_just_the_sample(m
         asked.append(indicator)
         return THREATFOX_HIT
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox",
                         spy_threatfox)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("threatfox")])
 
     result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
@@ -564,10 +564,10 @@ async def test_the_per_ip_threatfox_lookups_expire_after_an_hour(monkeypatch, tm
         calls.append(indicator)
         return THREATFOX_HIT
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox",
                         spy_threatfox)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"),
                                  _provider("threatfox", cache_ttl=3600)])
 
@@ -601,8 +601,8 @@ async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
     """
     import asyncio
 
-    from hash_searcher.api.api_data_puller import IOC_LIMIT
-    from hash_searcher.api.threatfox import THREATFOX_CONCURRENCY
+    from ioc_inquest.api.api_data_puller import IOC_LIMIT
+    from ioc_inquest.api.threatfox import THREATFOX_CONCURRENCY
 
     file_hash = "a" * 64
     ips = [f"198.51.100.{n}" for n in range(IOC_LIMIT)]
@@ -625,10 +625,10 @@ async def test_the_per_ip_threatfox_fan_out_is_bounded(monkeypatch):
             in_flight.pop()
         return {"query_status": "no_result", "data": []}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox",
                         spy_threatfox)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("threatfox")])
 
     result = await data_puller(Indicator("hash", file_hash), ResponseCache(enabled=False))
@@ -676,9 +676,9 @@ async def test_censys_is_reached_end_to_end_through_data_puller(monkeypatch):
         calls.append(ip)
         return {"ip": ip, "services": []}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_censys", fake_censys)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_censys", fake_censys)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider("virustotal"), _provider("censys")])
 
     result = await data_puller(Indicator("hash", "a" * 64), ResponseCache(enabled=False))
@@ -755,10 +755,10 @@ async def test_every_provider_site_reads_its_timing_from_the_pool_not_the_regist
         return fetch
 
     for namespace, attribute, payload in EVERY_POOL_SITE:
-        monkeypatch.setattr(f"hash_searcher.api.api_data_puller.{attribute}",
+        monkeypatch.setattr(f"ioc_inquest.api.api_data_puller.{attribute}",
                             spy(namespace, payload))
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider(namespace) for namespace, _, _ in EVERY_POOL_SITE],
     )
 
@@ -771,7 +771,7 @@ async def test_every_provider_site_reads_its_timing_from_the_pool_not_the_regist
     # test_fetch_serial_reads_serial_delay_from_the_passed_provider. Here it
     # is a measurement rather than a speed fix: the pool already declares
     # 0.0, and what this records is which number fetch_serial actually read.
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.asyncio.sleep",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.asyncio.sleep",
                         record_sleep)
 
     path = tmp_path / "c.db"
@@ -826,7 +826,7 @@ async def test_fetch_serial_reads_ttl_from_the_passed_provider_not_the_registry(
     entry for at all, proves the coupling is gone: fetch_serial must read
     cache_ttl off the Provider object it is handed, not look one up.
     """
-    from hash_searcher.api.api_data_puller import fetch_serial
+    from ioc_inquest.api.api_data_puller import fetch_serial
 
     provider = Provider(name="fictional", key_env=None, indicator_types=("ip",),
                         fetch=None, cache_ttl=1)
@@ -864,7 +864,7 @@ async def test_cached_reads_ttl_from_the_passed_provider_not_the_registry(tmp_pa
     cache namespace itself -- off the Provider object rather than looking
     either up from a separately-passed name.
     """
-    from hash_searcher.api.api_data_puller import _cached
+    from ioc_inquest.api.api_data_puller import _cached
 
     provider = Provider(name="fictional", key_env=None, indicator_types=("hash",),
                         fetch=None, cache_ttl=1)
@@ -912,9 +912,9 @@ async def test_data_puller_honors_the_patched_pools_cache_ttl_not_the_registrys(
         calls.append(file_hash)
         return {"data": {"attributes": {}}}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", fake_vt)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", fake_vt)
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [Provider(name="virustotal", key_env=None,
                           indicator_types=("hash",), fetch=None,
                           cache_ttl=1)],
@@ -954,14 +954,14 @@ async def test_fetch_serial_reads_serial_delay_from_the_passed_provider(monkeypa
     Not, as this docstring claimed until fix round 2, because no_backoff is
     scoped to base_call. It is not scoped to anything. Measured:
     `base_call.asyncio is api_data_puller.asyncio is asyncio` is True, so
-    monkeypatching "hash_searcher.api.base_call.asyncio.sleep" resolves the
+    monkeypatching "ioc_inquest.api.base_call.asyncio.sleep" resolves the
     dotted path to the one shared asyncio module object and replaces
     asyncio.sleep for the whole process, fetch_serial included. The same is
     true of the patch below: it reads as module-local and is not. Both are
     undone by monkeypatch at teardown, so the reach is a hazard for the next
     reader's mental model rather than for this test.
     """
-    from hash_searcher.api.api_data_puller import fetch_serial
+    from ioc_inquest.api.api_data_puller import fetch_serial
 
     provider = Provider(name="fictional", key_env=None, indicator_types=("ip",),
                         fetch=None, cache_ttl=86400, serial_delay=5.0)
@@ -971,7 +971,7 @@ async def test_fetch_serial_reads_serial_delay_from_the_passed_provider(monkeypa
     async def fake_sleep(seconds):
         slept.append(seconds)
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.asyncio.sleep", fake_sleep)
 
     async def fetch(client, indicator):
         return {"ok": True}
@@ -1014,7 +1014,7 @@ async def test_cached_accepts_exactly_two_of_its_eight_argument_combinations():
     AttributeError three lines later, and _cached's own arguments get the
     same treatment.
     """
-    from hash_searcher.api.api_data_puller import _cached
+    from ioc_inquest.api.api_data_puller import _cached
 
     provider = _provider("otx")
 
@@ -1057,7 +1057,7 @@ async def test_a_provider_name_is_rejected_where_a_provider_belongs():
     take a resolved Provider get it, each naming itself, so no one has to
     guess which of them was handed the wrong thing.
     """
-    from hash_searcher.api.api_data_puller import (
+    from ioc_inquest.api.api_data_puller import (
         _cached, fetch_censys, fetch_serial,
     )
 
@@ -1088,10 +1088,10 @@ async def test_a_provider_name_is_rejected_where_a_provider_belongs():
 
 async def test_an_ip_indicator_reaches_every_ip_source_and_never_virustotal(
         monkeypatch):
-    """`hash-searcher 198.51.100.10`. VT answers for file hashes only, so
+    """`ioc-inquest 198.51.100.10`. VT answers for file hashes only, so
     calling it here would spend a 4-per-minute quota on a guaranteed 404."""
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider(name) for name in
                  ("virustotal", "abuseipdb", "censys", "shodan", "greynoise",
                   "threatfox", "otx")],
@@ -1105,13 +1105,13 @@ async def test_an_ip_indicator_reaches_every_ip_source_and_never_virustotal(
     threatfox_stub = _Recorder({"query_status": "ok"})
     otx_stub = _Recorder({})
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.fetch_censys", censys_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_shodan", shodan_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_greynoise", greynoise_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", ipdb_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.fetch_censys", censys_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_shodan", shodan_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_greynoise", greynoise_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox", threatfox_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", otx_stub)
 
     result = await data_puller(Indicator("ip", "198.51.100.10"),
                                ResponseCache(enabled=False))
@@ -1135,11 +1135,11 @@ async def test_an_ip_indicator_types_its_otx_lookup(monkeypatch):
     """OTX is one endpoint per indicator type. Asking the `file` endpoint
     about an address returns a 404 that reads as "OTX has never seen it"."""
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider("otx")],
     )
     otx_stub = _Recorder({})
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_otx", otx_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_otx", otx_stub)
 
     await data_puller(Indicator("ip", "198.51.100.10"), ResponseCache(enabled=False))
     assert otx_stub.calls[0][1]["indicator_type"] == "IPv4"
@@ -1158,9 +1158,9 @@ async def test_an_ip_indicator_types_its_otx_lookup(monkeypatch):
 
 
 async def test_a_domain_indicator_reaches_the_domain_sources(monkeypatch):
-    """`hash-searcher evil.example`: RDAP, crt.sh, and ThreatFox."""
+    """`ioc-inquest evil.example`: RDAP, crt.sh, and ThreatFox."""
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider(name) for name in
                  ("virustotal", "rdap", "crtsh", "threatfox", "abuseipdb")],
     )
@@ -1171,11 +1171,11 @@ async def test_a_domain_indicator_reaches_the_domain_sources(monkeypatch):
     threatfox_stub = _Recorder({"query_status": "ok"})
     ipdb_stub = _Recorder({"data": {}})
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt", vt_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_rdap", rdap_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_crtsh", crtsh_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_ipdb", ipdb_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt", vt_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_rdap", rdap_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_crtsh", crtsh_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox", threatfox_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_ipdb", ipdb_stub)
 
     result = await data_puller(Indicator("domain", "evil.example"),
                                ResponseCache(enabled=False))
@@ -1193,13 +1193,13 @@ async def test_a_domain_indicator_reaches_the_domain_sources(monkeypatch):
 
 async def test_a_url_indicator_runs_the_domain_sources_over_its_host(monkeypatch):
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider(name) for name in ("rdap", "threatfox")],
     )
     rdap_stub = _Recorder({"handle": "x"})
     threatfox_stub = _Recorder({"query_status": "ok"})
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_rdap", rdap_stub)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_threatfox", threatfox_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_rdap", rdap_stub)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_threatfox", threatfox_stub)
 
     result = await data_puller(Indicator("url", "https://evil.example/a"),
                                ResponseCache(enabled=False))
@@ -1215,10 +1215,10 @@ async def test_a_non_hash_indicator_says_why_virustotal_has_no_answer(monkeypatc
     """Not "VirusTotal key not set" -- the key may be perfectly fine. VT's
     file endpoint simply does not answer for an address."""
     monkeypatch.setattr(
-        "hash_searcher.api.api_data_puller.available",
+        "ioc_inquest.api.api_data_puller.available",
         lambda: [_provider("virustotal")],
     )
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_vt",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_vt",
                         _Recorder(FAKE_VT_DATA))
 
     result = await data_puller(Indicator("ip", "198.51.100.10"),
@@ -1247,7 +1247,7 @@ async def test_a_url_indicator_is_percent_encoded_into_the_otx_path(monkeypatch)
     back read as "OTX has never seen it"."""
     import httpx
 
-    from hash_searcher.api import otx as otx_module
+    from ioc_inquest.api import otx as otx_module
 
     seen = {}
 
@@ -1256,7 +1256,7 @@ async def test_a_url_indicator_is_percent_encoded_into_the_otx_path(monkeypatch)
         seen["not_found"] = kwargs.get("not_found")
         return {}
 
-    monkeypatch.setattr("hash_searcher.api.otx.api_get", fake_api_get)
+    monkeypatch.setattr("ioc_inquest.api.otx.api_get", fake_api_get)
 
     await otx_module.get_otx(None, "https://evil.example/path?q=1",
                              indicator_type="url")
@@ -1280,7 +1280,7 @@ async def test_the_otx_not_found_message_names_what_was_asked_about(
         monkeypatch, indicator_type, subject):
     """A fixed "Hash not found in GetOTX" answered a question nobody asked
     once this provider became reachable for IPs, domains, and URLs."""
-    from hash_searcher.api import otx as otx_module
+    from ioc_inquest.api import otx as otx_module
 
     seen = {}
 
@@ -1288,6 +1288,6 @@ async def test_the_otx_not_found_message_names_what_was_asked_about(
         seen["not_found"] = kwargs.get("not_found")
         return {}
 
-    monkeypatch.setattr("hash_searcher.api.otx.api_get", fake_api_get)
+    monkeypatch.setattr("ioc_inquest.api.otx.api_get", fake_api_get)
     await otx_module.get_otx(None, "x", indicator_type=indicator_type)
     assert seen["not_found"] == f"{subject} not found in GetOTX"

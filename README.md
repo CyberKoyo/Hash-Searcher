@@ -1,5 +1,5 @@
 
-## Hash-Searcher 🔍
+## IOC-Inquest 🔍
 
 A fast, asynchronous Python tool to check hashes, IPs, domains, and URLs across eleven intelligence sources. Five need no account at all, two more need only a free one, and four are commercial-tier keys. Supports password-protected ZIP files and modern AES-256 encryption.
 
@@ -15,7 +15,7 @@ OSINT Formatting: Clean, text-wrapped terminal output for domains and IP relatio
 
 Report Production: Automatically formatted output — JSON, PDF, CSV, or Markdown, chosen by the `-o` file extension. See 📤 Output formats.
 
-Cache System: Every provider response is cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/hash-searcher/responses.db`, or `~/.cache/hash-searcher/responses.db`). The TTL is chosen per source rather than shared — ThreatFox turns over hourly, RDAP registration data on the order of years — and the exact numbers are in the 🔌 Sources table. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
+Cache System: Every provider response is cached in a SQLite database under your user cache directory (`$XDG_CACHE_HOME/ioc-inquest/responses.db`, or `~/.cache/ioc-inquest/responses.db`). The TTL is chosen per source rather than shared — ThreatFox turns over hourly, RDAP registration data on the order of years — and the exact numbers are in the 🔌 Sources table. Errors are never cached, so a transient failure is not pinned for the full TTL. Use `--no-cache` to bypass it or `--refresh` to force fresh calls.
 
 Rate Budget: VirusTotal calls are counted against **4 requests/minute and 500/day** and refused locally once either ceiling is reached, rather than being sent and rejected. **Those two numbers describe VirusTotal's free tier** — if your key is a paid one, pass `--ignore-budget` and neither applies. The tally is a second table in the same SQLite database, so a daily count survives between runs; only real requests are counted, so a cache hit costs nothing, and `--no-cache` does not turn the budget off (a run that caches nothing makes more requests, not fewer). A refused call says so at the point it is refused (`Skipping VirusTotal: rate budget exhausted, retry in 41s`) and is recorded as a source that *could not be reached*, never as one that *has no record* — the first is a fact about this run, the second would be a claim about the sample.
 
@@ -23,7 +23,7 @@ Local Static Analysis: Before any network call, a supplied file (not a bare hash
 
 🛠️ Setup
 
-1. Clone the repo: `git clone https://github.com/yourusername/hash-searcher.git`
+1. Clone the repo: `git clone https://github.com/yourusername/ioc-inquest.git`
 2. Install: `pip install -e .`  (add `[dev]` for the test suite, `[static]` for local static analysis -- see 🔬 Static Analysis below)
 3. Copy `.env.example.txt` to `.env` and fill in whichever keys you have.
    No key is mandatory — the tool runs and reports with an empty `.env` — but
@@ -40,7 +40,7 @@ recorded fixtures under `tests/fixtures/`, and HTTP is mocked with respx.
 
 📖 Usage
 
-    hash-searcher <indicator | - > [-o report.EXT]
+    ioc-inquest <indicator | - > [-o report.EXT]
                   [--input-file PATH] [--pivot-depth N]
                   [--zip-password PASSWORD] [--no-cache] [--refresh]
                   [--ignore-budget] [--no-static] [--yara-rules DIR]
@@ -107,8 +107,8 @@ lookup, so a run does not spend its rate limit on reports it cannot write.
 to read them from a file — one per line, with blank lines and `#` comments
 skipped, so a list pasted straight out of a report works:
 
-    cut -f2 iocs.tsv | hash-searcher -
-    hash-searcher --input-file iocs.txt -o report.json
+    cut -f2 iocs.tsv | ioc-inquest -
+    ioc-inquest --input-file iocs.txt -o report.json
 
 A batch opens **one** cache and **one** rate budget for the whole run, so two
 indicators that share a contacted IP cost one lookup rather than two, and the
@@ -150,7 +150,7 @@ looks *those* up too, N levels deep. It is off by default.
 
 The walk is breadth-first with a visited set and a hard ceiling of **20 extra
 domain lookups per run, whatever N is** (`PIVOT_FETCH_BUDGET` in
-`src/hash_searcher/api/api_data_puller.py`). That ceiling counts *domains*,
+`src/ioc_inquest/api/api_data_puller.py`). That ceiling counts *domains*,
 not requests: each pivoted domain costs one crt.sh call plus one RDAP
 lookup, and RDAP bootstraps through a redirect, so 20 domains is closer to
 60 HTTP requests than to 20. That ceiling is not a
@@ -191,7 +191,7 @@ Three of the analyzers always run, using only the standard library:
 Two more analyzers need optional libraries that are **not** installed by
 default. Install them with:
 
-    pip install 'hash-searcher[static]'
+    pip install 'ioc-inquest[static]'
 
 which adds `pefile`, `yara-python`, and `python-magic`. Without it, the
 tool runs exactly as before -- the gated analyzers are named in the
@@ -205,7 +205,7 @@ check falls back to the built-in signature table instead of `python-magic`.
   `.yar`/`.yara` file under a rules directory. **No rules ship with this
   tool** -- open rulesets are large, fast-moving, and variously licensed,
   so you supply your own. The default directory is
-  `$XDG_DATA_HOME/hash-searcher/yara/` (or `~/.local/share/hash-searcher/yara/`
+  `$XDG_DATA_HOME/ioc-inquest/yara/` (or `~/.local/share/ioc-inquest/yara/`
   if `XDG_DATA_HOME` is unset); a missing directory is a quiet empty
   result, not an error. Point at a different directory with
   `--yara-rules DIR`.
@@ -219,7 +219,7 @@ Without it, `python-magic` fails to import and the file-type check silently
 falls back to the built-in signature table, same as without the extra at
 all.
 
-Run `hash-searcher` with `--no-static` to skip this pass entirely.
+Run `ioc-inquest` with `--no-static` to skip this pass entirely.
 
 Static analysis is heuristic, not a verdict. High entropy, an unusual
 import, or a YARA hit is something to look at, not proof of anything --
@@ -256,7 +256,7 @@ sum:
 | `CLEAN`      | below that  | VT has a record of the file and the evidence did not reach the suspicious threshold. |
 | `UNKNOWN`    | VT has no record of the file **and** local static analysis found no `suspicious_imports` or `yara_local` finding | Nobody has analyzed this sample, online or locally. Not the bottom of the scale — a distinct answer, and it preempts the bands: OTX pulses are reported as a signal but cannot make an unanalyzed file `CLEAN`, and neither can `packed` alone. A `suspicious_imports` or `yara_local` finding is independent evidence the tool itself examined the file and found something, so it escapes this guard even with zero VT record — the file falls through to `CLEAN`/`SUSPICIOUS`/`MALICIOUS` on the score like any other. `packed` still contributes its points once escaped this way, but cannot cause the escape by itself. |
 
-The signals and their weights, all of them in `src/hash_searcher/scoring.py`:
+The signals and their weights, all of them in `src/ioc_inquest/scoring.py`:
 
 | Signal | Points | Fires when |
 |---|---|---|
@@ -320,9 +320,9 @@ skipped when it is unset rather than failing on every run.
 InternetDB, GreyNoise Community, crt.sh, RDAP, and CISA KEV — but every one of
 them answers for an **IP or a domain**, not for a hash. So:
 
-- `hash-searcher <a bare hash>` with no keys returns an empty report. Nothing
+- `ioc-inquest <a bare hash>` with no keys returns an empty report. Nothing
   in the keyless set can say anything about a hash it was handed on its own.
-- `hash-searcher <a file>` with no keys still works, because local static
+- `ioc-inquest <a file>` with no keys still works, because local static
   analysis extracts IPs and domains from the file's strings and those feed the
   keyless IP and domain sources — that is how the Shodan → CVE → CISA KEV chain
   fires with nothing configured.
@@ -396,7 +396,7 @@ one with nothing to report.
 
 Technique IDs from VT and OTX are resolved to names, tactics, and links against
 a reduced ATT&CK Enterprise STIX bundle vendored at
-`src/hash_searcher/data/mitre-attack-enterprise.json` — resolution makes no
+`src/ioc_inquest/data/mitre-attack-enterprise.json` — resolution makes no
 network call, so the offline guarantee holds. Provenance, the pinned release
 tag, both SHA-256 digests, and the refresh command are in
-[`src/hash_searcher/data/README.md`](src/hash_searcher/data/README.md).
+[`src/ioc_inquest/data/README.md`](src/ioc_inquest/data/README.md).

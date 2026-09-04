@@ -7,12 +7,12 @@ which is the same bug class as the PDF's unescaped `<` that cost Phase 2 a
 Critical. A newline does worse -- it ends the row entirely.
 """
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     BazaarReport, CertReport, Detection, IPReport, KEVEntry, KEVReport,
     OTXReport, Report, Signal, SourceResult, ThreatClass, ThreatFoxReport,
     Verdict, VTReport,
 )
-from hash_searcher.render.markdown import to_markdown, write_markdown
+from ioc_inquest.render.markdown import to_markdown, write_markdown
 
 
 def _bare_report(indicator: str = "abc123") -> Report:

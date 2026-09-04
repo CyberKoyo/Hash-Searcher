@@ -7,17 +7,17 @@ from pathlib import Path
 
 def test_console_script_is_declared():
     data = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    assert data["project"]["scripts"]["hash-searcher"] == "hash_searcher.cli:run"
+    assert data["project"]["scripts"]["ioc-inquest"] == "ioc_inquest.cli:run"
 
 
 def test_run_is_importable_and_callable():
-    from hash_searcher.main import run
+    from ioc_inquest.main import run
     assert callable(run)
 
 
 def test_readme_does_not_advertise_a_missing_script():
-    """The second assertion used to be `"hash-searcher " in readme`, which the
-    string "hash-searcher.py is gone" would satisfy. Pin the usage line itself,
+    """The second assertion used to be `"ioc-inquest " in readme`, which the
+    string "ioc-inquest.py is gone" would satisfy. Pin the usage line itself,
     and take the command name from pyproject so a rename cannot leave the
     README documenting a script that no longer exists.
     """
@@ -25,7 +25,7 @@ def test_readme_does_not_advertise_a_missing_script():
     readme = (root / "README.md").read_text()
     scripts = tomllib.loads((root / "pyproject.toml").read_text())["project"]["scripts"]
     name = next(iter(scripts))
-    assert "python hash-searcher.py" not in readme
+    assert "python ioc-inquest.py" not in readme
     # Part B widened the argument from a hash-or-file to any indicator, and
     # added "-" for a stdin batch. Still the whole line rather than a prefix:
     # a rename must redden this, which is the reason it reads the name out of
@@ -42,7 +42,7 @@ def test_readme_documents_every_output_extension():
     README must name the same set. A writer wired into the CLI but missing
     from the table is a format nobody knows exists.
     """
-    from hash_searcher.cli import OUTPUT_FORMATS
+    from ioc_inquest.cli import OUTPUT_FORMATS
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     for extension in OUTPUT_FORMATS:
@@ -73,7 +73,7 @@ def test_readme_documents_the_real_exit_codes():
     them from cli rather than restating them, so renumbering an exit code
     without touching the README fails here.
     """
-    from hash_searcher.cli import _EXIT_BY_LEVEL
+    from ioc_inquest.cli import _EXIT_BY_LEVEL
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     for level, code in _EXIT_BY_LEVEL.items():
@@ -81,7 +81,7 @@ def test_readme_documents_the_real_exit_codes():
 
 
 def test_readme_documents_the_real_verdict_thresholds():
-    from hash_searcher.scoring import MALICIOUS_AT, SUSPICIOUS_AT
+    from ioc_inquest.scoring import MALICIOUS_AT, SUSPICIOUS_AT
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     assert f"score >= {MALICIOUS_AT}" in readme

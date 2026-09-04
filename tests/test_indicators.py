@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from hash_searcher.indicators import (
+from ioc_inquest.indicators import (
     Indicator, classify, domain_of, looks_like_hash, refang, unsupported_reason,
 )
 
@@ -68,7 +68,7 @@ def test_an_existing_path_is_a_file(tmp_path):
 # --- file wins over domain, but only when the file is really there -------
 
 def test_a_path_that_also_reads_as_a_domain_resolves_to_file(monkeypatch, tmp_path):
-    """`hash-searcher evil.example` in a directory holding a file of that
+    """`ioc-inquest evil.example` in a directory holding a file of that
     name must analyze the file. The filesystem is the tiebreaker, because
     it is the only one of the two readings that can be checked."""
     (tmp_path / "evil.example").write_bytes(b"MZ")
@@ -214,7 +214,7 @@ def test_a_ten_thousand_character_input_classifies_promptly(raw):
     "readme.txt", "core.dmp", "phish.eml",
 ])
 def test_a_mistyped_file_path_is_not_answered_with_a_domain_lookup(raw):
-    """`hash-searcher missing.pdf` from the wrong directory ran RDAP and
+    """`ioc-inquest missing.pdf` from the wrong directory ran RDAP and
     crt.sh against a domain named "missing.pdf". A wrong answer wearing a
     confident face is worse than the "this file doesn't exist" message the
     tool has printed since Phase 0 -- which is what classify returning None
@@ -236,7 +236,7 @@ def test_no_filename_extension_is_secretly_a_live_tld():
     """Membership in FILENAME_EXTENSIONS is decided by "not a live TLD",
     and .zip/.mov are the two documented exceptions to that rule. A future
     addition that breaks it silently drops a whole TLD's domains."""
-    from hash_searcher.indicators import FILENAME_EXTENSIONS
+    from ioc_inquest.indicators import FILENAME_EXTENSIONS
 
     live_tlds = {"md", "py", "sh", "js", "io", "com", "zip", "mov", "app",
                  "dev", "so", "ai", "co", "me", "tv", "cc", "ly", "gg"}

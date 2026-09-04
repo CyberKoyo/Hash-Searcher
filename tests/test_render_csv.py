@@ -8,11 +8,11 @@ optional column that is empty rather than the string "None".
 
 import csv
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     BazaarReport, Detection, IPReport, OTXReport, Report, SourceResult,
     ThreatClass, ThreatFoxReport, Verdict, VTReport,
 )
-from hash_searcher.render.csv_out import (
+from ioc_inquest.render.csv_out import (
     CSV_HEADER, failure_row, row, write_csv, write_rendered_rows, write_rows,
 )
 

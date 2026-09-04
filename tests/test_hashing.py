@@ -1,4 +1,4 @@
-from hash_searcher.hashing import check_env, get_reg_hash
+from ioc_inquest.hashing import check_env, get_reg_hash
 
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
@@ -21,14 +21,14 @@ def test_get_reg_hash_spans_multiple_read_buffers(tmp_path):
 
 def test_check_env_warns_but_runs_with_a_partial_key_set(monkeypatch, capsys):
     """A VT-only setup used to sys.exit(1). It must now warn and continue."""
-    from hash_searcher.api.registry import Provider
+    from ioc_inquest.api.registry import Provider
 
     monkeypatch.setattr(
-        "hash_searcher.hashing.missing_keys",
+        "ioc_inquest.hashing.missing_keys",
         lambda: ["OTX_KEY", "IPDB_KEY", "CENSYS_KEY"],
     )
     monkeypatch.setattr(
-        "hash_searcher.hashing.available",
+        "ioc_inquest.hashing.available",
         lambda: [Provider(name="virustotal", key_env=None,
                            indicator_types=(), fetch=None)],
     )
@@ -42,10 +42,10 @@ def test_check_env_warns_but_runs_with_a_partial_key_set(monkeypatch, capsys):
 
 def test_check_env_reports_failure_with_zero_usable_keys(monkeypatch, capsys):
     monkeypatch.setattr(
-        "hash_searcher.hashing.missing_keys",
+        "ioc_inquest.hashing.missing_keys",
         lambda: ["TOTAL_KEY", "OTX_KEY", "IPDB_KEY", "CENSYS_KEY"],
     )
-    monkeypatch.setattr("hash_searcher.hashing.available", lambda: [])
+    monkeypatch.setattr("ioc_inquest.hashing.available", lambda: [])
 
     assert check_env() is False
 

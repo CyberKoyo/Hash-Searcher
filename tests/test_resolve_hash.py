@@ -3,7 +3,7 @@ import hashlib
 import pyzipper
 import pytest
 
-from hash_searcher.api.api_data_puller import looks_like_hash, resolve_hash
+from ioc_inquest.api.api_data_puller import looks_like_hash, resolve_hash
 
 MD5 = "d41d8cd98f00b204e9800998ecf8427e"
 SHA1 = "da39a3ee5e6b4b0d3255bfef95601890afd80709"

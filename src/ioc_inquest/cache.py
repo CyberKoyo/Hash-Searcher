@@ -16,9 +16,38 @@ from .api.base_call import is_error
 DEFAULT_TTL = 86400
 
 
+LEGACY_CACHE_DIR = "hash-searcher"
+
+
 def cache_path() -> Path:
-    root = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
-    return Path(root) / "hash-searcher" / "responses.db"
+    root = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    path = root / "ioc-inquest" / "responses.db"
+    adopt_legacy_db(path, root / LEGACY_CACHE_DIR / "responses.db")
+    return path
+
+
+def adopt_legacy_db(path: Path, legacy: Path) -> None:
+    """Carry a pre-rename database over to the current path, once.
+
+    Renaming the project moved the cache directory out from under every
+    installation that already had one. The response cache alone could be
+    left to rebuild -- that is what a cache is for -- but the same file
+    holds the rate budget's daily tally, and a tally that silently resets
+    is one that lets a run believe it has 500 VirusTotal calls it has
+    already spent.
+
+    An existing database at `path` is the current one and is never
+    overwritten, so this is a no-op on every run after the first. Failing
+    to move leaves the caller with a fresh database rather than no
+    database, which is the same degrade open_db already makes.
+    """
+    if path.exists() or not legacy.exists():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        legacy.replace(path)
+    except OSError:
+        pass
 
 
 def open_db(path: Path, ddl: tuple[str, ...], what: str):

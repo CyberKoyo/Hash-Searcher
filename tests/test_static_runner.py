@@ -19,7 +19,7 @@ def _pretend_absent(monkeypatch, module_name):
     clearing it here, this fake failure would never even reach the
     function body, and the test would pass by reading a stale True.
     """
-    from hash_searcher.static import capabilities
+    from ioc_inquest.static import capabilities
 
     real_import_module = importlib.import_module
 
@@ -36,7 +36,7 @@ def test_capabilities_reports_a_library_that_is_not_installed(monkeypatch):
     """The gate must answer from a real import attempt, not a hardcoded
     list, so an environment without the [static] extra is described
     accurately rather than optimistically."""
-    from hash_searcher.static import capabilities
+    from ioc_inquest.static import capabilities
 
     _pretend_absent(monkeypatch, "pefile")
     try:
@@ -49,14 +49,14 @@ def test_capabilities_reports_a_library_that_is_not_installed(monkeypatch):
 def test_capabilities_rejects_an_unknown_name():
     """A typo must fail loudly here rather than silently disabling an
     analyzer that is in fact installed."""
-    from hash_searcher.static import capabilities
+    from ioc_inquest.static import capabilities
 
     with pytest.raises(KeyError):
         capabilities.have("definitely-not-a-static-library")
 
 
 def test_analyze_runs_every_available_analyzer_and_names_the_skips(tmp_path):
-    from hash_searcher.static.runner import analyze
+    from ioc_inquest.static.runner import analyze
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"MZ" + b"\x00" * 4096)
@@ -75,7 +75,7 @@ def test_analyze_runs_every_available_analyzer_and_names_the_skips(tmp_path):
 def test_one_failing_analyzer_does_not_take_down_the_others(tmp_path, monkeypatch):
     """These parse hostile input; one of them failing is the expected case,
     not the exceptional one. A crash must degrade the report, not the run."""
-    from hash_searcher.static import runner
+    from ioc_inquest.static import runner
 
     def boom(path):
         raise RuntimeError("analyzer exploded")
@@ -101,7 +101,7 @@ def test_a_missing_library_is_skipped_not_failed(tmp_path, monkeypatch):
     Forced via `_pretend_absent` rather than relying on pefile actually
     being uninstalled: this test must hold in a with-[static] environment
     too, where pefile genuinely imports fine."""
-    from hash_searcher.static import capabilities, runner
+    from ioc_inquest.static import capabilities, runner
 
     _pretend_absent(monkeypatch, "pefile")
     try:
@@ -127,7 +127,7 @@ def test_a_missing_library_is_skipped_not_failed(tmp_path, monkeypatch):
 def test_analyze_hashes_the_file_it_analyzed(tmp_path):
     """The static report and the network lookup must be about the same bytes."""
     import hashlib
-    from hash_searcher.static.runner import analyze
+    from ioc_inquest.static.runner import analyze
 
     target = tmp_path / "sample.bin"
     payload = b"the quick brown fox"
@@ -141,8 +141,8 @@ def test_analyze_unpacks_the_yara_hits_and_note_into_the_report(tmp_path, monkey
     (branch-review.md I5) -- analyze() must unpack it into StaticReport.yara
     and StaticReport.yara_note rather than stashing the tuple itself where a
     list of YaraHit is expected."""
-    from hash_searcher.models import YaraHit
-    from hash_searcher.static import runner
+    from ioc_inquest.models import YaraHit
+    from ioc_inquest.static import runner
 
     def fake_yara(path, rules_path):
         return [YaraHit(rule="Fake_Rule")], "stopped after 1 of 2 rule files"

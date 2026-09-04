@@ -10,12 +10,12 @@ bytes reportlab just compressed would test zlib, not this module.
 
 from reportlab.platypus import Paragraph, Table
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     AttackTechnique, Detection, SandboxVerdict, Signature, SigmaRule, Signal,
     ThreatClass, Verdict, YaraMatch,
 )
-from hash_searcher.render.pdf import _x, build_story, write_pdf
-from hash_searcher.render.tty import VT_UNAVAILABLE_NOTE
+from ioc_inquest.render.pdf import _x, build_story, write_pdf
+from ioc_inquest.render.tty import VT_UNAVAILABLE_NOTE
 
 
 def _texts(story) -> list[str]:
@@ -73,7 +73,7 @@ def test_the_pdf_carries_the_vt_unavailable_caveat_too(tmp_path, sample_report):
     reach doc.build() unescaped, or `-o report.pdf` dies on the last step
     of an otherwise successful run.
     """
-    from hash_searcher.models import VTReport
+    from ioc_inquest.models import VTReport
 
     verdict = Verdict(level="UNKNOWN", score=0, signals=[])
     sample_report.vt = VTReport(found=False, unavailable=True,
@@ -100,7 +100,7 @@ def test_the_pdf_carries_the_vt_unavailable_caveat_too(tmp_path, sample_report):
 
 
 def test_the_pdf_caveat_is_silent_when_the_verdict_is_not_unknown(sample_report):
-    from hash_searcher.models import VTReport
+    from ioc_inquest.models import VTReport
 
     sample_report.vt = VTReport(found=False, unavailable=True,
                                  error="GetTotal API Error 503")
@@ -113,8 +113,8 @@ def test_the_pdf_caveat_is_silent_for_a_genuine_404_at_unknown(sample_report):
     here would put "VirusTotal did not answer" into a filed written report
     for the one case where VT actually did -- the precise falsehood Ruling
     4 was raised to remove, on the surface an analyst archives."""
-    from hash_searcher.analysis.vt import extract_vt
-    from hash_searcher.api.base_call import make_error
+    from ioc_inquest.analysis.vt import extract_vt
+    from ioc_inquest.api.base_call import make_error
 
     sample_report.vt = extract_vt(make_error("Hash not found in GetTotal", 404))
     texts = _texts(build_story(sample_report, Verdict(level="UNKNOWN", score=0, signals=[])))
@@ -167,7 +167,7 @@ def test_markup_in_a_provider_string_is_escaped_not_parsed(tmp_path, sample_repo
 def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
     """It used to render as a row of "None" -- the lookup failed and the PDF
     showed it as a host Censys had nothing on."""
-    from hash_searcher.models import CensysHost
+    from ioc_inquest.models import CensysHost
 
     sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
     texts = _texts(build_story(sample_report, None))
@@ -176,8 +176,8 @@ def test_a_failed_censys_lookup_says_so_in_the_pdf(sample_report):
 
 
 def test_the_phase_4_sources_reach_the_pdf(sample_report):
-    from hash_searcher.models import BazaarReport, KEVEntry, KEVReport, SourceResult
-    from hash_searcher.render.pdf import build_story
+    from ioc_inquest.models import BazaarReport, KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.render.pdf import build_story
 
     sample_report.bazaar = SourceResult(
         value=BazaarReport(found=True, family="Emotet"), queried=True)
@@ -205,13 +205,13 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
     CVE cell raised LayoutError and took down an otherwise successful run at
     the very last step. Real Shodan answers carry 120-137 CVEs for one host.
     """
-    from hash_searcher.api.api_data_puller import IOC_LIMIT
-    from hash_searcher.models import (
+    from ioc_inquest.api.api_data_puller import IOC_LIMIT
+    from ioc_inquest.models import (
         CertReport, GreyNoiseReport, KEVEntry, KEVReport, ShodanReport,
         SourceResult, ThreatFoxReport,
     )
-    from hash_searcher.render.pdf import write_pdf
-    from hash_searcher.scoring import score
+    from ioc_inquest.render.pdf import write_pdf
+    from ioc_inquest.scoring import score
 
     # Shodan at IOC_LIMIT hosts at 137 CVEs each, not one host at 150. Every
     # per-IP source is at the cap here, so the CVE column is laid out
@@ -294,7 +294,7 @@ def test_write_pdf_survives_a_realistic_worst_case(tmp_path, sample_report):
 
 
 def test_the_ip_table_carries_the_threatfox_column(sample_report):
-    from hash_searcher.models import ShodanReport, SourceResult, ThreatFoxReport
+    from ioc_inquest.models import ShodanReport, SourceResult, ThreatFoxReport
 
     sample_report.shodan = {"198.51.100.10": SourceResult(
         value=ShodanReport(ports=[443]), queried=True)}
@@ -312,7 +312,7 @@ def test_a_never_asked_per_ip_source_is_not_rendered_as_a_negative_finding(sampl
     made; a result nobody asked for supports no claim at all, and stating
     the negative is worse than saying nothing on a report an analyst files.
     """
-    from hash_searcher.models import ShodanReport, SourceResult
+    from ioc_inquest.models import ShodanReport, SourceResult
 
     sample_report.shodan = {"198.51.100.10": SourceResult(
         value=ShodanReport(ports=[443]), queried=True)}
@@ -329,7 +329,7 @@ def test_the_pdf_ip_table_is_absent_when_no_per_ip_source_was_asked(sample_repor
     """pdf.py had the identical shape as tty.py's guard -- `if report.shodan
     or report.greynoise` tests the dicts, not the results, so a dict of
     never-asked results produced a heading and a table of empty rows."""
-    from hash_searcher.models import SourceResult
+    from ioc_inquest.models import SourceResult
 
     sample_report.shodan = {"198.51.100.10": SourceResult()}
     sample_report.greynoise = {"198.51.100.10": SourceResult()}
@@ -348,7 +348,7 @@ def test_markup_in_a_threatfox_family_name_is_escaped_not_parsed(tmp_path, sampl
     `<script>`/`<title>` are payloads reportlab's paraparser actually
     rejects -- it silently discards a wholly unknown tag, so a payload it
     tolerates would prove nothing about _x()."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
 
     sample_report.threatfox_ips = {"198.51.100.10": SourceResult(
         value=ThreatFoxReport(found=True, malware="<script>Emotet",
@@ -380,7 +380,7 @@ def test_any_signal_detail_is_bounded_before_it_reaches_the_table_cell(tmp_path,
     no character count can do that job, because 624pt of frame is 740
     characters of ("W" * 13 + " ") and 2669 of lowercase prose.
     """
-    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+    from ioc_inquest.render.pdf import DETAIL_CHAR_LIMIT
 
     detail = "CVE-2021-99999, " * 400          # ~6400 characters
     verdict = Verdict(level="MALICIOUS", score=25, signals=[
@@ -421,7 +421,7 @@ def test_a_normal_signal_detail_is_left_exactly_alone(sample_report):
     50 addresses is no longer what real input produces; keeping the wider
     payload here keeps the backstop tested against the wider input, and it
     may not acquire a truncation marker."""
-    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+    from ioc_inquest.render.pdf import DETAIL_CHAR_LIMIT
 
     detail = "GreyNoise calls these contacted IPs benign internet background noise: " \
              + ", ".join(f"198.51.100.{n}" for n in range(50))
@@ -456,7 +456,7 @@ def test_one_provider_string_of_any_length_cannot_raise_a_layout_error(
     The cell is fitted by measured height instead, which is a bound on the
     thing that actually overflows.
     """
-    from hash_searcher.render.pdf import CELL_HEIGHT_LIMIT, write_pdf
+    from ioc_inquest.render.pdf import CELL_HEIGHT_LIMIT, write_pdf
 
     detail = ("W" * 13 + " ") * 300          # 4200 characters, 5.8x the 728
     verdict = Verdict(level="MALICIOUS", score=10, signals=[
@@ -493,7 +493,7 @@ def test_a_provider_string_in_the_ip_table_is_fitted_too(tmp_path, sample_report
     `LayoutError: <Table 1 rows x 5 cols(tallest row 1962)>` from a real
     write_pdf. Every table cell carrying provider text is fitted, not just
     the one whose crash was reported."""
-    from hash_searcher.models import GreyNoiseReport, ShodanReport, SourceResult
+    from ioc_inquest.models import GreyNoiseReport, ShodanReport, SourceResult
 
     sample_report.shodan = {"198.51.100.10": SourceResult(
         value=ShodanReport(ports=[80], vulns=[]), queried=True)}
@@ -521,8 +521,8 @@ def test_the_kev_table_caps_its_rows_and_states_the_total(sample_report):
     every other display cap here, with the untruncated total stated so the
     section never reads as the whole catalog.
     """
-    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
-    from hash_searcher.render.pdf import KEV_ROW_LIMIT
+    from ioc_inquest.models import KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.render.pdf import KEV_ROW_LIMIT
 
     sample_report.kev = SourceResult(value=KEVReport(entries=[
         KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache", product="HTTP Server",
@@ -578,7 +578,7 @@ def _oversized_report(sample_report):
     The one exception is the WHOIS domain, 1020 characters because it is
     prefixed with a dot-bearing label; see the comment at that line.
     """
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         CensysHost, GreyNoiseReport, IPReport, KEVEntry, KEVReport,
         ShodanReport, SourceResult, ThreatFoxReport, WhoisRecord,
     )
@@ -639,7 +639,7 @@ def test_every_table_the_report_builds_fits_an_oversized_provider_value(
     analysis/censys.py is a plain provider list with no cap, and 279 build
     where 280 raise.
     """
-    from hash_searcher.render.pdf import (
+    from ioc_inquest.render.pdf import (
         ABUSE_WIDTHS, CENSYS_WIDTHS, IP_WIDTHS, KEV_WIDTHS, SIGNAL_WIDTHS,
         WHOIS_WIDTHS, _cell_height,
     )
@@ -716,7 +716,7 @@ def test_no_table_is_wider_than_the_page():
     paper, and the fit then measures a cell against a width the reader never
     gets.
     """
-    from hash_searcher.render import pdf as pdf_module
+    from ioc_inquest.render import pdf as pdf_module
 
     blocks = {name: value for name, value in vars(pdf_module).items()
               if name.endswith("_WIDTHS")}
@@ -792,7 +792,7 @@ def test_no_table_can_be_built_outside_the_cell_factory():
     import ast
     import inspect
 
-    from hash_searcher.render import pdf as pdf_module
+    from ioc_inquest.render import pdf as pdf_module
 
     tree = ast.parse(inspect.getsource(pdf_module))
 
@@ -878,7 +878,7 @@ def test_the_censys_table_fits_a_host_with_many_services(tmp_path, sample_report
     `LayoutError: <Table 1 rows x 5 cols(tallest row 930)>`. Shodan's ports
     go through the fitter in the IP table; Censys's identical data did not.
     """
-    from hash_searcher.models import CensysHost
+    from ioc_inquest.models import CensysHost
 
     sample_report.hosts = [CensysHost(ip="198.51.100.10", org="Example AS",
                                       asn=64496, country="NL",
@@ -893,7 +893,7 @@ def test_the_censys_table_fits_an_unbounded_org_name(tmp_path, sample_report):
     Both branches of the Censys row are exercised: the error branch renders
     `h.error`, which is provider text too and was equally unfitted.
     """
-    from hash_searcher.models import CensysHost
+    from ioc_inquest.models import CensysHost
 
     big = ("W" * 13 + " ") * 300
     sample_report.hosts = [
@@ -909,7 +909,7 @@ def test_the_whois_table_fits_an_unbounded_registrar(tmp_path, sample_report):
     """WHOIS is the fifth table, and `registrar` and `domain` are both raw
     provider strings: 4200 characters of either raised
     `LayoutError: <Table 1 rows x 4 cols(tallest row 3606)>`."""
-    from hash_searcher.models import WhoisRecord
+    from ioc_inquest.models import WhoisRecord
 
     big = ("W" * 13 + " ") * 300
     # The domain carries a dot for the reason the enumerating test's fixture
@@ -950,8 +950,8 @@ def test_a_provider_value_carrying_newlines_cannot_overflow_a_row(
     character of this payload while a bare-string cell of the same text
     cannot be laid out on any page.
     """
-    from hash_searcher.models import IPReport
-    from hash_searcher.render.pdf import (
+    from ioc_inquest.models import IPReport
+    from ioc_inquest.render.pdf import (
         ABUSE_WIDTHS, CELL_HEIGHT_LIMIT, TABLE_STYLE, _cell_height, _fitted,
     )
 
@@ -1004,7 +1004,7 @@ def test_fitting_a_huge_string_never_measures_more_than_the_ceiling(
     at 12064 characters, so nothing that would otherwise have fitted is
     lost.
     """
-    from hash_searcher.render import pdf as pdf_module
+    from ioc_inquest.render import pdf as pdf_module
 
     assert pdf_module.FIT_CHAR_CEILING <= 20000
 
@@ -1045,7 +1045,7 @@ FAILED_SOURCE_ERRORS = {
 
 def _all_sources_failed(report):
     """A report in which every source that can fail, did."""
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         CensysHost, KEVReport, SourceResult, WhoisRecord,
     )
 
@@ -1120,7 +1120,7 @@ def test_an_errored_shodan_lookup_does_not_dereference_a_missing_report(
     The suite never put a non-ok Shodan into a RENDERED row: one test pinned
     Shodan healthy, the other made the table not build at all.
     """
-    from hash_searcher.models import GreyNoiseReport, SourceResult
+    from ioc_inquest.models import GreyNoiseReport, SourceResult
 
     sample_report.shodan = {"198.51.100.10": SourceResult(
         error="Shodan API Error 403", queried=True)}
@@ -1145,7 +1145,7 @@ def test_a_never_asked_shodan_does_not_dereference_a_missing_report(
     a never-asked result. GreyNoise is answered here so the row exists at
     all -- queried_ips builds the table from any per-IP source that ran.
     """
-    from hash_searcher.models import GreyNoiseReport, SourceResult
+    from ioc_inquest.models import GreyNoiseReport, SourceResult
 
     sample_report.shodan = {"198.51.100.10": SourceResult()}
     sample_report.greynoise = {"198.51.100.10": SourceResult(
@@ -1169,8 +1169,8 @@ def test_the_two_surfaces_share_one_unreachable_kev_sentence(capsys, sample_repo
     comparing would recompute the expected value from the constant under
     test, which is the tautology this branch produced four times.
     """
-    from hash_searcher.models import KEVReport, SourceResult
-    from hash_searcher.render.tty import KEV_UNREACHABLE_NOTE, render_kev
+    from ioc_inquest.models import KEVReport, SourceResult
+    from ioc_inquest.render.tty import KEV_UNREACHABLE_NOTE, render_kev
 
     assert KEV_UNREACHABLE_NOTE == (
         "CISA KEV was unreachable ({error}) -- {unchecked} CVEs on "
@@ -1194,8 +1194,8 @@ def test_an_unreachable_kev_with_no_report_body_does_not_crash_either_surface(
     (`kev.value.unchecked if kev.value else 0`); the TTY did not, and the PDF
     had no copy at all. Guarding two of the three would have been the subset
     one more time."""
-    from hash_searcher.models import SourceResult
-    from hash_searcher.render.tty import render_kev
+    from ioc_inquest.models import SourceResult
+    from ioc_inquest.render.tty import render_kev
 
     sample_report.kev = SourceResult(error="CISA KEV API Error 503", queried=True)
     render_kev(sample_report)
@@ -1216,8 +1216,8 @@ def test_an_unbounded_provider_error_is_capped_before_it_reaches_the_pdf(
     dangerous one: a row cannot split, so it goes through _table, which fits
     every body cell against CELL_HEIGHT_LIMIT.
     """
-    from hash_searcher.models import GreyNoiseReport, SourceResult
-    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+    from ioc_inquest.models import GreyNoiseReport, SourceResult
+    from ioc_inquest.render.pdf import DETAIL_CHAR_LIMIT
 
     huge = "MalwareBazaar said: " + "W" * 200000
     sample_report.bazaar = SourceResult(error=huge, queried=True)
@@ -1284,7 +1284,7 @@ def _pdf_source_tree():
     import ast
     import inspect
 
-    from hash_searcher.render import pdf as pdf_module
+    from ioc_inquest.render import pdf as pdf_module
     return ast.parse(inspect.getsource(pdf_module))
 
 
@@ -1642,7 +1642,7 @@ def test_the_escaping_guard_sees_a_value_that_reaches_a_paragraph_any_way_at_all
     import ast
     import inspect
 
-    from hash_searcher.render import pdf as pdf_module
+    from ioc_inquest.render import pdf as pdf_module
 
     source = inspect.getsource(pdf_module)
     anchor = "    story.append(Spacer(1, 12))\n\n    if verdict is not None:"
@@ -1756,7 +1756,7 @@ def test_a_failed_otx_lookup_is_distinguishable_from_one_that_never_ran(sample_r
     """
     import dataclasses
 
-    from hash_searcher.models import OTXReport
+    from ioc_inquest.models import OTXReport
 
     def texts(otx):
         return _texts(build_story(
@@ -1786,8 +1786,8 @@ def test_a_failed_otx_error_is_escaped_and_capped_like_every_other_source(
     """
     import dataclasses
 
-    from hash_searcher.models import OTXReport
-    from hash_searcher.render.pdf import DETAIL_CHAR_LIMIT
+    from ioc_inquest.models import OTXReport
+    from ioc_inquest.render.pdf import DETAIL_CHAR_LIMIT
 
     huge = "Contoso <Root CA " + "the quick brown fox " * 20000
     report = dataclasses.replace(
@@ -1808,7 +1808,7 @@ def test_a_failed_otx_error_is_escaped_and_capped_like_every_other_source(
 def test_the_header_labels_an_address_as_an_ip_not_as_a_hash(sample_report):
     """"Hash: 198.51.100.10" is a label contradicting its own value. Part B
     made that reachable by accepting an IP at all."""
-    from hash_searcher.render.pdf import build_story
+    from ioc_inquest.render.pdf import build_story
 
     sample_report.indicator = "198.51.100.10"
     sample_report.indicator_kind = "ip"
@@ -1818,7 +1818,7 @@ def test_the_header_labels_an_address_as_an_ip_not_as_a_hash(sample_report):
 
 
 def test_the_header_still_says_hash_for_a_hash(sample_report):
-    from hash_searcher.render.pdf import build_story
+    from ioc_inquest.render.pdf import build_story
 
     rendered = " ".join(str(getattr(f, "text", "")) for f in build_story(sample_report))
     assert f"Hash: {sample_report.indicator}" in rendered

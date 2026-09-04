@@ -103,7 +103,7 @@ class RateBudget:
         """Drop a connection that opened cleanly and then started failing.
 
         open_db only covers the open. A file that is read-only, or locked by
-        a second hash-searcher, passes `CREATE TABLE IF NOT EXISTS` (it needs
+        a second ioc-inquest, passes `CREATE TABLE IF NOT EXISTS` (it needs
         no write against a table that already exists) and raises on the first
         INSERT instead. Uncaught, that reached run() as a traceback for a
         single run -- and, worse, run_batch's per-indicator `except

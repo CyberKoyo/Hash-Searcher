@@ -13,10 +13,10 @@ import uuid
 
 import pytest
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     OTXReport, Report, ThreatClass, Verdict, VTReport,
 )
-from hash_searcher.render.stix import to_bundle, write_stix
+from ioc_inquest.render.stix import to_bundle, write_stix
 
 #: `<type>--<uuid>`, the only id shape STIX 2.1 accepts.
 STIX_ID = re.compile(r"^[a-z][a-z0-9-]*--"

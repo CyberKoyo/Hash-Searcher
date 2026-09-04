@@ -1,6 +1,6 @@
 import dataclasses
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
 )
 
@@ -87,7 +87,7 @@ def test_as_count_takes_a_number_and_refuses_anything_else():
     design and a blanket clamp would have deleted the only two signals in the
     tree that argue AGAINST a verdict. Both halves are asserted below.
     """
-    from hash_searcher.models import as_count
+    from ioc_inquest.models import as_count
 
     assert as_count(7) == 7
     assert as_count(0) == 0
@@ -191,10 +191,10 @@ _HOSTILE = {
 
 
 def _models_dataclasses():
-    from hash_searcher import models
+    from ioc_inquest import models
     return [obj for obj in vars(models).values()
             if dataclasses.is_dataclass(obj) and isinstance(obj, type)
-            and obj.__module__ == "hash_searcher.models"]
+            and obj.__module__ == "ioc_inquest.models"]
 
 
 def _kind(annotation):
@@ -356,7 +356,7 @@ def test_a_null_where_a_str_is_declared_becomes_the_declared_nothing():
     coercion that answered "" everywhere would redden here even though it
     agreed with itself.
     """
-    from hash_searcher.models import CensysHost, SourceResult, YaraHit
+    from ioc_inquest.models import CensysHost, SourceResult, YaraHit
 
     # A field with no declared default falls back to str(), exactly as
     # as_count's default is int().
@@ -376,7 +376,7 @@ def test_a_null_where_a_str_is_declared_becomes_the_declared_nothing():
 
 def test_a_wrong_type_where_str_is_declared_becomes_the_declared_nothing():
     """Wrong JSON types are absence, never Python-spelled provider text."""
-    from hash_searcher.models import CensysHost, SigmaRule
+    from ioc_inquest.models import CensysHost, SigmaRule
 
     rule = SigmaRule(title=False, description=0, level=["high"])
     host = CensysHost(ip={"address": "198.51.100.10"}, country=False)
@@ -442,7 +442,7 @@ def test_coerced_refuses_a_class_it_can_say_nothing_true_about():
     """
     import pytest
 
-    from hash_searcher.models import coerced
+    from ioc_inquest.models import coerced
 
     with pytest.raises(TypeError, match="no int field"):
         @coerced(signed=("nowhere",))
@@ -503,8 +503,8 @@ def test_the_coercion_call_sites_outside_models_are_exactly_the_declared_ones():
     import pathlib
 
     helpers = {"as_count", "as_counts", "as_texts", "as_declared_text"}
-    root = pathlib.Path(__file__).resolve().parent.parent / "src" / "hash_searcher"
-    assert root.is_dir(), f"{root} is not where hash_searcher lives any more"
+    root = pathlib.Path(__file__).resolve().parent.parent / "src" / "ioc_inquest"
+    assert root.is_dir(), f"{root} is not where ioc_inquest lives any more"
 
     found, scanned = set(), 0
     for path in sorted(root.rglob("*.py")):
@@ -540,7 +540,7 @@ def test_as_texts_drops_what_is_not_a_string_rather_than_naming_it():
     argument as_counts publishes: a scalar must hold something, but a list
     can simply be shorter, and coercing invents a member nobody reported.
     """
-    from hash_searcher.models import as_counts, as_texts
+    from ioc_inquest.models import as_counts, as_texts
 
     assert as_texts(["trojan", None]) == ["trojan"]
     assert as_texts(["trojan", 7, {"a": 1}, True, ["nested"]]) == ["trojan"]
@@ -562,7 +562,7 @@ def test_a_null_tag_is_absent_from_the_json_report_rather_than_named_None():
     payload rather than on as_texts alone, because the finding was about
     what a consumer reads.
     """
-    from hash_searcher.analysis.bazaar import extract_bazaar
+    from ioc_inquest.analysis.bazaar import extract_bazaar
 
     result = extract_bazaar(
         {"query_status": "ok",
@@ -586,7 +586,7 @@ def test_as_counts_drops_a_negative_the_way_as_count_floors_one():
     enumerated by test_only_the_two_scoring_fields_carry_a_negative rather
     than described, so a signed list field added later shows up there.
     """
-    from hash_searcher.models import as_count, as_counts
+    from ioc_inquest.models import as_count, as_counts
 
     assert as_counts([443, -1, 0, -10 ** 40]) == [443, 0]
     assert as_counts([-5]) == []

@@ -10,11 +10,11 @@ which is the one judgement call in the module.
 
 import json
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     BazaarReport, Detection, OTXReport, Report, SourceResult, ThreatClass,
     ThreatFoxReport, Verdict, VTReport,
 )
-from hash_searcher.render.misp import THREAT_LEVELS, to_event, write_misp
+from ioc_inquest.render.misp import THREAT_LEVELS, to_event, write_misp
 
 SHA256 = "e" * 64
 

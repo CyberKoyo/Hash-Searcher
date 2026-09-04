@@ -25,8 +25,8 @@ break it.
 curl -fsSL -o /tmp/enterprise-attack.json \
   "https://raw.githubusercontent.com/mitre/cti/ATT%26CK-v15.1/enterprise-attack/enterprise-attack.json"
 ./venv/bin/python scripts/reduce_attack_bundle.py \
-  /tmp/enterprise-attack.json src/hash_searcher/data/mitre-attack-enterprise.json
-sha256sum /tmp/enterprise-attack.json src/hash_searcher/data/mitre-attack-enterprise.json
+  /tmp/enterprise-attack.json src/ioc_inquest/data/mitre-attack-enterprise.json
+sha256sum /tmp/enterprise-attack.json src/ioc_inquest/data/mitre-attack-enterprise.json
 ```
 
 Bump the tag in the URL to move to a newer ATT&CK release, then update the

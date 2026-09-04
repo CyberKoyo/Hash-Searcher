@@ -44,7 +44,7 @@ KINDS = ("hash", "ip", "domain", "url", "cidr", "file")
 # as the smaller cost against the near-certainty of filename noise.
 #
 # classify() applies the same set to a name typed on the command line, and
-# for the same reason: `hash-searcher kernel32.dll` is a file that is not
+# for the same reason: `ioc-inquest kernel32.dll` is a file that is not
 # where the user thought it was, and answering it with a DNS lookup for a
 # domain named kernel32.dll is a wrong answer wearing a confident face.
 #
@@ -64,7 +64,7 @@ FILENAME_EXTENSIONS = {
     "dat", "ini", "txt", "log", "tmp",
     "zip", "mov",
     # Documents, archives, images, and the script/artifact types an analyst
-    # actually hands this tool. Without these, `hash-searcher missing.pdf`
+    # actually hands this tool. Without these, `ioc-inquest missing.pdf`
     # -- a mistyped path, or the right path from the wrong directory -- ran
     # RDAP and crt.sh against a domain named "missing.pdf" instead of
     # printing the "this file either doesn't exist" message it has printed

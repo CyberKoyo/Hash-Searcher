@@ -2,27 +2,27 @@ import os
 
 import pytest
 
-from hash_searcher.api.base_call import make_error
-from hash_searcher.cli import (
+from ioc_inquest.api.base_call import make_error
+from ioc_inquest.cli import (
     EXIT_CLEAN, EXIT_MALICIOUS, EXIT_NO_DATA, EXIT_SUSPICIOUS, EXIT_UNKNOWN,
     build_parser, output_format, run_cli,
 )
-from hash_searcher.indicators import Indicator
+from ioc_inquest.indicators import Indicator
 
 
 def test_an_indicator_or_an_input_file_is_required():
     """The positional is nargs="?" so --input-file can stand in for it, so
     argparse alone no longer enforces this -- parse_args does."""
-    from hash_searcher.cli import parse_args
+    from ioc_inquest.cli import parse_args
 
     with pytest.raises(SystemExit):
         parse_args([])
 
 
 def test_an_input_file_alone_needs_no_positional():
-    """The form the README documents: `hash-searcher --input-file iocs.txt`.
+    """The form the README documents: `ioc-inquest --input-file iocs.txt`.
     It exited 2 with "the following arguments are required: indicator"."""
-    from hash_searcher.cli import parse_args
+    from ioc_inquest.cli import parse_args
 
     args = parse_args(["--input-file", "iocs.txt"])
     assert args.indicator is None
@@ -78,7 +78,7 @@ def test_yara_rules_flag_is_accepted():
 # --- run_cli coverage -------------------------------------------------------
 #
 # data_puller, check_env, and resolve_indicator are monkeypatched as they
-# are bound into hash_searcher.cli, not at their source modules -- the same
+# are bound into ioc_inquest.cli, not at their source modules -- the same
 # pattern tests/test_data_puller.py uses for the fetch coroutines.
 
 
@@ -86,9 +86,9 @@ def _stub_entry(monkeypatch):
     """Bypass check_env's real key-reading and resolve_indicator's real
     file/hash parsing so these tests are independent of both the filesystem
     and whatever API keys happen to be set on the machine running them."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     monkeypatch.setattr(
-        "hash_searcher.cli.resolve_indicator",
+        "ioc_inquest.cli.resolve_indicator",
         lambda indicator, password: [Indicator("hash", "deadbeef")],
     )
 
@@ -110,7 +110,7 @@ def _stub_data_puller(monkeypatch, raw):
 
     async def _fake(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         return payload
-    monkeypatch.setattr("hash_searcher.cli.data_puller", _fake)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", _fake)
 
 
 def _rdap(*domains) -> list[dict]:
@@ -233,7 +233,7 @@ def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatc
     """S7: BASE_DIR is the installed package dir, so a relative --output
     landed inside site-packages -- unfindable, and unwritable under a
     non-editable install."""
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     written = {}
@@ -249,8 +249,8 @@ def test_output_path_is_relative_to_the_cwd_not_the_package(tmp_path, monkeypatc
     ("CLEAN", 0), ("SUSPICIOUS", 1), ("MALICIOUS", 2), ("UNKNOWN", 3),
 ])
 def test_exit_code_maps_each_verdict_level(level, expected):
-    from hash_searcher.cli import exit_code
-    from hash_searcher.models import Verdict
+    from ioc_inquest.cli import exit_code
+    from ioc_inquest.models import Verdict
 
     assert exit_code(Verdict(level=level, score=0)) == expected
 
@@ -258,15 +258,15 @@ def test_exit_code_maps_each_verdict_level(level, expected):
 def test_an_unrecognized_level_exits_unknown_rather_than_claiming_clean():
     """Fail safe: a level this function has never heard of must not be
     reported to a shell script as a clean file."""
-    from hash_searcher.cli import exit_code
-    from hash_searcher.models import Verdict
+    from ioc_inquest.cli import exit_code
+    from ioc_inquest.models import Verdict
 
     assert exit_code(Verdict(level="WAT", score=0)) == 3
 
 
 def test_write_report_dispatches_a_pdf_extension(tmp_path, monkeypatch):
     """Only the json branch was ever covered."""
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     written = {}
@@ -283,7 +283,7 @@ def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, c
     test must still pass'; `grep -rn Unrecognized tests/` returned nothing --
     no such test ever existed, so that verification step was vacuous. This is
     the test it assumed."""
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     calls = []
@@ -307,7 +307,7 @@ def test_write_report_rejects_an_unrecognized_extension(tmp_path, monkeypatch, c
 
 
 def test_write_report_dispatches_a_csv_extension(tmp_path, monkeypatch):
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     written = {}
@@ -320,7 +320,7 @@ def test_write_report_dispatches_a_csv_extension(tmp_path, monkeypatch):
 
 
 def test_write_report_dispatches_a_markdown_extension(tmp_path, monkeypatch):
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     written = {}
@@ -337,7 +337,7 @@ def test_every_declared_output_format_has_a_writer(tmp_path, monkeypatch, capsys
     prints "unrecognized" for an extension the help text just told the user
     to use. Every entry is exercised, so the next one cannot be half-wired.
     """
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     monkeypatch.chdir(tmp_path)
     called = []
@@ -361,7 +361,7 @@ def test_every_declared_output_format_has_a_writer(tmp_path, monkeypatch, capsys
 
 async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
         monkeypatch, capsys):
-    """`hash-searcher notahash` raised FileNotFoundError out of resolve_hash
+    """`ioc-inquest notahash` raised FileNotFoundError out of resolve_hash
     and printed a full traceback. Pre-existing on 43e9f92 and on 129ff8d.
 
     Still the message for an unclassifiable argument after B2: an argument
@@ -372,7 +372,7 @@ async def test_a_nonexistent_file_argument_prints_a_message_not_a_traceback(
     check_env only is stubbed here -- _stub_entry also replaces
     resolve_indicator, which is the function under test.
     """
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
 
     exit_code = await run_cli(["notahash", "--no-cache"])
 
@@ -420,14 +420,14 @@ async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatc
     which is exactly the case this phase exists to serve."""
     order = []
     _stub_entry(monkeypatch)
-    monkeypatch.setattr("hash_searcher.cli.analyze",
+    monkeypatch.setattr("ioc_inquest.cli.analyze",
                         lambda path, yara_rules=None: order.append("static"))
 
     async def fake_puller(indicator, cache, extra_ips=None, pivot_depth=0, budget=None):
         order.append("network")
         return dict(EMPTY_RAW)
 
-    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", fake_puller)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"MZ" + b"\x00" * 512)
@@ -438,7 +438,7 @@ async def test_static_analysis_runs_before_the_network_pass(tmp_path, monkeypatc
 
 async def test_no_static_skips_the_pass(tmp_path, monkeypatch):
     called = []
-    monkeypatch.setattr("hash_searcher.cli.analyze",
+    monkeypatch.setattr("ioc_inquest.cli.analyze",
                         lambda path, yara_rules=None: called.append(1))
     _stub_entry(monkeypatch)
     _stub_data_puller(monkeypatch, {})
@@ -453,7 +453,7 @@ async def test_a_bare_hash_argument_skips_static_analysis(monkeypatch):
     """There is no file to analyze. Attempting one would be a crash, not a
     smaller report."""
     called = []
-    monkeypatch.setattr("hash_searcher.cli.analyze",
+    monkeypatch.setattr("ioc_inquest.cli.analyze",
                         lambda path, yara_rules=None: called.append(1))
     _stub_entry(monkeypatch)
     _stub_data_puller(monkeypatch, {})
@@ -466,14 +466,14 @@ async def test_a_static_report_is_attached_to_the_report_and_rendered(
         tmp_path, monkeypatch, capsys):
     """Not just called -- its result must actually reach the Report the
     renderer (and --output) sees."""
-    from hash_searcher.models import EntropyReport, StaticReport
+    from ioc_inquest.models import EntropyReport, StaticReport
 
     _stub_entry(monkeypatch)
     _stub_data_puller(monkeypatch, {})
 
     fake = StaticReport(path="x", size=4, sha256="a" * 64,
                         entropy=EntropyReport(overall=7.9, packed=True, note="packed"))
-    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", lambda path, yara_rules=None: fake)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -485,7 +485,7 @@ async def test_a_static_report_is_attached_to_the_report_and_rendered(
 
 
 async def test_yara_rules_flag_is_forwarded_to_analyze(tmp_path, monkeypatch):
-    from hash_searcher.models import StaticReport
+    from ioc_inquest.models import StaticReport
 
     _stub_entry(monkeypatch)
     _stub_data_puller(monkeypatch, {})
@@ -496,7 +496,7 @@ async def test_yara_rules_flag_is_forwarded_to_analyze(tmp_path, monkeypatch):
         seen["yara_rules"] = yara_rules
         return StaticReport(path=path, size=1, sha256="a" * 64)
 
-    monkeypatch.setattr("hash_searcher.cli.analyze", fake_analyze)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", fake_analyze)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -516,7 +516,7 @@ async def test_a_static_analysis_failure_does_not_block_the_network_pass(
     def boom(path, yara_rules=None):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr("hash_searcher.cli.analyze", boom)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", boom)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -539,11 +539,11 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
     return EXIT_NO_DATA above the static-analysis block entirely, so with no
     keys static analysis never ran at all. It must now render whatever the
     static pass found and never touch the network."""
-    from hash_searcher.models import PEStaticReport, StaticReport
+    from ioc_inquest.models import PEStaticReport, StaticReport
 
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: False)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: False)
     monkeypatch.setattr(
-        "hash_searcher.cli.resolve_indicator",
+        "ioc_inquest.cli.resolve_indicator",
         lambda indicator, password: [Indicator("hash", "deadbeef")],
     )
 
@@ -553,7 +553,7 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
             "VirtualAlloc", "WriteProcessMemory", "CreateRemoteThread",
         ]),
     )
-    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", lambda path, yara_rules=None: fake)
 
     called = []
 
@@ -561,7 +561,7 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
         called.append(1)
         return dict(EMPTY_RAW)
 
-    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", fake_puller)
 
     target = tmp_path / "sample.bin"
     target.write_bytes(b"data")
@@ -576,7 +576,7 @@ async def test_check_env_false_with_a_static_report_renders_it_instead_of_bailin
 async def test_check_env_false_with_no_static_report_still_bails(monkeypatch):
     """No file, no keys: nothing was computed and there is nothing to
     render, so the original bail is still correct here."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: False)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: False)
 
     exit_code = await run_cli(["a" * 64, "--no-cache"])
 
@@ -589,7 +589,7 @@ async def test_vt_404_with_a_static_report_renders_it_instead_of_bailing(
     ever uploaded' -- the exact case this phase exists to serve. The
     analyzer ran and produced findings; the tool must not throw them away
     and print 'Invalid hash'."""
-    from hash_searcher.models import PEStaticReport, StaticReport
+    from ioc_inquest.models import PEStaticReport, StaticReport
 
     _stub_entry(monkeypatch)
     fake = StaticReport(
@@ -598,7 +598,7 @@ async def test_vt_404_with_a_static_report_renders_it_instead_of_bailing(
             "VirtualAlloc", "WriteProcessMemory", "CreateRemoteThread",
         ]),
     )
-    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: fake)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", lambda path, yara_rules=None: fake)
 
     raw = {
         "vt": make_error("Hash not found in GetTotal", 404),
@@ -693,7 +693,7 @@ def _capture_data_puller(monkeypatch):
         seen.append((indicator, extra_ips))
         return dict(EMPTY_RAW)
 
-    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", fake_puller)
     return seen
 
 
@@ -708,7 +708,7 @@ async def test_a_file_argument_is_hashed_and_analyzed_exactly_as_before(
     sample.write_bytes(b"MZ\x90\x00 not a real PE")
     digest = hashlib.sha256(sample.read_bytes()).hexdigest()
 
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     seen = _capture_data_puller(monkeypatch)
 
     analyzed = []
@@ -717,7 +717,7 @@ async def test_a_file_argument_is_hashed_and_analyzed_exactly_as_before(
         analyzed.append(path)
         return None
 
-    monkeypatch.setattr("hash_searcher.cli.analyze", fake_analyze)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", fake_analyze)
 
     await run_cli([str(sample), "--no-cache"])
 
@@ -728,7 +728,7 @@ async def test_a_file_argument_is_hashed_and_analyzed_exactly_as_before(
 
 async def test_a_file_whose_name_reads_as_a_domain_is_still_hashed(
         tmp_path, monkeypatch):
-    """`hash-searcher evil.example` with a file of that name in the working
+    """`ioc-inquest evil.example` with a file of that name in the working
     directory. classify() consults the filesystem first for exactly this."""
     import hashlib
 
@@ -737,8 +737,8 @@ async def test_a_file_whose_name_reads_as_a_domain_is_still_hashed(
     digest = hashlib.sha256(b"payload").hexdigest()
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
-    monkeypatch.setattr("hash_searcher.cli.analyze", lambda path, yara_rules=None: None)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", lambda path, yara_rules=None: None)
     seen = _capture_data_puller(monkeypatch)
 
     await run_cli(["evil.example", "--no-cache"])
@@ -749,22 +749,22 @@ async def test_a_file_whose_name_reads_as_a_domain_is_still_hashed(
 async def test_a_bare_hash_argument_still_skips_static_analysis(monkeypatch):
     """There is no file to analyze, and attempting one is a crash rather
     than a smaller report."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     seen = _capture_data_puller(monkeypatch)
 
     def fail(path, yara_rules=None):
         raise AssertionError("static analysis ran on a bare hash")
 
-    monkeypatch.setattr("hash_searcher.cli.analyze", fail)
+    monkeypatch.setattr("ioc_inquest.cli.analyze", fail)
 
     await run_cli(["a" * 64, "--no-cache"])
     assert seen == [(Indicator("hash", "a" * 64), None)]
 
 
 async def test_an_ip_argument_reaches_data_puller_as_an_ip(monkeypatch):
-    """The capability this part exists for: `hash-searcher 198.51.100.10`
+    """The capability this part exists for: `ioc-inquest 198.51.100.10`
     could not work before B2, because the entry assumed a hash."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     seen = _capture_data_puller(monkeypatch)
 
     await run_cli(["198.51.100.10", "--no-cache"])
@@ -772,7 +772,7 @@ async def test_an_ip_argument_reaches_data_puller_as_an_ip(monkeypatch):
 
 
 async def test_a_defanged_url_argument_is_refanged_before_lookup(monkeypatch):
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     seen = _capture_data_puller(monkeypatch)
 
     await run_cli(["hxxps://evil[.]example/path", "--no-cache"])
@@ -781,7 +781,7 @@ async def test_a_defanged_url_argument_is_refanged_before_lookup(monkeypatch):
 
 async def test_a_cidr_argument_is_declined_rather_than_expanded(monkeypatch, capsys):
     """65,536 rate-limited lookups is not a smaller answer, it is a spent key."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     seen = _capture_data_puller(monkeypatch)
 
     exit_code = await run_cli(["198.51.100.0/16", "--no-cache"])
@@ -795,11 +795,11 @@ async def test_the_report_carries_the_indicator_that_was_looked_up(monkeypatch):
     """Report.indicator held the sha256 because a sha256 was the only thing
     the tool could be handed. It now holds whatever was looked up, which is
     what -o and the batch loop key their output on."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
     _capture_data_puller(monkeypatch)
 
     rendered = []
-    monkeypatch.setattr("hash_searcher.cli.render",
+    monkeypatch.setattr("ioc_inquest.cli.render",
                         lambda report, verdict: rendered.append(report))
 
     await run_cli(["evil.example", "--no-cache"])
@@ -811,7 +811,7 @@ async def test_a_missing_input_file_prints_a_message_not_a_traceback(
         monkeypatch, capsys):
     """The same defect analyze_one's FileNotFoundError catch exists for.
     --input-file opened a second door to it."""
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
 
     exit_code = await run_cli(["--input-file", "/nonexistent/iocs.txt"])
 
@@ -828,7 +828,7 @@ async def test_an_input_file_is_read_as_utf8_whatever_the_locale_is(
     listing = tmp_path / "iocs.txt"
     listing.write_bytes("# ünicode comment\n198.51.100.10\n".encode("utf-8"))
 
-    from hash_searcher.cli import batch_lines, parse_args
+    from ioc_inquest.cli import batch_lines, parse_args
 
     args = parse_args(["--input-file", str(listing)])
     assert batch_lines(args) == ["198.51.100.10"]
@@ -852,7 +852,7 @@ async def test_rows_wins_over_output_so_a_batch_owns_the_single_write(
     args = build_parser().parse_args(["deadbeef", "-o", str(out), "--no-cache"])
     rows = []
 
-    from hash_searcher.cli import analyze_one
+    from ioc_inquest.cli import analyze_one
     await analyze_one("deadbeef", args, rows=rows)
 
     assert len(rows) == 1                 # the pair was collected
@@ -878,7 +878,7 @@ async def test_collecting_rows_clears_the_output_path_rather_than_outranking_it(
     _stub_data_puller(monkeypatch, {})
     seen = {}
 
-    import hash_searcher.cli as cli
+    import ioc_inquest.cli as cli
 
     def spy(report, verdict, output, rows):
         seen["output"], seen["rows"] = output, rows

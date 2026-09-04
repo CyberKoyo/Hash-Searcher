@@ -70,7 +70,7 @@ def resolve_indicator(user_input: str,
     several members, and each becomes its own hash indicator.
 
     Unclassifiable input falls through to resolve_hash rather than being
-    reported here. That is deliberate -- `hash-searcher notahash` has
+    reported here. That is deliberate -- `ioc-inquest notahash` has
     printed "This file either doesn't exist or isn't in an accessible
     directory" since Phase 0, and an argument that is not any recognizable
     indicator is, overwhelmingly, a path that is not where the user thought

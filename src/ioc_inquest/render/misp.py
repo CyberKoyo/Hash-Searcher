@@ -91,7 +91,7 @@ def _info(report: Report, verdict: Verdict | None) -> str:
     titled with a bare digest is indistinguishable from every other event
     titled with a bare digest.
     """
-    parts = [f"hash-searcher: {report.indicator}"]
+    parts = [f"ioc-inquest: {report.indicator}"]
     if verdict is not None:
         parts.append(f"{verdict.level} (score {verdict.score})")
     families = []

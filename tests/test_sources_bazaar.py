@@ -10,8 +10,8 @@ BAZAAR = "https://mb-api.abuse.ch/api/v1/"
 
 @respx.mock
 async def test_bazaar_returns_the_family_and_tags(no_backoff):
-    from hash_searcher.analysis.bazaar import extract_bazaar
-    from hash_searcher.api.malwarebazaar import get_bazaar
+    from ioc_inquest.analysis.bazaar import extract_bazaar
+    from ioc_inquest.api.malwarebazaar import get_bazaar
 
     payload = json.loads((FIXTURES / "bazaar_found.json").read_text())
     respx.post(BAZAAR).mock(return_value=httpx.Response(200, json=payload))
@@ -31,8 +31,8 @@ async def test_a_hash_bazaar_has_never_seen_is_not_an_error(no_backoff):
     """MalwareBazaar answers HTTP 200 with query_status=hash_not_found.
     Treating that as an error would print a failure for the common case --
     most hashes are not in a malware repository, and that is information."""
-    from hash_searcher.analysis.bazaar import extract_bazaar
-    from hash_searcher.api.malwarebazaar import get_bazaar
+    from ioc_inquest.analysis.bazaar import extract_bazaar
+    from ioc_inquest.api.malwarebazaar import get_bazaar
 
     payload = json.loads((FIXTURES / "bazaar_not_found.json").read_text())
     respx.post(BAZAAR).mock(return_value=httpx.Response(200, json=payload))
@@ -50,8 +50,8 @@ async def test_a_hash_bazaar_has_never_seen_is_not_an_error(no_backoff):
 async def test_a_transport_failure_is_an_error_not_a_not_found(no_backoff):
     """The two must stay distinguishable: 'not in the repository' and 'we
     could not ask' mean different things to an analyst."""
-    from hash_searcher.analysis.bazaar import extract_bazaar
-    from hash_searcher.api.malwarebazaar import get_bazaar
+    from ioc_inquest.analysis.bazaar import extract_bazaar
+    from ioc_inquest.api.malwarebazaar import get_bazaar
 
     respx.post(BAZAAR).mock(return_value=httpx.Response(500))
     async with httpx.AsyncClient() as client:
@@ -66,8 +66,8 @@ async def test_the_abusech_key_travels_as_an_auth_key_header(no_backoff, monkeyp
     """abuse.ch put both its APIs behind a free account: an unauthenticated
     request answers 401 {"error": "Unauthorized"}. One key covers both, and
     it is read at call time rather than frozen at import."""
-    from hash_searcher.api.malwarebazaar import get_bazaar
-    from hash_searcher.api.threatfox import get_threatfox
+    from ioc_inquest.api.malwarebazaar import get_bazaar
+    from ioc_inquest.api.threatfox import get_threatfox
 
     bazaar = respx.post(BAZAAR).mock(
         return_value=httpx.Response(200, json={"query_status": "no_result"}))
@@ -91,8 +91,8 @@ async def test_the_abusech_key_travels_as_an_auth_key_header(no_backoff, monkeyp
 async def test_a_401_names_the_variable_to_set(no_backoff):
     """The failure a user is most likely to hit, and the one where a bare
     'API Error 401' would tell them nothing actionable."""
-    from hash_searcher.analysis.bazaar import extract_bazaar
-    from hash_searcher.api.malwarebazaar import get_bazaar
+    from ioc_inquest.analysis.bazaar import extract_bazaar
+    from ioc_inquest.api.malwarebazaar import get_bazaar
 
     respx.post(BAZAAR).mock(
         return_value=httpx.Response(401, json={"error": "Unauthorized"}))

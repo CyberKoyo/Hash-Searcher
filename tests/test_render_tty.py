@@ -1,8 +1,8 @@
-from hash_searcher.render.tty import (
+from ioc_inquest.render.tty import (
     RULE, VT_UNAVAILABLE_NOTE, render, render_hosts, render_ip_intel, render_ips, render_otx,
     render_vt, render_whois,
 )
-from hash_searcher.models import (
+from ioc_inquest.models import (
     AttackTechnique, CensysHost, IPReport, OTXReport, PEInfo, Report, SandboxVerdict,
     SigmaRule, Signature, SourceResult, Submission, ThreatClass, VTReport, WhoisRecord, YaraMatch,
 )
@@ -379,8 +379,8 @@ def test_render_otx_count_literally_na_is_not_mistaken_for_no_data(capsys):
 
 
 def test_verdict_section_leads_with_the_level_and_lists_every_signal(capsys, sample_report):
-    from hash_searcher.models import Signal, Verdict
-    from hash_searcher.render.tty import RULE, render_verdict
+    from ioc_inquest.models import Signal, Verdict
+    from ioc_inquest.render.tty import RULE, render_verdict
 
     verdict = Verdict(level="MALICIOUS", score=60, signals=[
         Signal("detection", 50, "48/72 engines flagged this file"),
@@ -398,8 +398,8 @@ def test_verdict_section_leads_with_the_level_and_lists_every_signal(capsys, sam
 
 
 def test_a_verdict_with_no_signals_says_so(capsys, sample_report):
-    from hash_searcher.models import Verdict
-    from hash_searcher.render.tty import render_verdict
+    from ioc_inquest.models import Verdict
+    from ioc_inquest.render.tty import render_verdict
 
     render_verdict(Verdict(level="UNKNOWN", score=0, signals=[]))
     out = capsys.readouterr().out
@@ -408,8 +408,8 @@ def test_a_verdict_with_no_signals_says_so(capsys, sample_report):
 
 
 def test_a_negative_signal_prints_its_sign(capsys, sample_report):
-    from hash_searcher.models import Signal, Verdict
-    from hash_searcher.render.tty import render_verdict
+    from ioc_inquest.models import Signal, Verdict
+    from ioc_inquest.render.tty import render_verdict
 
     render_verdict(Verdict(level="CLEAN", score=-20, signals=[
         Signal("signed", -20, "valid signature from Contoso Ltd"),
@@ -420,7 +420,7 @@ def test_a_negative_signal_prints_its_sign(capsys, sample_report):
 def test_an_unreachable_virustotal_says_so_rather_than_implying_nobody_has_seen_it(capsys):
     """UNKNOWN means 'nothing has ever seen this'. A 503 supports no such
     claim, and a script branching on exit 3 deserves to know which it got."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     report = _phase4_report(vt=VTReport(found=False, unavailable=True,
                                          error="GetTotal API Error 503"))
@@ -443,8 +443,8 @@ def test_the_caveat_is_silent_once_the_verdict_no_longer_depends_on_vt(capsys):
     UNKNOWN. Sample evidence (here, a MalwareBazaar hit) escapes the
     UNKNOWN guard on its own; once the verdict does not lean on VT's
     non-answer, the caveat has nothing left to qualify."""
-    from hash_searcher.models import BazaarReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import BazaarReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _phase4_report(
         vt=VTReport(found=False, unavailable=True, error="GetTotal API Error 503"),
@@ -460,9 +460,9 @@ def test_the_caveat_is_silent_for_a_genuine_404_at_unknown(capsys):
     """A 404 is VirusTotal's actual answer: no record of this sample. That
     is exactly the UNKNOWN case the caveat must stay silent for -- printing
     it here would cast doubt on the one answer VT actually gave."""
-    from hash_searcher.analysis.vt import extract_vt
-    from hash_searcher.api.base_call import make_error
-    from hash_searcher.scoring import score
+    from ioc_inquest.analysis.vt import extract_vt
+    from ioc_inquest.api.base_call import make_error
+    from ioc_inquest.scoring import score
 
     report = _phase4_report(vt=extract_vt(make_error("Hash not found in GetTotal", 404)))
     verdict = score(report)
@@ -472,8 +472,8 @@ def test_the_caveat_is_silent_for_a_genuine_404_at_unknown(capsys):
 
 
 def test_detection_section_prints_the_ratio(capsys, sample_report):
-    from hash_searcher.models import Detection
-    from hash_searcher.render.tty import render_detection
+    from ioc_inquest.models import Detection
+    from ioc_inquest.render.tty import render_detection
 
     sample_report.vt.detection = Detection(malicious=48, suspicious=0, undetected=24)
     render_detection(sample_report)
@@ -483,7 +483,7 @@ def test_detection_section_prints_the_ratio(capsys, sample_report):
 
 
 def test_detection_section_is_silent_without_stats(capsys, sample_report):
-    from hash_searcher.render.tty import render_detection
+    from ioc_inquest.render.tty import render_detection
 
     sample_report.vt.detection = None
     render_detection(sample_report)
@@ -494,7 +494,7 @@ def test_contacted_domains_exact_formatting(capsys, sample_report):
     """R14. This asserted `"CONTACTED DOMAINS" in out and "evil.example" in out`,
     which left the body format of a whole new section unpinned -- changing it
     to `- {domain}` kept the suite green."""
-    from hash_searcher.render.tty import render_domains
+    from ioc_inquest.render.tty import render_domains
 
     sample_report.vt.contacted_domains = ["evil.example", "worse.example"]
     render_domains(sample_report)
@@ -508,7 +508,7 @@ def test_contacted_domains_exact_formatting(capsys, sample_report):
 
 
 def test_render_domains_is_silent_when_vt_reported_none(capsys, sample_report):
-    from hash_searcher.render.tty import render_domains
+    from ioc_inquest.render.tty import render_domains
 
     sample_report.vt.contacted_domains = []
     render_domains(sample_report)
@@ -521,7 +521,7 @@ def test_render_attribution_exact_formatting(capsys, sample_report):
     `out.index("ATTRIBUTION")` in the ordering test, so rewriting the
     signature line to `SIG={state}` kept 189 tests green.
     """
-    from hash_searcher.render.tty import render_attribution
+    from ioc_inquest.render.tty import render_attribution
 
     vt = sample_report.vt
     vt.threat = ThreatClass(label="trojan.emotet", family="emotet",
@@ -564,7 +564,7 @@ def test_render_attribution_is_silent_when_vt_returned_none_of_it(capsys, sample
     """The gate at the top of the section. sample_report carries sigma rules
     and contacted IPs but no attribution fields, which is the common case for
     a file VT has seen and nothing has classified."""
-    from hash_searcher.render.tty import render_attribution
+    from ioc_inquest.render.tty import render_attribution
 
     render_attribution(sample_report)
     assert capsys.readouterr().out == ""
@@ -574,7 +574,7 @@ def test_a_verified_signature_reads_differently_from_an_unverified_one(capsys, s
     """VT's signature_info.verified is prose and every value of it is truthy;
     the extractor compares against the one string that means verified. Pin
     both renderings so the distinction cannot collapse."""
-    from hash_searcher.render.tty import render_attribution
+    from ioc_inquest.render.tty import render_attribution
 
     sample_report.vt.signature = Signature(verified=True, signer=None)
     render_attribution(sample_report)
@@ -590,8 +590,8 @@ def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):
     follows the rules, and contacted domains land with the other network
     indicators rather than after OTX.
     """
-    from hash_searcher.models import Detection, Signal, StaticReport, ThreatClass, Verdict
-    from hash_searcher.render.tty import render
+    from ioc_inquest.models import Detection, Signal, StaticReport, ThreatClass, Verdict
+    from ioc_inquest.render.tty import render
 
     sample_report.vt.detection = Detection(malicious=48, undetected=24)
     sample_report.vt.threat = ThreatClass(label="trojan.emotet", family="emotet")
@@ -621,7 +621,7 @@ def test_render_emits_the_new_sections_in_a_pinned_order(capsys, sample_report):
 
 def test_render_without_a_verdict_prints_no_verdict_section(capsys, sample_report):
     """render(report) keeps working for every pre-Phase-2 call site."""
-    from hash_searcher.render.tty import render
+    from ioc_inquest.render.tty import render
 
     render(sample_report)
     assert "VERDICT:" not in capsys.readouterr().out
@@ -634,18 +634,18 @@ def test_render_static_is_silent_when_no_static_report(capsys, sample_report):
     """sample_report.static defaults to None -- render() keeps working for
     every pre-Phase-3 call site, the same guarantee Phase 2 gave render()
     without a verdict."""
-    from hash_searcher.render.tty import render_static
+    from ioc_inquest.render.tty import render_static
 
     render_static(sample_report)
     assert capsys.readouterr().out == ""
 
 
 def test_render_static_exact_formatting(capsys):
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         EntropyReport, FileTypeReport, IOCSet, PEStaticReport, PESection,
         StaticReport, StringsReport, YaraHit,
     )
-    from hash_searcher.render.tty import render_static
+    from ioc_inquest.render.tty import render_static
 
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=False),
@@ -697,8 +697,8 @@ def test_render_static_prints_none_for_empty_skipped_and_failed(capsys):
     """Skipped and failed must be printed by name -- a silently missing
     section is indistinguishable from a clean result. When both are empty
     that must still be said explicitly, not left implicit by omission."""
-    from hash_searcher.models import StaticReport
-    from hash_searcher.render.tty import render_static
+    from ioc_inquest.models import StaticReport
+    from ioc_inquest.render.tty import render_static
 
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=False),
@@ -712,8 +712,8 @@ def test_render_static_prints_none_for_empty_skipped_and_failed(capsys):
 
 
 def test_render_static_names_what_was_skipped_and_failed(capsys):
-    from hash_searcher.models import StaticReport
-    from hash_searcher.render.tty import render_static
+    from ioc_inquest.models import StaticReport
+    from ioc_inquest.render.tty import render_static
 
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=False),
@@ -730,8 +730,8 @@ def test_render_static_names_what_was_skipped_and_failed(capsys):
 def test_render_static_prints_the_yara_truncation_note(capsys):
     """branch-review.md I5: a partial YARA scan must never look identical to
     a complete one that simply found nothing."""
-    from hash_searcher.models import StaticReport, YaraHit
-    from hash_searcher.render.tty import render_static
+    from ioc_inquest.models import StaticReport, YaraHit
+    from ioc_inquest.render.tty import render_static
 
     report = Report(
         indicator="test", generated_at="x", vt=VTReport(found=False),
@@ -749,8 +749,8 @@ def test_render_static_prints_the_yara_truncation_note(capsys):
 
 
 def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):
-    from hash_searcher.models import CensysHost
-    from hash_searcher.render.tty import render_hosts
+    from ioc_inquest.models import CensysHost
+    from ioc_inquest.render.tty import render_hosts
 
     sample_report.hosts = [CensysHost(ip="198.51.100.10", error="Censys 403: forbidden")]
     render_hosts(sample_report)
@@ -758,8 +758,8 @@ def test_render_hosts_prints_the_per_ip_error(capsys, sample_report):
 
 
 def test_render_hosts_error_branch_exact_formatting(capsys, sample_report):
-    from hash_searcher.models import CensysHost
-    from hash_searcher.render.tty import RULE, render_hosts
+    from ioc_inquest.models import CensysHost
+    from ioc_inquest.render.tty import RULE, render_hosts
 
     sample_report.hosts = [
         CensysHost(ip="198.51.100.10", error="Censys 403: forbidden"),
@@ -779,7 +779,7 @@ def test_render_hosts_error_branch_exact_formatting(capsys, sample_report):
 
 def test_render_ips_says_so_when_abuseipdb_returned_nothing(capsys, sample_report):
     """S3: 'No data from IPDB available.' -- an empty table looks like a bug."""
-    from hash_searcher.render.tty import render_ips
+    from ioc_inquest.render.tty import render_ips
 
     sample_report.ips = {}
     render_ips(sample_report)
@@ -789,7 +789,7 @@ def test_render_ips_says_so_when_abuseipdb_returned_nothing(capsys, sample_repor
 def test_the_whois_separator_matches_the_header_width(capsys, sample_report):
     """R13: 35+1+12+1+12+1+30 == 92. The separator was 89 -- three short, a
     faithful port of a defect in formatters.py:183-184."""
-    from hash_searcher.render.tty import render_whois
+    from ioc_inquest.render.tty import render_whois
 
     render_whois(sample_report)
     lines = capsys.readouterr().out.splitlines()
@@ -806,7 +806,7 @@ def test_an_entry_dropped_for_a_missing_ip_leaves_no_blank_row(capsys):
     a blank row is worse than no row, because it reads as a real IP the tool
     failed to describe. Assert the exact bytes, not just the row count.
     """
-    from hash_searcher.analysis.ipdb import extract_ips
+    from ioc_inquest.analysis.ipdb import extract_ips
 
     report = Report(
         indicator="test",
@@ -844,8 +844,8 @@ def _phase4_report(**kwargs) -> Report:
 
 
 def test_render_bazaar_exact_formatting(capsys):
-    from hash_searcher.models import BazaarReport, SourceResult
-    from hash_searcher.render.tty import render_bazaar
+    from ioc_inquest.models import BazaarReport, SourceResult
+    from ioc_inquest.render.tty import render_bazaar
 
     render_bazaar(_phase4_report(bazaar=SourceResult(value=BazaarReport(
         found=True, family="Emotet", tags=["exe", "banker"], file_type="exe",
@@ -865,8 +865,8 @@ def test_render_bazaar_exact_formatting(capsys):
 def test_a_sample_bazaar_has_never_seen_says_so_rather_than_going_silent(capsys):
     """A missing section reads as a bug. 'abuse.ch has never seen this' is
     an answer, and a different one from 'we could not ask abuse.ch'."""
-    from hash_searcher.models import BazaarReport, SourceResult
-    from hash_searcher.render.tty import render_bazaar
+    from ioc_inquest.models import BazaarReport, SourceResult
+    from ioc_inquest.render.tty import render_bazaar
 
     render_bazaar(_phase4_report(
         bazaar=SourceResult(value=BazaarReport(found=False), queried=True)))
@@ -878,8 +878,8 @@ def test_a_sample_bazaar_has_never_seen_says_so_rather_than_going_silent(capsys)
 
 
 def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
-    from hash_searcher.models import GreyNoiseReport, ShodanReport, SourceResult
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import GreyNoiseReport, ShodanReport, SourceResult
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
         shodan={"198.51.100.10": SourceResult(value=ShodanReport(
@@ -895,8 +895,8 @@ def test_render_ip_intel_shows_ports_cves_and_noise(capsys):
 
 
 def test_kev_entries_are_rendered_with_the_product(capsys):
-    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
-    from hash_searcher.render.tty import render_kev
+    from ioc_inquest.models import KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.render.tty import render_kev
 
     render_kev(_phase4_report(kev=SourceResult(value=KEVReport(entries=[KEVEntry(
         cve="CVE-2021-41617", vendor="OpenBSD", product="OpenSSH",
@@ -909,8 +909,8 @@ def test_kev_entries_are_rendered_with_the_product(capsys):
 def test_a_capped_sibling_list_says_how_many_there_were(capsys):
     """The count is the whole point of capping honestly: a truncated list
     that reads as complete is worse than no list."""
-    from hash_searcher.models import CertReport, SourceResult
-    from hash_searcher.render.tty import render_certs
+    from ioc_inquest.models import CertReport, SourceResult
+    from ioc_inquest.render.tty import render_certs
 
     render_certs(_phase4_report(certs=SourceResult(value=CertReport(
         siblings=[f"h{n}.evil.example" for n in range(100)], count=5000),
@@ -923,7 +923,7 @@ def test_a_capped_sibling_list_says_how_many_there_were(capsys):
 def test_sections_for_sources_that_never_ran_are_absent(capsys):
     """None means the source never ran, and a section printed for it would
     be indistinguishable from one that ran and found nothing."""
-    from hash_searcher.render.tty import render_bazaar, render_certs, render_kev
+    from ioc_inquest.render.tty import render_bazaar, render_certs, render_kev
 
     empty = _phase4_report()
     render_bazaar(empty)
@@ -936,8 +936,8 @@ def test_a_long_cve_list_is_capped_with_the_total_kept(capsys):
     """A real Shodan answer for a busy web server carries over a hundred
     CVEs. Printed whole they are one unreadable line that buries the KEV
     section underneath -- capped, the count still says how many there were."""
-    from hash_searcher.models import ShodanReport, SourceResult
-    from hash_searcher.render.tty import CVE_DISPLAY_LIMIT, render_ip_intel
+    from ioc_inquest.models import ShodanReport, SourceResult
+    from ioc_inquest.render.tty import CVE_DISPLAY_LIMIT, render_ip_intel
 
     cves = [f"CVE-2021-{n:05d}" for n in range(128)]
     render_ip_intel(_phase4_report(
@@ -953,8 +953,8 @@ def test_ip_intel_names_the_c2_family_for_a_contacted_ip(capsys):
     """The section already had exposure (Shodan) and noise-vs-targeted
     (GreyNoise). Neither names a C2 family, which is ThreatFox's whole
     value and the reason it now runs per IP as well as per sample."""
-    from hash_searcher.models import ShodanReport, SourceResult, ThreatFoxReport
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import ShodanReport, SourceResult, ThreatFoxReport
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
         shodan={"198.51.100.10": SourceResult(
@@ -972,8 +972,8 @@ def test_an_ip_only_threatfox_answered_for_still_gets_a_row(capsys):
     """threatfox_ips is a third per-IP dict beside shodan and greynoise, so
     it has to join the key union too -- otherwise an attribution for an
     address Shodan never answered about is fetched and then dropped."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
         value=ThreatFoxReport(found=True, malware="Qakbot", confidence=75),
@@ -987,8 +987,8 @@ def test_an_ip_only_threatfox_answered_for_still_gets_a_row(capsys):
 def test_an_address_threatfox_has_no_record_of_says_so(capsys):
     """A real answer, and a different one from an error or a source nobody
     asked -- the same three-way split every other renderer here makes."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
         value=ThreatFoxReport(found=False), queried=True)}))
@@ -1005,8 +1005,8 @@ def test_ip_intel_is_silent_when_no_per_ip_source_was_ever_asked(capsys):
     only never-asked SourceResults is non-empty and therefore truthy. The
     header printed and each IP rendered as a bare `IP: x.x.x.x` line with
     nothing under it. The gate has to ask whether anything was queried."""
-    from hash_searcher.models import SourceResult
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import SourceResult
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
         shodan={"198.51.100.10": SourceResult()},
@@ -1019,8 +1019,8 @@ def test_ip_intel_is_silent_when_no_per_ip_source_was_ever_asked(capsys):
 def test_an_ip_nobody_asked_about_is_dropped_while_the_answered_ones_stay(capsys):
     """The third per-IP dict is exactly the change that can leave one dict
     populated and another not, so the gate is per IP, not per section."""
-    from hash_searcher.models import ShodanReport, SourceResult
-    from hash_searcher.render.tty import render_ip_intel
+    from ioc_inquest.models import ShodanReport, SourceResult
+    from ioc_inquest.render.tty import render_ip_intel
 
     render_ip_intel(_phase4_report(
         shodan={"198.51.100.10": SourceResult(
@@ -1038,8 +1038,8 @@ def test_a_long_threatfox_tag_list_is_capped_with_the_total_kept(capsys):
     is worse than no list. In the PDF the cap is load-bearing rather than
     cosmetic -- an unbounded provider list in a table cell raises
     LayoutError -- so both surfaces share TAG_DISPLAY_LIMIT."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.render.tty import TAG_DISPLAY_LIMIT, render_ip_intel
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.render.tty import TAG_DISPLAY_LIMIT, render_ip_intel
 
     tags = [f"tag-{n:03d}" for n in range(40)]
     render_ip_intel(_phase4_report(threatfox_ips={"203.0.113.7": SourceResult(
@@ -1063,8 +1063,8 @@ def test_an_unreachable_kev_says_how_many_cves_went_unchecked(capsys):
     Two different counts, and the whole line as a literal: one count would
     also pass against a hardcoded number in the renderer.
     """
-    from hash_searcher.models import KEVReport, SourceResult
-    from hash_searcher.render.tty import render_kev
+    from ioc_inquest.models import KEVReport, SourceResult
+    from ioc_inquest.render.tty import render_kev
 
     for unchecked in (3, 17):
         render_kev(_phase4_report(kev=SourceResult(
@@ -1085,8 +1085,8 @@ def test_render_kev_is_silent_when_the_catalog_answered_with_no_hits(capsys):
     right -- an empty KEV section is not news -- so the docstring was the
     thing that was wrong, and this pins what it says now.
     """
-    from hash_searcher.models import KEVReport, SourceResult
-    from hash_searcher.render.tty import render_kev
+    from ioc_inquest.models import KEVReport, SourceResult
+    from ioc_inquest.render.tty import render_kev
 
     render_kev(_phase4_report(kev=SourceResult(
         value=KEVReport(entries=[], unchecked=0), queried=True)))

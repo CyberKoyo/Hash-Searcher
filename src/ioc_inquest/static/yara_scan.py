@@ -34,9 +34,25 @@ YARA_WALL_CLOCK_BUDGET = 60
 MAX_RULE_FILES = 500
 
 
+LEGACY_DATA_DIR = "hash-searcher"
+
+
 def rules_dir() -> Path:
-    root = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
-    return Path(root) / "hash-searcher" / "yara"
+    """The default ruleset directory, or the pre-rename one still holding it.
+
+    Renaming the project moved this path, and the rules under it are the
+    user's own files, not ours to relocate. Reading the old directory when
+    the new one does not exist keeps a rename from silently turning a
+    populated default ruleset into an empty scan; writing rules to the new
+    path takes precedence from then on.
+    """
+    root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    current = root / "ioc-inquest" / "yara"
+    if not current.exists():
+        legacy = root / LEGACY_DATA_DIR / "yara"
+        if legacy.exists():
+            return legacy
+    return current
 
 
 def analyze_yara(path: str, rules_path: str | None = None) -> tuple[list[YaraHit], str]:

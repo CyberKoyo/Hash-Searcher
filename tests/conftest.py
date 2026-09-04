@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     CensysHost, IPReport, OTXReport, Report, SigmaRule, VTReport, WhoisRecord,
 )
-from hash_searcher.static import capabilities
+from ioc_inquest.static import capabilities
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -71,7 +71,7 @@ def block_network(monkeypatch):
 def isolated_cache_dir(tmp_path, monkeypatch):
     """No test may touch the developer's real cache directory.
 
-    ResponseCache has always defaulted to $XDG_CACHE_HOME/hash-searcher, and
+    ResponseCache has always defaulted to $XDG_CACHE_HOME/ioc-inquest, and
     any test running analyze_one without --no-cache quietly created a
     responses.db there. RateBudget makes that worse in a way --no-cache no
     longer avoids: the budget deliberately ignores that flag, so a cli test
@@ -105,7 +105,7 @@ def no_backoff(monkeypatch):
 
     The dotted path below reads as if it scoped the patch to base_call. It
     does not, and nothing in this suite should be written as though it did:
-    `hash_searcher.api.base_call.asyncio` resolves to the one shared asyncio
+    `ioc_inquest.api.base_call.asyncio` resolves to the one shared asyncio
     module object, so this replaces asyncio.sleep for the whole process
     until monkeypatch undoes it. What actually keeps this fixture out of
     other tests' way is that it is not autouse -- only block_network is --
@@ -114,7 +114,7 @@ def no_backoff(monkeypatch):
     async def _instant(_seconds):
         return None
 
-    monkeypatch.setattr("hash_searcher.api.base_call.asyncio.sleep", _instant)
+    monkeypatch.setattr("ioc_inquest.api.base_call.asyncio.sleep", _instant)
 
 
 @pytest.fixture

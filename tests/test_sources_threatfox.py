@@ -4,8 +4,8 @@ import respx
 
 @respx.mock
 async def test_threatfox_maps_an_ioc_to_a_family(no_backoff):
-    from hash_searcher.analysis.threatfox import extract_threatfox
-    from hash_searcher.api.threatfox import get_threatfox
+    from ioc_inquest.analysis.threatfox import extract_threatfox
+    from ioc_inquest.api.threatfox import get_threatfox
 
     respx.post("https://threatfox-api.abuse.ch/api/v1/").mock(
         return_value=httpx.Response(200, json={"query_status": "ok", "data": [
@@ -23,8 +23,8 @@ async def test_threatfox_maps_an_ioc_to_a_family(no_backoff):
 
 @respx.mock
 async def test_threatfox_no_result_is_not_an_error(no_backoff):
-    from hash_searcher.analysis.threatfox import extract_threatfox
-    from hash_searcher.api.threatfox import get_threatfox
+    from ioc_inquest.analysis.threatfox import extract_threatfox
+    from ioc_inquest.api.threatfox import get_threatfox
 
     respx.post("https://threatfox-api.abuse.ch/api/v1/").mock(
         return_value=httpx.Response(200, json={"query_status": "no_result", "data": []})

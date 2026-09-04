@@ -4,11 +4,11 @@ reason is the failure mode this layer exists to prevent."""
 
 import pytest
 
-from hash_searcher.models import (
+from ioc_inquest.models import (
     Detection, IPReport, OTXReport, Report, SandboxVerdict, SigmaRule, Signature,
     ThreatClass, VTReport, YaraMatch,
 )
-from hash_searcher.scoring import (
+from ioc_inquest.scoring import (
     SIGMA_CAP, W_DETECTION_SUSPICIOUS, W_PACKED, W_SANDBOX, W_SUSPICIOUS_IMPORTS,
     W_YARA, W_YARA_LOCAL, score,
 )
@@ -219,7 +219,7 @@ def test_the_band_boundaries(vt, expected_score, expected_level):
 
 
 def test_packed_and_suspicious_imports_raise_the_score():
-    from hash_searcher.models import EntropyReport, PEStaticReport, StaticReport
+    from ioc_inquest.models import EntropyReport, PEStaticReport, StaticReport
 
     report = _report()  # the Phase 2 helper in tests/test_scoring.py
     report.static = StaticReport(
@@ -234,7 +234,7 @@ def test_packed_and_suspicious_imports_raise_the_score():
 
 
 def test_a_yara_hit_from_local_rules_is_a_signal():
-    from hash_searcher.models import StaticReport, YaraHit
+    from ioc_inquest.models import StaticReport, YaraHit
 
     report = _report()
     report.static = StaticReport(path="x", size=1, sha256="a" * 64,
@@ -246,7 +246,7 @@ def test_the_static_signals_carry_their_pinned_weights():
     """The scoring layer's weights are the whole argument (module docstring)
     -- pin them here the same way the Phase 2 signals are pinned elsewhere
     in this file."""
-    from hash_searcher.models import EntropyReport, PEStaticReport, StaticReport, YaraHit
+    from ioc_inquest.models import EntropyReport, PEStaticReport, StaticReport, YaraHit
 
     report = _report()
     report.static = StaticReport(
@@ -264,7 +264,7 @@ def test_the_static_signals_carry_their_pinned_weights():
 def test_fewer_than_three_suspicious_imports_does_not_fire():
     """'Firing at three or more' -- one or two hits could be a legitimate
     program that merely resolves LoadLibrary/GetProcAddress."""
-    from hash_searcher.models import PEStaticReport, StaticReport
+    from ioc_inquest.models import PEStaticReport, StaticReport
 
     report = _report()
     report.static = StaticReport(path="x", size=1, sha256="a" * 64,
@@ -276,7 +276,7 @@ def test_static_findings_alone_lift_a_sample_out_of_unknown():
     """The decision this phase forces: a file with local findings and no VT
     record is no longer 'nobody has ever seen this'. Whichever way this is
     decided, it must be decided explicitly and pinned here."""
-    from hash_searcher.models import StaticReport, YaraHit
+    from ioc_inquest.models import StaticReport, YaraHit
 
     report = _report()  # vt.found is False, no OTX pulses
     report.static = StaticReport(path="x", size=1, sha256="a" * 64,
@@ -288,7 +288,7 @@ def test_a_static_report_with_no_findings_stays_unknown():
     """The guard must key off signals that actually fired, not off whether a
     StaticReport merely exists -- a clean local scan is not evidence the file
     was ever seen anywhere else."""
-    from hash_searcher.models import StaticReport
+    from ioc_inquest.models import StaticReport
 
     report = _report()
     report.static = StaticReport(path="x", size=1, sha256="a" * 64)
@@ -311,7 +311,7 @@ def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
     the gap the reviewer found in
     test_static_findings_alone_lift_a_sample_out_of_unknown, which only
     ever exercised yara_local and asserted nothing about packed."""
-    from hash_searcher.models import EntropyReport, StaticReport
+    from ioc_inquest.models import EntropyReport, StaticReport
 
     report = _report()  # vt.found is False, no OTX pulses
     report.static = StaticReport(
@@ -328,8 +328,8 @@ def test_a_packed_only_sample_with_no_vt_record_stays_unknown():
 
 
 def test_a_malwarebazaar_family_match_is_a_signal():
-    from hash_searcher.models import BazaarReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import BazaarReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
@@ -341,7 +341,7 @@ def test_a_source_nobody_asked_never_fires_its_signal():
     """The crash this wrapper exists to prevent: a signal function touching
     .value on a SourceResult nobody queried must not raise AttributeError on
     a bare `Report()`'s default -- it must simply not fire."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     report = _report()
     assert not any(s.name == "bazaar" for s in score(report).signals)
@@ -350,8 +350,8 @@ def test_a_source_nobody_asked_never_fires_its_signal():
 def test_a_known_exploited_cve_is_a_strong_signal():
     """KEV means confirmed exploitation in the wild -- the strongest single
     statement any source in this phase makes."""
-    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.kev = SourceResult(
@@ -364,8 +364,8 @@ def test_greynoise_internet_noise_subtracts_rather_than_adds():
     """An IP scanning the entire internet is not evidence that THIS sample
     was aimed at you. Scoring it as a positive inflates every verdict that
     touches a contacted IP, which is most of them."""
-    from hash_searcher.models import GreyNoiseReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import GreyNoiseReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.greynoise = {
@@ -378,8 +378,8 @@ def test_greynoise_internet_noise_subtracts_rather_than_adds():
 def test_certificate_siblings_are_informational_and_score_nothing():
     """Sibling domains are a pivot, not a verdict. Scoring them would make
     every large hosting provider look malicious."""
-    from hash_searcher.models import CertReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import CertReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.certs = SourceResult(
@@ -388,8 +388,8 @@ def test_certificate_siblings_are_informational_and_score_nothing():
 
 
 def test_a_threatfox_family_match_is_a_signal():
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.threatfox = SourceResult(
@@ -404,8 +404,8 @@ def test_a_bazaar_family_match_escapes_unknown_without_a_vt_record():
     FILE, not merely having an opinion about an indicator it touched --
     reporting UNKNOWN there would discard the only real finding of the run.
     """
-    from hash_searcher.models import BazaarReport, SourceResult
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import BazaarReport, SourceResult
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.bazaar = SourceResult(value=BazaarReport(found=True, family="Emotet"),
@@ -420,8 +420,8 @@ def test_threatfox_fires_on_a_contacted_ip_even_when_the_sample_is_unknown():
     ThreatFox rarely holds. Shodan reports exposure and GreyNoise reports
     noise-vs-targeted; neither names the family.
     """
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.threatfox_ips = {"198.51.100.10": SourceResult(
@@ -438,8 +438,8 @@ def test_threatfox_fires_on_a_contacted_ip_even_when_the_sample_is_unknown():
 def test_a_threatfox_ip_lookup_with_nothing_to_report_is_not_a_signal():
     """Both non-answers, and neither is evidence: an address ThreatFox has
     no record of, and one nobody asked it about."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.threatfox_ips = {
@@ -453,8 +453,8 @@ def test_a_threatfox_ip_lookup_with_nothing_to_report_is_not_a_signal():
 def test_the_sample_level_threatfox_detail_is_unchanged_by_the_per_ip_pass():
     """The per-IP fan-out adds targets to this signal; it must not reword
     the answer the sample-level lookup already gave."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.threatfox = SourceResult(
@@ -467,7 +467,7 @@ def test_the_sample_level_threatfox_detail_is_unchanged_by_the_per_ip_pass():
 
 
 def _threatfox_hits(*ips):
-    from hash_searcher.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
     return {ip: SourceResult(
         value=ThreatFoxReport(found=True, malware="Emotet", confidence=90),
         queried=True) for ip in ips}
@@ -485,7 +485,7 @@ def test_many_threatfox_hits_stay_one_signal_at_a_flat_weight():
     constant, so reading the constant here pins the arithmetic without
     freezing a weight the module says to tune in one place.
     """
-    from hash_searcher.scoring import W_THREATFOX, score
+    from ioc_inquest.scoring import W_THREATFOX, score
 
     report = _report()
     report.threatfox_ips = _threatfox_hits(*(f"198.51.100.{n}" for n in range(50)))
@@ -501,8 +501,8 @@ def test_the_threatfox_detail_names_several_targets_not_just_the_first():
     """The sample AND the contacted IPs -- the "or on both" case the
     docstring claims and no test built. Every hit up to the cap is named:
     an analyst who cannot see WHICH address was attributed cannot pivot."""
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.threatfox = SourceResult(
@@ -523,7 +523,7 @@ def test_a_long_threatfox_target_list_is_capped_with_the_total_kept():
     rule 2 of render/pdf.py's module docstring. Capped at an item boundary
     with the TOTAL stated, the way tag_text and _cve_cell already do.
     """
-    from hash_searcher.scoring import THREATFOX_TARGET_LIMIT, score
+    from ioc_inquest.scoring import THREATFOX_TARGET_LIMIT, score
 
     ips = [f"198.51.100.{n}" for n in range(50)]
     report = _report()
@@ -569,8 +569,8 @@ def _kev_at_the_provider_maximum():
     across every contacted IP against the catalog. That is IOC_LIMIT hosts
     at the documented realistic 137 CVEs each.
     """
-    from hash_searcher.api.api_data_puller import IOC_LIMIT
-    from hash_searcher.models import KEVEntry, KEVReport, SourceResult
+    from ioc_inquest.api.api_data_puller import IOC_LIMIT
+    from ioc_inquest.models import KEVEntry, KEVReport, SourceResult
 
     return SourceResult(value=KEVReport(entries=[
         KEVEntry(cve=f"CVE-2021-{n:05d}", vendor="Apache", product="HTTP Server",
@@ -582,7 +582,7 @@ def test_the_kev_detail_is_capped_at_the_source():
     """137 CVEs for one host is the figure _cve_cell's own docstring calls
     realistic, and 80 of them already overflow the PDF's detail budget.
     Uncapped, the reachable maximum is over a hundred thousand characters."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     report = _report()
     report.kev = _kev_at_the_provider_maximum()
@@ -597,7 +597,7 @@ def test_the_kev_detail_is_capped_at_the_source():
 def test_the_crowdsourced_yara_detail_is_capped_at_the_source():
     """analysis/vt.py's NAME_LIMIT reaches `names` and nothing else. VT
     returns hundreds of crowdsourced YARA results and _yara caps none."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     rules = [f"APT_Cobalt_Strike_Beacon_x64_variant_{n}" for n in range(500)]
     report = _report(vt=VTReport(found=True,
@@ -612,7 +612,7 @@ def test_the_crowdsourced_yara_detail_is_capped_at_the_source():
 
 def test_the_sandbox_detail_is_capped_at_the_source():
     """Same gap as the YARA one: _sandbox caps nothing either."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     names = [f"Zenbox Sandbox Cluster Node {n}" for n in range(200)]
     report = _report(vt=VTReport(found=True, sandbox=[
@@ -628,8 +628,8 @@ def test_the_sandbox_detail_is_capped_at_the_source():
 def test_the_local_yara_detail_is_capped_at_the_source():
     """Bounded only by how many rules the operator dropped in the rules
     directory -- which is to say, not bounded by this tool at all."""
-    from hash_searcher.models import StaticReport, YaraHit
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import StaticReport, YaraHit
+    from ioc_inquest.scoring import score
 
     rules = [f"Local_Detection_Rule_For_Family_{n}" for n in range(300)]
     report = _report()
@@ -652,9 +652,9 @@ def test_a_capped_detail_states_the_total_never_the_remainder():
     numbers to learn how many there were -- and which contradicted the
     comment above THREATFOX_TARGET_LIMIT claiming it stated the total.
     """
-    from hash_searcher.models import SourceResult, ThreatFoxReport, YaraHit
-    from hash_searcher.models import StaticReport
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, ThreatFoxReport, YaraHit
+    from ioc_inquest.models import StaticReport
+    from ioc_inquest.scoring import score
 
     report = _report(vt=VTReport(
         found=True,
@@ -681,7 +681,7 @@ def test_a_capped_list_of_six_does_not_read_as_one_more():
     exactly six hits. Stating the total instead makes the plural bug
     unreachable: the count is only printed when it exceeds the cap, so it
     is never one."""
-    from hash_searcher.scoring import THREATFOX_TARGET_LIMIT, score
+    from ioc_inquest.scoring import THREATFOX_TARGET_LIMIT, score
 
     report = _report()
     report.threatfox_ips = _threatfox_hits(
@@ -702,10 +702,10 @@ def test_the_pdf_backstop_never_fires_on_input_the_puller_can_produce():
     DETAIL_CHAR_LIMIT would let a widened backstop excuse an uncapped
     source.
     """
-    from hash_searcher.models import SourceResult, GreyNoiseReport
-    from hash_searcher.models import StaticReport, YaraHit
-    from hash_searcher.api.api_data_puller import IOC_LIMIT
-    from hash_searcher.scoring import score
+    from ioc_inquest.models import SourceResult, GreyNoiseReport
+    from ioc_inquest.models import StaticReport, YaraHit
+    from ioc_inquest.api.api_data_puller import IOC_LIMIT
+    from ioc_inquest.scoring import score
 
     report = _report(vt=VTReport(
         found=True,
@@ -749,7 +749,7 @@ def test_one_over_long_item_is_truncated_at_the_source_too():
     page, each stating its own true length, instead of one name and a
     fragment.
     """
-    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+    from ioc_inquest.scoring import ITEM_CHAR_LIMIT, score
 
     rules = [f"{'W' * 13 + ' ' * 1}" * 30 + f"_{n}" for n in range(8)]
     assert len(rules[0]) > 400 and len(rules) == 8
@@ -773,7 +773,7 @@ def test_a_provider_string_of_ordinary_length_is_not_touched():
     ("APT_Cobalt_Strike_Beacon_x64_variant_NN"); provider YARA and sandbox
     names run to about forty. A cap that shortens those would be a bug, not
     a bound."""
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     rules = [f"APT_Cobalt_Strike_Beacon_x64_variant_{n}" for n in range(3)]
     report = _report(vt=VTReport(found=True,
@@ -799,8 +799,8 @@ def test_the_threatfox_item_cap_is_measured_against_the_provider_string():
     Each provider substring is measured on its own now, so the composed
     clause may exceed 80 while neither thing ThreatFox actually said does.
     """
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import ITEM_CHAR_LIMIT
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import ITEM_CHAR_LIMIT
 
     family = "Trojan.Win32.Emotet.Downloader.Gen.Variant.B"   # 44 chars, real shape
     assert len(family) <= ITEM_CHAR_LIMIT, "the provider string is not the long thing"
@@ -831,8 +831,8 @@ def test_an_unbounded_threatfox_target_is_still_capped():
     from `raw["threatfox_ips"]`, those same keys. So the address half of the
     clause gets its own budget rather than none.
     """
-    from hash_searcher.models import SourceResult, ThreatFoxReport
-    from hash_searcher.scoring import ITEM_CHAR_LIMIT
+    from ioc_inquest.models import SourceResult, ThreatFoxReport
+    from ioc_inquest.scoring import ITEM_CHAR_LIMIT
 
     report = _report(vt=VTReport(found=True))
     report.threatfox_ips = {"9" * 4000: SourceResult(
@@ -879,10 +879,10 @@ def test_a_provider_supplied_number_in_a_detail_is_bounded_too():
     over eight uncapped sites. Fixing the reported site and leaving its
     siblings is the exact move six rounds of this failure have already made.
     """
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         Detection, OTXReport, IPReport, SourceResult, ThreatFoxReport,
     )
-    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+    from ioc_inquest.scoring import ITEM_CHAR_LIMIT, score
 
     huge = int("9" * 4000)
     assert len(str(huge)) == 4000, "json.loads has no integer width limit"
@@ -920,10 +920,10 @@ def test_a_number_of_ordinary_size_is_printed_exactly():
     """The bound above must be invisible for every figure real input
     produces. A confidence score is 0-100 and a pulse count is a handful of
     digits; a cap that touched those would be a bug, not a bound."""
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         Detection, OTXReport, IPReport, SourceResult, ThreatFoxReport,
     )
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     report = _report(
         vt=VTReport(found=True,
@@ -969,10 +969,10 @@ def test_every_provider_string_a_detail_names_is_bounded_too():
     write_pdf. The first three are checked here; the join has its own test
     below, because it needed a second bound the other three do not.
     """
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         BazaarReport, Signature, SourceResult, ThreatClass,
     )
-    from hash_searcher.scoring import ITEM_CHAR_LIMIT, score
+    from ioc_inquest.scoring import ITEM_CHAR_LIMIT, score
 
     huge = "W" * 4000
     report = _report(vt=VTReport(
@@ -1010,8 +1010,8 @@ def test_the_greynoise_join_is_capped_in_both_dimensions():
     the six joined details that had neither, which is the whole reason a
     list needs both.
     """
-    from hash_searcher.models import GreyNoiseReport, SourceResult
-    from hash_searcher.scoring import (
+    from ioc_inquest.models import GreyNoiseReport, SourceResult
+    from ioc_inquest.scoring import (
         DETAIL_ITEM_LIMIT, ITEM_CHAR_LIMIT, score,
     )
 
@@ -1043,10 +1043,10 @@ def test_an_ordinary_provider_string_in_a_detail_is_printed_exactly():
     bound. Literals rather than expressions built from the limits, so
     mutating a limit moves the code and not the expectation.
     """
-    from hash_searcher.models import (
+    from ioc_inquest.models import (
         BazaarReport, GreyNoiseReport, Signature, SourceResult, ThreatClass,
     )
-    from hash_searcher.scoring import score
+    from ioc_inquest.scoring import score
 
     report = _report(vt=VTReport(
         found=True,
@@ -1171,7 +1171,7 @@ def test_every_provider_value_a_signal_detail_names_is_bounded():
     import ast
     import inspect
 
-    from hash_searcher import scoring
+    from ioc_inquest import scoring
 
     tree = ast.parse(inspect.getsource(scoring))
 

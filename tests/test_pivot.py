@@ -8,11 +8,11 @@ lookups however many names a certificate log hands back.
 
 import pytest
 
-from hash_searcher.api.api_data_puller import PIVOT_FETCH_BUDGET, data_puller
-from hash_searcher.api.crtsh import CRTSH_DOMAIN_LIMIT
-from hash_searcher.cache import ResponseCache
-from hash_searcher.indicators import Indicator
-from hash_searcher.api.registry import Provider, by_name
+from ioc_inquest.api.api_data_puller import PIVOT_FETCH_BUDGET, data_puller
+from ioc_inquest.api.crtsh import CRTSH_DOMAIN_LIMIT
+from ioc_inquest.cache import ResponseCache
+from ioc_inquest.indicators import Indicator
+from ioc_inquest.api.registry import Provider, by_name
 
 
 def _provider(name: str) -> Provider:
@@ -22,7 +22,7 @@ def _provider(name: str) -> Provider:
 
 
 def _pool(monkeypatch, *names):
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.available",
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.available",
                         lambda: [_provider(name) for name in names])
 
 
@@ -48,8 +48,8 @@ async def _run(monkeypatch, crtsh, pivot_depth, rdap=None):
         rdap_asked.append(domain)
         return rdap if rdap is not None else {"handle": domain}
 
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_crtsh", crtsh)
-    monkeypatch.setattr("hash_searcher.api.api_data_puller.get_rdap", fake_rdap)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_crtsh", crtsh)
+    monkeypatch.setattr("ioc_inquest.api.api_data_puller.get_rdap", fake_rdap)
 
     result = await data_puller(Indicator("domain", "evil.example"),
                                ResponseCache(enabled=False),
@@ -149,20 +149,20 @@ async def test_a_negative_depth_is_rejected(monkeypatch):
 # --- the flag ---------------------------------------------------------------
 
 def test_pivot_depth_defaults_to_zero():
-    from hash_searcher.cli import build_parser
+    from ioc_inquest.cli import build_parser
 
     assert build_parser().parse_args(["abc"]).pivot_depth == 0
 
 
 def test_the_parser_rejects_a_negative_depth():
-    from hash_searcher.cli import build_parser
+    from ioc_inquest.cli import build_parser
 
     with pytest.raises(SystemExit):
         build_parser().parse_args(["abc", "--pivot-depth", "-1"])
 
 
 async def test_the_flag_reaches_data_puller(monkeypatch):
-    from hash_searcher.cli import run_cli
+    from ioc_inquest.cli import run_cli
 
     seen = []
 
@@ -173,8 +173,8 @@ async def test_the_flag_reaches_data_puller(monkeypatch):
                 "greynoise": {}, "kev": {}, "bazaar": None, "threatfox": None,
                 "threatfox_ips": {}}
 
-    monkeypatch.setattr("hash_searcher.cli.check_env", lambda: True)
-    monkeypatch.setattr("hash_searcher.cli.data_puller", fake_puller)
+    monkeypatch.setattr("ioc_inquest.cli.check_env", lambda: True)
+    monkeypatch.setattr("ioc_inquest.cli.data_puller", fake_puller)
 
     await run_cli(["evil.example", "--pivot-depth", "2", "--no-cache"])
     assert seen == [2]

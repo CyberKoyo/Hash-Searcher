@@ -3,12 +3,12 @@ import time
 from tests.conftest import requires
 
 RULE = """
-rule Hash_Searcher_Test_Rule
+rule IOC_Inquest_Test_Rule
 {
     meta:
         description = "matches a synthetic marker, never real malware"
     strings:
-        $marker = "HASHSEARCHERTESTMARKER"
+        $marker = "IOCINQUESTTESTMARKER"
     condition:
         $marker
 }
@@ -16,7 +16,7 @@ rule Hash_Searcher_Test_Rule
 
 
 def test_yara_returns_nothing_without_the_library(tmp_path, monkeypatch):
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     monkeypatch.setattr(yara_scan.capabilities, "have", lambda name: False)
     target = tmp_path / "sample.bin"
@@ -33,7 +33,7 @@ def test_yara_returns_nothing_when_the_rules_directory_is_absent(tmp_path, monke
     including one where yara-python isn't installed -- rather than passing
     vacuously because the capability check short-circuits first.
     """
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     monkeypatch.setattr(yara_scan.capabilities, "have", lambda name: True)
     target = tmp_path / "sample.bin"
@@ -43,23 +43,23 @@ def test_yara_returns_nothing_when_the_rules_directory_is_absent(tmp_path, monke
 
 @requires("yara")
 def test_a_matching_rule_is_reported_with_its_name(tmp_path):
-    from hash_searcher.static.yara_scan import analyze_yara
+    from ioc_inquest.static.yara_scan import analyze_yara
 
     rules = tmp_path / "rules"
     rules.mkdir()
     (rules / "test.yar").write_text(RULE)
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"padding HASHSEARCHERTESTMARKER padding")
+    target.write_bytes(b"padding IOCINQUESTTESTMARKER padding")
 
     hits, note = analyze_yara(str(target), str(rules))
-    assert [h.rule for h in hits] == ["Hash_Searcher_Test_Rule"]
+    assert [h.rule for h in hits] == ["IOC_Inquest_Test_Rule"]
     assert note == ""
 
 
 @requires("yara")
 def test_a_non_matching_file_yields_no_hits(tmp_path):
-    from hash_searcher.static.yara_scan import analyze_yara
+    from ioc_inquest.static.yara_scan import analyze_yara
 
     rules = tmp_path / "rules"
     rules.mkdir()
@@ -76,7 +76,7 @@ def test_a_broken_rule_file_does_not_abort_the_scan(tmp_path):
     """One malformed .yar in a user's rules directory must not take the whole
     run down -- the other rules still have something to say. This is why each
     file is compiled separately rather than in one batch."""
-    from hash_searcher.static.yara_scan import analyze_yara
+    from ioc_inquest.static.yara_scan import analyze_yara
 
     rules = tmp_path / "rules"
     rules.mkdir()
@@ -84,10 +84,10 @@ def test_a_broken_rule_file_does_not_abort_the_scan(tmp_path):
     (rules / "broken.yar").write_text("rule Nope { this is not yara }")
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"HASHSEARCHERTESTMARKER")
+    target.write_bytes(b"IOCINQUESTTESTMARKER")
 
     hits, note = analyze_yara(str(target), str(rules))
-    assert [h.rule for h in hits] == ["Hash_Searcher_Test_Rule"]
+    assert [h.rule for h in hits] == ["IOC_Inquest_Test_Rule"]
 
 
 # --- branch-review.md I5 -----------------------------------------------------
@@ -104,7 +104,7 @@ def test_the_directory_walk_filters_before_sorting(tmp_path, monkeypatch):
     reaches `read()`: shadowing the module-level name the function actually
     looks up (LEGB finds the module global before the builtin, the same
     trick entropy.py's cap test uses on `open`)."""
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     monkeypatch.setattr(yara_scan.capabilities, "have", lambda name: True)
     rules = tmp_path / "rules"
@@ -124,7 +124,7 @@ def test_the_directory_walk_filters_before_sorting(tmp_path, monkeypatch):
     monkeypatch.setattr(yara_scan, "sorted", counting_sorted, raising=False)
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"HASHSEARCHERTESTMARKER")
+    target.write_bytes(b"IOCINQUESTTESTMARKER")
     yara_scan.analyze_yara(str(target), str(rules))
 
     # Only the one .yar file reached sorted() -- not the 21 total paths
@@ -136,7 +136,7 @@ def test_the_directory_walk_filters_before_sorting(tmp_path, monkeypatch):
 def test_yara_scan_caps_the_number_of_rule_files(tmp_path, monkeypatch):
     """branch-review.md I5: a total ceiling on how many rule files a single
     scan will even consider, independent of how fast each one matches."""
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     monkeypatch.setattr(yara_scan, "MAX_RULE_FILES", 2)
     rules = tmp_path / "rules"
@@ -145,7 +145,7 @@ def test_yara_scan_caps_the_number_of_rule_files(tmp_path, monkeypatch):
         (rules / f"r{i}.yar").write_text(RULE)
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"HASHSEARCHERTESTMARKER")
+    target.write_bytes(b"IOCINQUESTTESTMARKER")
 
     hits, note = yara_scan.analyze_yara(str(target), str(rules))
     assert len(hits) == 2   # one hit per compiled+matched rule file
@@ -160,7 +160,7 @@ def test_yara_scan_stops_after_the_wall_clock_budget(tmp_path, monkeypatch):
     an actually-slow rule: time.monotonic is patched to jump past the
     budget between the first and second rule file, so the loop must stop
     without a real 60-second wait."""
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     rules = tmp_path / "rules"
     rules.mkdir()
@@ -169,7 +169,7 @@ def test_yara_scan_stops_after_the_wall_clock_budget(tmp_path, monkeypatch):
     (rules / "c.yar").write_text(RULE)
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"HASHSEARCHERTESTMARKER")
+    target.write_bytes(b"IOCINQUESTTESTMARKER")
 
     # Patches the module's own reference to time.monotonic, not the
     # `time` module globally -- monkeypatching `time.monotonic` itself
@@ -191,7 +191,7 @@ def test_yara_scan_of_a_large_rules_directory_stays_fast(tmp_path):
     """End-to-end wall-clock proof, not just the unit-level ones above: a
     rules directory with more files than a triage tool should spend more
     than a few seconds on must still return quickly."""
-    from hash_searcher.static import yara_scan
+    from ioc_inquest.static import yara_scan
 
     rules = tmp_path / "rules"
     rules.mkdir()
@@ -199,7 +199,7 @@ def test_yara_scan_of_a_large_rules_directory_stays_fast(tmp_path):
         (rules / f"r{i}.yar").write_text(RULE)
 
     target = tmp_path / "sample.bin"
-    target.write_bytes(b"HASHSEARCHERTESTMARKER")
+    target.write_bytes(b"IOCINQUESTTESTMARKER")
 
     started = time.monotonic()
     hits, note = yara_scan.analyze_yara(str(target), str(rules))
@@ -208,3 +208,40 @@ def test_yara_scan_of_a_large_rules_directory_stays_fast(tmp_path):
     assert elapsed < 10.0, f"took {elapsed:.2f}s -- 50 tiny rule files should be fast"
     assert len(hits) == 50
     assert note == ""
+
+
+def test_rules_dir_is_the_renamed_path(tmp_path, monkeypatch):
+    from ioc_inquest.static import yara_scan
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    (tmp_path / "ioc-inquest" / "yara").mkdir(parents=True)
+
+    assert yara_scan.rules_dir() == tmp_path / "ioc-inquest" / "yara"
+
+
+def test_a_pre_rename_ruleset_is_still_read(tmp_path, monkeypatch):
+    """A rename must not quietly turn a populated ruleset into an empty scan."""
+    from ioc_inquest.static import yara_scan
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    (tmp_path / "hash-searcher" / "yara").mkdir(parents=True)
+
+    assert yara_scan.rules_dir() == tmp_path / "hash-searcher" / "yara"
+
+
+def test_the_renamed_path_outranks_the_pre_rename_one(tmp_path, monkeypatch):
+    from ioc_inquest.static import yara_scan
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    (tmp_path / "ioc-inquest" / "yara").mkdir(parents=True)
+    (tmp_path / "hash-searcher" / "yara").mkdir(parents=True)
+
+    assert yara_scan.rules_dir() == tmp_path / "ioc-inquest" / "yara"
+
+
+def test_neither_directory_resolves_to_the_renamed_path(tmp_path, monkeypatch):
+    from ioc_inquest.static import yara_scan
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    assert yara_scan.rules_dir() == tmp_path / "ioc-inquest" / "yara"
